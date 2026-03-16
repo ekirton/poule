@@ -317,102 +317,110 @@ def run_extraction(
     backend = create_backend()
     writer = create_writer(db_path)
 
-    coq_version = backend.detect_version()
+    # Start the backend subprocess (e.g. coqtop)
+    if hasattr(backend, "start"):
+        backend.start()
 
-    # Collect all declarations across all .vo files
-    all_declarations: list[tuple[str, str, Any, Path]] = []
     try:
-        for vo_path in all_vo_files:
-            raw_decls = backend.list_declarations(vo_path)
-            for name, kind, constr_t in raw_decls:
-                all_declarations.append((name, kind, constr_t, vo_path))
-    except ExtractionError:
-        # Backend crash — clean up and re-raise
-        _cleanup_db(db_path)
-        raise
+        coq_version = backend.detect_version()
 
-    total_decls = len(all_declarations)
-
-    # ------------------------------------------------------------------
-    # Pass 1: Per-declaration processing with batching
-    # ------------------------------------------------------------------
-    name_to_id: dict[str, int] = {}
-    all_results: list[Any] = []
-    batch: list[Any] = []
-
-    for idx, (name, kind, constr_t, vo_path) in enumerate(all_declarations, 1):
-        if progress_callback is not None:
-            progress_callback(
-                f"Extracting declarations [{idx}/{total_decls}]"
-            )
-
-        module_path = str(vo_path)
-
+        # Collect all declarations across all .vo files
+        all_declarations: list[tuple[str, str, Any, Path]] = []
         try:
-            result = process_declaration(
-                name, kind, constr_t, backend, module_path
-            )
-        except Exception:
-            logger.warning("Failed to process declaration %s", name, exc_info=True)
-            result = None
+            for vo_path in all_vo_files:
+                raw_decls = backend.list_declarations(vo_path)
+                for name, kind, constr_t in raw_decls:
+                    all_declarations.append((name, kind, constr_t, vo_path))
+        except ExtractionError:
+            # Backend crash — clean up and re-raise
+            _cleanup_db(db_path)
+            raise
 
-        if result is None:
-            continue
+        total_decls = len(all_declarations)
 
-        batch.append(result)
-        all_results.append(result)
+        # ------------------------------------------------------------------
+        # Pass 1: Per-declaration processing with batching
+        # ------------------------------------------------------------------
+        name_to_id: dict[str, int] = {}
+        all_results: list[Any] = []
+        batch: list[Any] = []
 
-        if len(batch) >= BATCH_SIZE:
+        for idx, (name, kind, constr_t, vo_path) in enumerate(all_declarations, 1):
+            if progress_callback is not None:
+                progress_callback(
+                    f"Extracting declarations [{idx}/{total_decls}]"
+                )
+
+            module_path = str(vo_path)
+
+            try:
+                result = process_declaration(
+                    name, kind, constr_t, backend, module_path
+                )
+            except Exception:
+                logger.warning("Failed to process declaration %s", name, exc_info=True)
+                result = None
+
+            if result is None:
+                continue
+
+            batch.append(result)
+            all_results.append(result)
+
+            if len(batch) >= BATCH_SIZE:
+                ids = writer.batch_insert(batch)
+                if ids:
+                    name_to_id.update(ids)
+                batch = []
+
+        # Flush remaining batch
+        if batch:
             ids = writer.batch_insert(batch)
             if ids:
                 name_to_id.update(ids)
-            batch = []
 
-    # Flush remaining batch
-    if batch:
-        ids = writer.batch_insert(batch)
-        if ids:
-            name_to_id.update(ids)
+        # ------------------------------------------------------------------
+        # Pass 2: Dependency resolution
+        # ------------------------------------------------------------------
+        for idx, result in enumerate(all_results, 1):
+            if progress_callback is not None:
+                progress_callback(
+                    f"Resolving dependencies [{idx}/{len(all_results)}]"
+                )
 
-    # ------------------------------------------------------------------
-    # Pass 2: Dependency resolution
-    # ------------------------------------------------------------------
-    for idx, result in enumerate(all_results, 1):
-        if progress_callback is not None:
-            progress_callback(
-                f"Resolving dependencies [{idx}/{len(all_results)}]"
-            )
+        writer.resolve_and_insert_dependencies(all_results, name_to_id)
 
-    writer.resolve_and_insert_dependencies(all_results, name_to_id)
+        # ------------------------------------------------------------------
+        # Post-processing
+        # ------------------------------------------------------------------
+        # Compute symbol frequencies
+        symbol_counts: Counter[str] = Counter()
+        for result in all_results:
+            symbols = getattr(result, "symbol_set", None)
+            if isinstance(symbols, (list, set, frozenset, tuple)):
+                for sym in symbols:
+                    symbol_counts[sym] += 1
 
-    # ------------------------------------------------------------------
-    # Post-processing
-    # ------------------------------------------------------------------
-    # Compute symbol frequencies
-    symbol_counts: Counter[str] = Counter()
-    for result in all_results:
-        symbols = getattr(result, "symbol_set", None)
-        if isinstance(symbols, (list, set, frozenset, tuple)):
-            for sym in symbols:
-                symbol_counts[sym] += 1
+        writer.insert_symbol_freq(dict(symbol_counts))
 
-    writer.insert_symbol_freq(dict(symbol_counts))
+        # Write metadata
+        writer.write_metadata(
+            schema_version="1",
+            coq_version=coq_version,
+            mathcomp_version=None,
+            created_at=None,
+        )
 
-    # Write metadata
-    writer.write_metadata(
-        schema_version="1",
-        coq_version=coq_version,
-        mathcomp_version=None,
-        created_at=None,
-    )
+        # Finalize
+        writer.finalize()
 
-    # Finalize
-    writer.finalize()
-
-    return {
-        "declarations_indexed": len(all_results),
-        "coq_version": coq_version,
-    }
+        return {
+            "declarations_indexed": len(all_results),
+            "coq_version": coq_version,
+        }
+    finally:
+        if hasattr(backend, "stop"):
+            backend.stop()
 
 
 def _cleanup_db(db_path: Path) -> None:
