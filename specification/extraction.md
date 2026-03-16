@@ -35,6 +35,36 @@ The system shall define a `Backend` protocol with operations:
 
 - REQUIRES: `vo_path` is a path to a compiled `.vo` file.
 - ENSURES: Returns a list of `(name, kind, constr_t)` tuples for all declarations in the file.
+- MAINTAINS: The `kind` value for each declaration is determined by the kind detection mechanism (§4.1.1).
+
+#### 4.1.1 Kind Detection
+
+The backend shall determine each declaration's kind during `list_declarations`. The mechanism is backend-dependent because not all backends return kind information directly from declaration listing.
+
+**coq-lsp backend:** The `Search _ inside M.` command returns `(name, type_sig)` pairs without declaration kinds. The backend shall issue an `About <name>.` Vernac command per declaration and parse the response to determine the kind.
+
+The `About` response format is version-dependent:
+
+| Version | Format | Kind extraction |
+|---------|--------|----------------|
+| Coq ≤ 8.x | `<name> is [a] <Kind>.` | Extract `<Kind>` from the `is [a]` pattern |
+| Rocq 9.x | Multi-line; includes `Expands to: <Category> <path>` | Map `<Category>`: `Constant` → `definition`, `Inductive` → `inductive`, `Constructor` → `constructor` |
+
+**Parsing precedence (coq-lsp):** When both formats are present in the response, the Coq ≤ 8.x `"is [a] <Kind>"` pattern takes precedence (it is more specific).
+
+**Fallback:** When `About` returns `"<name> not a defined object."` or no parseable kind information, the backend shall default to `"definition"`.
+
+> **Given** a declaration `Nat.add` in Rocq 9.x where `About` returns `Expands to: Constant Corelib.Init.Nat.add`,
+> **When** `list_declarations` processes this declaration,
+> **Then** the kind value is `"definition"` (Constant maps to definition via §4.2).
+
+> **Given** a declaration `Nat.add_comm` in Rocq 9.x where `About` returns `"Nat.add_comm not a defined object."`,
+> **When** `list_declarations` processes this declaration,
+> **Then** the kind value defaults to `"definition"`.
+
+> **Given** a declaration `Nat.add` in Coq 8.x where `About` returns `"Nat.add is a Definition."`,
+> **When** `list_declarations` processes this declaration,
+> **Then** the kind value is `"definition"` (Definition maps to definition via §4.2).
 
 #### get_type(name)
 
@@ -74,6 +104,8 @@ The system shall define a `Backend` protocol with operations:
 | `Notation`, `Abbreviation`, `Section Variable` | *(excluded — not indexed)* |
 
 Excluded forms have no kernel term and shall be silently skipped.
+
+**Unknown kinds:** When the detected kind string does not match any row in the table above (including the excluded forms), `map_kind` shall return `"definition"`. The `map_kind` function shall return `None` only for explicitly excluded forms (Notation, Abbreviation, Section Variable). This prevents unknown kinds from silently dropping declarations from the index.
 
 ### 4.3 Module Path Derivation
 
@@ -173,6 +205,7 @@ Error hierarchy:
 - The entire process runs without GPU, network access, or external API keys.
 - Batch size: 1000 declarations per transaction.
 - Progress reporting at per-declaration granularity.
+- **Kind detection overhead (coq-lsp):** The per-declaration `About` query for kind detection adds O(N) backend round-trips. For large targets (stdlib+mathcomp, ~10,000+ declarations), full extraction may take 30+ minutes.
 
 ## 7. Examples
 

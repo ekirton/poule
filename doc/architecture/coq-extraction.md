@@ -14,6 +14,8 @@ Offline extraction of declarations from compiled Coq/Rocq libraries into the sea
   │
   ▼
 coq-lsp or SerAPI
+  │  List declarations: (name, type_sig) per module
+  │  Detect kind per declaration (backend-dependent; may require additional queries)
   │  Read each declaration's Constr.t kernel term
   │
   ▼
@@ -38,6 +40,10 @@ SQLite database (see storage.md)
 ### Module path derivation
 
 The `module` field on each declaration is the logical path of the `.vo` file from which the declaration was extracted — not derived from string manipulation of the fully qualified name. For nested modules, the `.vo` file is the source of truth.
+
+### Kind detection
+
+Declaration kind is not always available directly from the backend's declaration listing. Some backends (e.g., coq-lsp) return only `(name, type_sig)` pairs and require a separate query per declaration to determine the kind. The kind detection mechanism is backend-dependent, and the response format may vary across Coq/Rocq versions. See the extraction specification (§4.1.1) for backend-specific detection contracts.
 
 ### Kind mapping
 
@@ -81,6 +87,8 @@ The `constr_tree` BLOB format is defined in [storage.md](storage.md). See the st
 ## Extraction Tooling
 
 Declarations are read from compiled `.vo` files via coq-lsp or SerAPI. Both tools provide access to `Constr.t` kernel terms, which are the input to the normalization pipeline. The choice between them is an implementation decision — both produce equivalent kernel terms.
+
+The backends differ in how they expose declaration metadata. SerAPI provides kind information directly. coq-lsp requires a separate round-trip per declaration for kind detection, adding O(N) backend queries to the extraction pipeline. For large targets (stdlib+mathcomp, ~10,000+ declarations), this overhead increases extraction time from minutes to 30+ minutes.
 
 Key requirement: the extraction tool must be version-compatible with the installed Coq/Rocq version. The extracted library version is recorded in `index_meta` for stale detection.
 
