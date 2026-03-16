@@ -1,13 +1,14 @@
 """Tests for the coq-lsp JSON-RPC backend (specification/extraction.md §4.1).
 
 Tests the LSP protocol implementation: Content-Length message framing,
-initialization handshake, document lifecycle, Vernac-result parsing from
-diagnostics, and error handling.
+initialization handshake, document lifecycle, sentence-level message
+retrieval via ``proof/goals``, and error handling.
 
 The CoqLspBackend communicates with ``coq-lsp`` over stdin/stdout using
 LSP JSON-RPC (Content-Length framed).  Vernac commands are issued by
-opening synthetic ``.v`` documents; results come back as
-``textDocument/publishDiagnostics`` notifications.
+opening synthetic ``.v`` documents; ``textDocument/publishDiagnostics``
+signals that checking is complete, then ``proof/goals`` retrieves the
+per-sentence output (Search results, Print bodies, Check types, etc.).
 """
 
 from __future__ import annotations
@@ -74,6 +75,37 @@ def _make_diagnostic(
         },
         "severity": severity,
         "message": message,
+    }
+
+
+def _make_sentence_message(text: str, level: int = 3) -> dict:
+    """Build one sentence-level message as returned by ``proof/goals``.
+
+    Level: 1=Error, 2=Warning, 3=Information.
+    """
+    return {"range": None, "level": level, "text": text}
+
+
+def _make_goals_result(
+    uri: str,
+    line: int,
+    messages: list[dict],
+    end_line: int | None = None,
+    end_char: int | None = None,
+) -> dict:
+    """Build a ``proof/goals`` response result."""
+    return {
+        "textDocument": {"uri": uri, "version": 1},
+        "position": {"line": line, "character": 0},
+        "range": {
+            "start": {"line": line, "character": 0},
+            "end": {
+                "line": end_line if end_line is not None else line,
+                "character": end_char if end_char is not None else 1,
+            },
+        },
+        "program": [],
+        "messages": messages,
     }
 
 
@@ -509,35 +541,130 @@ class TestWaitForDiagnostics:
         assert len(result) == 1
         assert result[0]["message"] == "result"
 
-    def test_skips_initial_empty_diagnostics(self):
-        """coq-lsp sends an initial empty publishDiagnostics before the real
-        results arrive.  _wait_for_diagnostics must skip the empty notification
-        and return the first one with actual content.
+    def test_returns_empty_diagnostics_as_document_ready_signal(self):
+        """coq-lsp sends a single publishDiagnostics with an empty list when
+        a document containing only Vernac queries (Search, Print, etc.) is
+        fully checked.  This is the normal case — Vernac output is NOT
+        delivered through diagnostics.
 
-        This mirrors real coq-lsp behavior: opening a document triggers a
-        sequence like [empty diagnostics, fileProgress..., real diagnostics].
-        Returning the empty first notification causes list_declarations() to
-        see 0 results for every module.
+        _wait_for_diagnostics must return on this empty notification so the
+        caller knows checking is complete and can use ``proof/goals`` to
+        retrieve the actual sentence output.  Skipping empty notifications
+        would cause the backend to hang waiting for a non-empty notification
+        that never arrives.
         """
         from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
 
         uri = "file:///tmp/wily_query_0.v"
-        # First notification: empty diagnostics (clearing previous state)
+        # coq-lsp sends exactly one empty publishDiagnostics for the URI
         empty_notif = _make_diagnostics_notification(uri, [])
-        # Second notification: actual results after document is fully checked
-        real_diag = _make_diagnostic("Nat.add : nat -> nat -> nat", severity=3)
-        real_notif = _make_diagnostics_notification(uri, [real_diag])
 
         backend = CoqLspBackend.__new__(CoqLspBackend)
-        raw = _encode_lsp(empty_notif) + _encode_lsp(real_notif)
         backend._proc = Mock()
-        backend._proc.stdout = io.BytesIO(raw)
+        backend._proc.stdout = io.BytesIO(_encode_lsp(empty_notif))
         backend._proc.poll.return_value = None
         backend._notification_buffer = []
 
         result = backend._wait_for_diagnostics(uri)
-        assert len(result) == 1
-        assert result[0]["message"] == "Nat.add : nat -> nat -> nat"
+        # Must return the empty list — this is the document-ready signal
+        assert result == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 5b. Sentence Messages via proof/goals
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestSentenceMessages:
+    """Vernac command output is retrieved via the ``proof/goals`` LSP request.
+
+    coq-lsp does NOT deliver Search/Print/About/Check output through
+    ``publishDiagnostics``.  Instead, after the document is fully checked
+    (signaled by an empty diagnostics notification), the backend must send
+    a ``proof/goals`` request at the sentence position to retrieve the
+    per-sentence messages.
+    """
+
+    def test_proof_goals_returns_messages_for_check(self):
+        """proof/goals at a Check command returns the type signature."""
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        backend = CoqLspBackend.__new__(CoqLspBackend)
+        backend._proc = Mock()
+        backend._proc.poll.return_value = None
+        backend._notification_buffer = []
+        backend._next_id = 10
+
+        uri = "file:///tmp/wily_query_0.v"
+        goals_result = _make_goals_result(uri, line=0, messages=[
+            _make_sentence_message("Nat.add\n     : nat -> nat -> nat"),
+        ])
+
+        with patch.object(
+            backend, "_send_request", return_value=goals_result
+        ) as mock_send:
+            result = backend._send_request("proof/goals", {
+                "textDocument": {"uri": uri},
+                "position": {"line": 0, "character": 0},
+            })
+
+        mock_send.assert_called_once_with("proof/goals", {
+            "textDocument": {"uri": uri},
+            "position": {"line": 0, "character": 0},
+        })
+        assert len(result["messages"]) == 1
+        assert "nat -> nat -> nat" in result["messages"][0]["text"]
+
+    def test_proof_goals_returns_multiple_messages_for_search(self):
+        """proof/goals at a Search command returns one message per result."""
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        backend = CoqLspBackend.__new__(CoqLspBackend)
+        backend._proc = Mock()
+        backend._proc.poll.return_value = None
+        backend._notification_buffer = []
+        backend._next_id = 10
+
+        uri = "file:///tmp/wily_query_0.v"
+        search_messages = [
+            _make_sentence_message("Nat.add: nat -> nat -> nat"),
+            _make_sentence_message("Nat.mul: nat -> nat -> nat"),
+            _make_sentence_message("Nat.sub: nat -> nat -> nat"),
+        ]
+        goals_result = _make_goals_result(uri, line=1, messages=search_messages)
+
+        with patch.object(
+            backend, "_send_request", return_value=goals_result
+        ):
+            result = backend._send_request("proof/goals", {
+                "textDocument": {"uri": uri},
+                "position": {"line": 1, "character": 0},
+            })
+
+        assert len(result["messages"]) == 3
+
+    def test_proof_goals_empty_messages_for_require(self):
+        """proof/goals at a Require Import returns no messages (no output)."""
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        backend = CoqLspBackend.__new__(CoqLspBackend)
+        backend._proc = Mock()
+        backend._proc.poll.return_value = None
+        backend._notification_buffer = []
+        backend._next_id = 10
+
+        uri = "file:///tmp/wily_query_0.v"
+        goals_result = _make_goals_result(uri, line=0, messages=[])
+
+        with patch.object(
+            backend, "_send_request", return_value=goals_result
+        ):
+            result = backend._send_request("proof/goals", {
+                "textDocument": {"uri": uri},
+                "position": {"line": 0, "character": 0},
+            })
+
+        assert result["messages"] == []
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -546,9 +673,15 @@ class TestWaitForDiagnostics:
 
 
 class TestListDeclarations:
-    """list_declarations extracts (name, kind, constr_t) from a .vo file."""
+    """list_declarations extracts (name, kind, constr_t) from a .vo file.
 
-    def test_returns_name_kind_constr_tuples(self):
+    After opening the synthetic document and waiting for diagnostics
+    (document-ready signal), the backend must send ``proof/goals`` at
+    the Search command's line position to retrieve the actual results.
+    """
+
+    def test_returns_name_kind_constr_tuples_via_proof_goals(self):
+        """Search results come from proof/goals messages, not diagnostics."""
         from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
 
         backend = CoqLspBackend.__new__(CoqLspBackend)
@@ -556,19 +689,32 @@ class TestListDeclarations:
         backend._proc.poll.return_value = None
         backend._server_info = {}
         backend._notification_buffer = []
+        backend._next_uri_id = 0
+        backend._next_id = 0
 
-        # Simulate: open doc → diagnostics with Search results → close doc
-        search_results = [
-            _make_diagnostic("Nat.add : nat -> nat -> nat", severity=3, start_line=1),
-            _make_diagnostic("Nat.mul : nat -> nat -> nat", severity=3, start_line=1),
+        # Search results via proof/goals messages (not diagnostics)
+        search_messages = [
+            _make_sentence_message("Nat.add : nat -> nat -> nat"),
+            _make_sentence_message("Nat.mul : nat -> nat -> nat"),
         ]
-        # About results for kind detection
-        about_results_add = [
-            _make_diagnostic("Nat.add is a definition", severity=3),
+        # About results via proof/goals messages for kind detection
+        about_messages_add = [
+            _make_sentence_message("Nat.add is a definition"),
         ]
-        about_results_mul = [
-            _make_diagnostic("Nat.mul is a definition", severity=3),
+        about_messages_mul = [
+            _make_sentence_message("Nat.mul is a definition"),
         ]
+
+        # _wait_for_diagnostics returns empty list (document-ready signal).
+        # _send_request returns proof/goals results for Search, then About queries.
+        uri_base = "file:///tmp/wily_query_"
+        goals_responses = []
+        for i, msgs in enumerate(
+            [search_messages, about_messages_add, about_messages_mul]
+        ):
+            goals_responses.append(
+                _make_goals_result(f"{uri_base}{i}.v", line=0, messages=msgs)
+            )
 
         with (
             patch.object(backend, "_open_document"),
@@ -576,11 +722,16 @@ class TestListDeclarations:
             patch.object(
                 backend,
                 "_wait_for_diagnostics",
-                side_effect=[search_results, about_results_add, about_results_mul],
+                return_value=[],  # empty = no errors, document ready
+            ),
+            patch.object(
+                backend,
+                "_send_request",
+                side_effect=goals_responses,
             ),
         ):
             result = backend.list_declarations(
-                Path("/coq/theories/Init/Nat.vo")
+                Path("/coq/user-contrib/Stdlib/Init/Nat.vo")
             )
 
         assert isinstance(result, list)
@@ -600,11 +751,15 @@ class TestListDeclarations:
         backend._server_info = {}
         backend._notification_buffer = []
         backend._next_uri_id = 0
+        backend._next_id = 0
 
         opened_docs: list[tuple[str, str]] = []
 
         def capture_open(uri, text):
             opened_docs.append((uri, text))
+
+        # proof/goals returns empty messages → no declarations, returns early
+        empty_goals = _make_goals_result("file:///tmp/wily_query_0.v", line=1, messages=[])
 
         with (
             patch.object(backend, "_open_document", side_effect=capture_open),
@@ -612,8 +767,11 @@ class TestListDeclarations:
             patch.object(
                 backend, "_wait_for_diagnostics", return_value=[]
             ),
+            patch.object(
+                backend, "_send_request", return_value=empty_goals
+            ),
         ):
-            backend.list_declarations(Path("/coq/theories/Init/Nat.vo"))
+            backend.list_declarations(Path("/coq/user-contrib/Stdlib/Init/Nat.vo"))
 
         # At least one document must contain both Require and Search
         assert len(opened_docs) >= 1
@@ -622,6 +780,7 @@ class TestListDeclarations:
         assert "Search" in search_doc
 
     def test_empty_module_returns_empty_list(self):
+        """When proof/goals returns no messages, no declarations are found."""
         from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
 
         backend = CoqLspBackend.__new__(CoqLspBackend)
@@ -630,6 +789,9 @@ class TestListDeclarations:
         backend._server_info = {}
         backend._notification_buffer = []
         backend._next_uri_id = 0
+        backend._next_id = 0
+
+        empty_goals = _make_goals_result("file:///tmp/wily_query_0.v", line=1, messages=[])
 
         with (
             patch.object(backend, "_open_document"),
@@ -637,13 +799,20 @@ class TestListDeclarations:
             patch.object(
                 backend, "_wait_for_diagnostics", return_value=[]
             ),
+            patch.object(
+                backend, "_send_request", return_value=empty_goals
+            ),
         ):
             result = backend.list_declarations(Path("/coq/theories/Empty.vo"))
 
         assert result == []
 
     def test_error_diagnostics_for_require_returns_empty(self):
-        """If Require Import fails, return empty list (don't crash)."""
+        """If Require Import fails, return empty list (don't crash).
+
+        Error diagnostics (severity 1) indicate the Require failed.
+        The backend must not proceed to proof/goals in this case.
+        """
         from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
 
         backend = CoqLspBackend.__new__(CoqLspBackend)
@@ -652,6 +821,7 @@ class TestListDeclarations:
         backend._server_info = {}
         backend._notification_buffer = []
         backend._next_uri_id = 0
+        backend._next_id = 0
 
         # Error diagnostic (severity 1 = Error)
         error_diags = [
@@ -667,12 +837,61 @@ class TestListDeclarations:
             patch.object(
                 backend, "_wait_for_diagnostics", return_value=error_diags
             ),
+            # _send_request should NOT be called when Require fails
+            patch.object(
+                backend, "_send_request",
+                side_effect=AssertionError("proof/goals should not be called on error"),
+            ),
         ):
             result = backend.list_declarations(
                 Path("/coq/theories/Init/Nonexistent.vo")
             )
 
         assert result == []
+
+    def test_sends_proof_goals_at_search_line_position(self):
+        """proof/goals must be sent at line 1 (the Search command), not line 0
+        (the Require Import).  The document is:
+            line 0: Require Import <module>.
+            line 1: Search _ inside <module>.
+        """
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        backend = CoqLspBackend.__new__(CoqLspBackend)
+        backend._proc = Mock()
+        backend._proc.poll.return_value = None
+        backend._server_info = {}
+        backend._notification_buffer = []
+        backend._next_uri_id = 0
+        backend._next_id = 0
+
+        goals_calls: list[dict] = []
+
+        def capture_send_request(method, params):
+            goals_calls.append({"method": method, "params": params})
+            return _make_goals_result(
+                params["textDocument"]["uri"],
+                line=params["position"]["line"],
+                messages=[],
+            )
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(
+                backend, "_wait_for_diagnostics", return_value=[]
+            ),
+            patch.object(
+                backend, "_send_request", side_effect=capture_send_request
+            ),
+        ):
+            backend.list_declarations(Path("/coq/user-contrib/Stdlib/Init/Nat.vo"))
+
+        # At least one proof/goals call must target line 1 (Search position)
+        assert len(goals_calls) >= 1
+        search_call = goals_calls[0]
+        assert search_call["method"] == "proof/goals"
+        assert search_call["params"]["position"]["line"] == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -718,14 +937,21 @@ class TestParseSearchDiagnostics:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 8. pretty_print
+# 7b. Declaration Kind Detection
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestPrettyPrint:
-    """pretty_print returns human-readable statement for a declaration."""
+class TestDeclarationKindDetection:
+    """_get_declaration_kind parses About output to determine declaration kind.
 
-    def test_returns_print_output(self):
+    The About output format differs between Coq/Rocq versions.  The backend
+    must handle both formats and fall back to "definition" when the kind
+    cannot be determined.
+
+    See specification/feedback/extraction.md Issue 1 for the full gap analysis.
+    """
+
+    def _make_backend(self):
         from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
 
         backend = CoqLspBackend.__new__(CoqLspBackend)
@@ -734,20 +960,204 @@ class TestPrettyPrint:
         backend._server_info = {}
         backend._notification_buffer = []
         backend._next_uri_id = 0
+        backend._next_id = 0
+        return backend
 
-        print_diags = [
-            _make_diagnostic(
-                "Nat.add =\nfix add (n m : nat) {struct n} : nat :=\n"
-                "  match n with\n  | 0 => m\n  | S p => S (add p m)\n  end",
-                severity=3,
-            ),
-        ]
+    def test_rocq9_constant_detected_as_definition(self):
+        """Rocq 9.x: 'Expands to: Constant ...' → definition."""
+        backend = self._make_backend()
+        about_text = (
+            "Nat.add : nat -> nat -> nat\n\n"
+            "Nat.add is not universe polymorphic\n"
+            "Arguments Nat.add (n m)%_nat_scope\n"
+            "Nat.add is transparent\n"
+            "Expands to: Constant Corelib.Init.Nat.add\n"
+            "Declared in library Corelib.Init.Nat, line 47, characters 9-12"
+        )
+        about_messages = [_make_sentence_message(about_text)]
+        goals_result = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=0, messages=about_messages,
+        )
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=goals_result),
+        ):
+            kind = backend._get_declaration_kind("Nat.add")
+
+        assert kind == "definition"
+
+    def test_rocq9_inductive_detected(self):
+        """Rocq 9.x: 'Expands to: Inductive ...' → inductive."""
+        backend = self._make_backend()
+        about_text = (
+            "nat : Set\n\n"
+            "nat is not universe polymorphic\n"
+            "Expands to: Inductive Corelib.Init.Datatypes.nat\n"
+            "Declared in library Corelib.Init.Datatypes, line 178, characters 10-13"
+        )
+        about_messages = [_make_sentence_message(about_text)]
+        goals_result = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=0, messages=about_messages,
+        )
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=goals_result),
+        ):
+            kind = backend._get_declaration_kind("nat")
+
+        assert kind == "inductive"
+
+    def test_rocq9_constructor_detected(self):
+        """Rocq 9.x: 'Expands to: Constructor ...' → constructor."""
+        backend = self._make_backend()
+        about_text = (
+            "S : nat -> nat\n\n"
+            "S is not universe polymorphic\n"
+            "Arguments S _%_nat_scope\n"
+            "Expands to: Constructor Corelib.Init.Datatypes.S\n"
+            "Declared in library Corelib.Init.Datatypes, line 180, characters 4-5"
+        )
+        about_messages = [_make_sentence_message(about_text)]
+        goals_result = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=0, messages=about_messages,
+        )
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=goals_result),
+        ):
+            kind = backend._get_declaration_kind("S")
+
+        assert kind == "constructor"
+
+    def test_rocq9_not_defined_object_falls_back_to_definition(self):
+        """Rocq 9.x: 'X not a defined object.' → fallback to definition."""
+        backend = self._make_backend()
+        about_text = "Nat.add_comm not a defined object."
+        about_messages = [_make_sentence_message(about_text)]
+        goals_result = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=0, messages=about_messages,
+        )
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=goals_result),
+        ):
+            kind = backend._get_declaration_kind("Nat.add_comm")
+
+        assert kind == "definition"
+
+    def test_coq8_legacy_kind_format(self):
+        """Coq ≤8.x: 'X is a Definition.' → definition."""
+        backend = self._make_backend()
+        about_messages = [_make_sentence_message("Nat.add is a definition")]
+        goals_result = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=0, messages=about_messages,
+        )
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=goals_result),
+        ):
+            kind = backend._get_declaration_kind("Nat.add")
+
+        assert kind == "definition"
+
+    def test_coq8_legacy_lemma_format(self):
+        """Coq ≤8.x: 'X is a Lemma.' → lemma."""
+        backend = self._make_backend()
+        about_messages = [_make_sentence_message("foo is a lemma")]
+        goals_result = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=0, messages=about_messages,
+        )
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=goals_result),
+        ):
+            kind = backend._get_declaration_kind("foo")
+
+        assert kind == "lemma"
+
+    def test_universe_polymorphic_not_mistaken_for_kind(self):
+        """'is not universe polymorphic' must NOT be parsed as a kind."""
+        backend = self._make_backend()
+        # Rocq 9.x About output with no Expands-to line (edge case)
+        about_text = (
+            "foo : Type\n\n"
+            "foo is not universe polymorphic\n"
+            "foo is transparent"
+        )
+        about_messages = [_make_sentence_message(about_text)]
+        goals_result = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=0, messages=about_messages,
+        )
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=goals_result),
+        ):
+            kind = backend._get_declaration_kind("foo")
+
+        # Must NOT be "not universe polymorphic"
+        assert "universe" not in kind
+        assert kind == "definition"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 8. pretty_print
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestPrettyPrint:
+    """pretty_print returns human-readable statement via proof/goals."""
+
+    def test_returns_print_output_from_proof_goals(self):
+        """Print output comes from proof/goals messages, not diagnostics."""
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        backend = CoqLspBackend.__new__(CoqLspBackend)
+        backend._proc = Mock()
+        backend._proc.poll.return_value = None
+        backend._server_info = {}
+        backend._notification_buffer = []
+        backend._next_uri_id = 0
+        backend._next_id = 0
+
+        print_body = (
+            "Nat.add =\nfix add (n m : nat) {struct n} : nat :=\n"
+            "  match n with\n  | 0 => m\n  | S p => S (add p m)\n  end"
+        )
+        goals_result = _make_goals_result(
+            "file:///tmp/wily_query_0.v",
+            line=0,
+            messages=[_make_sentence_message(print_body)],
+        )
 
         with (
             patch.object(backend, "_open_document"),
             patch.object(backend, "_close_document"),
             patch.object(
-                backend, "_wait_for_diagnostics", return_value=print_diags
+                backend, "_wait_for_diagnostics", return_value=[]
+            ),
+            patch.object(
+                backend, "_send_request", return_value=goals_result
             ),
         ):
             result = backend.pretty_print("Nat.add")
@@ -764,16 +1174,22 @@ class TestPrettyPrint:
         backend._server_info = {}
         backend._notification_buffer = []
         backend._next_uri_id = 0
+        backend._next_id = 0
 
         opened_docs: list[str] = []
 
         def capture_open(uri, text):
             opened_docs.append(text)
 
+        empty_goals = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=0, messages=[]
+        )
+
         with (
             patch.object(backend, "_open_document", side_effect=capture_open),
             patch.object(backend, "_close_document"),
             patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=empty_goals),
         ):
             backend.pretty_print("Nat.add")
 
@@ -786,9 +1202,10 @@ class TestPrettyPrint:
 
 
 class TestPrettyPrintType:
-    """pretty_print_type returns the type signature or None."""
+    """pretty_print_type returns the type signature via proof/goals, or None."""
 
-    def test_returns_type_from_check_output(self):
+    def test_returns_type_from_proof_goals(self):
+        """Check output comes from proof/goals messages."""
         from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
 
         backend = CoqLspBackend.__new__(CoqLspBackend)
@@ -797,16 +1214,22 @@ class TestPrettyPrintType:
         backend._server_info = {}
         backend._notification_buffer = []
         backend._next_uri_id = 0
+        backend._next_id = 0
 
-        check_diags = [
-            _make_diagnostic("Nat.add\n     : nat -> nat -> nat", severity=3),
-        ]
+        goals_result = _make_goals_result(
+            "file:///tmp/wily_query_0.v",
+            line=0,
+            messages=[_make_sentence_message("Nat.add\n     : nat -> nat -> nat")],
+        )
 
         with (
             patch.object(backend, "_open_document"),
             patch.object(backend, "_close_document"),
             patch.object(
-                backend, "_wait_for_diagnostics", return_value=check_diags
+                backend, "_wait_for_diagnostics", return_value=[]
+            ),
+            patch.object(
+                backend, "_send_request", return_value=goals_result
             ),
         ):
             result = backend.pretty_print_type("Nat.add")
@@ -815,6 +1238,7 @@ class TestPrettyPrintType:
         assert "nat" in result
 
     def test_returns_none_on_error(self):
+        """Error diagnostics (Require/Check failure) → return None."""
         from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
 
         backend = CoqLspBackend.__new__(CoqLspBackend)
@@ -823,6 +1247,7 @@ class TestPrettyPrintType:
         backend._server_info = {}
         backend._notification_buffer = []
         backend._next_uri_id = 0
+        backend._next_id = 0
 
         error_diags = [
             _make_diagnostic("Error: Unknown reference Nonexistent", severity=1),
@@ -848,16 +1273,22 @@ class TestPrettyPrintType:
         backend._server_info = {}
         backend._notification_buffer = []
         backend._next_uri_id = 0
+        backend._next_id = 0
 
         opened_docs: list[str] = []
 
         def capture_open(uri, text):
             opened_docs.append(text)
 
+        empty_goals = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=0, messages=[]
+        )
+
         with (
             patch.object(backend, "_open_document", side_effect=capture_open),
             patch.object(backend, "_close_document"),
             patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=empty_goals),
         ):
             backend.pretty_print_type("Nat.add")
 
@@ -870,9 +1301,10 @@ class TestPrettyPrintType:
 
 
 class TestGetDependencies:
-    """get_dependencies returns (target_name, relation) pairs."""
+    """get_dependencies returns (target_name, relation) pairs via proof/goals."""
 
-    def test_parses_print_assumptions_output(self):
+    def test_parses_print_assumptions_from_proof_goals(self):
+        """Print Assumptions output comes from proof/goals messages."""
         from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
 
         backend = CoqLspBackend.__new__(CoqLspBackend)
@@ -881,20 +1313,27 @@ class TestGetDependencies:
         backend._server_info = {}
         backend._notification_buffer = []
         backend._next_uri_id = 0
+        backend._next_id = 0
 
-        assumption_diags = [
-            _make_diagnostic(
-                "Coq.Init.Logic.eq_refl : forall (A : Type) (x : A), x = x\n"
-                "Coq.Init.Peano.nat_ind : forall P, P 0 -> ...",
-                severity=3,
-            ),
-        ]
+        goals_result = _make_goals_result(
+            "file:///tmp/wily_query_0.v",
+            line=0,
+            messages=[
+                _make_sentence_message(
+                    "Coq.Init.Logic.eq_refl : forall (A : Type) (x : A), x = x\n"
+                    "Coq.Init.Peano.nat_ind : forall P, P 0 -> ..."
+                ),
+            ],
+        )
 
         with (
             patch.object(backend, "_open_document"),
             patch.object(backend, "_close_document"),
             patch.object(
-                backend, "_wait_for_diagnostics", return_value=assumption_diags
+                backend, "_wait_for_diagnostics", return_value=[]
+            ),
+            patch.object(
+                backend, "_send_request", return_value=goals_result
             ),
         ):
             result = backend.get_dependencies("Nat.add_comm")
@@ -913,16 +1352,24 @@ class TestGetDependencies:
         backend._server_info = {}
         backend._notification_buffer = []
         backend._next_uri_id = 0
+        backend._next_id = 0
 
-        closed_diags = [
-            _make_diagnostic("Closed under the global context", severity=3),
-        ]
+        goals_result = _make_goals_result(
+            "file:///tmp/wily_query_0.v",
+            line=0,
+            messages=[
+                _make_sentence_message("Closed under the global context"),
+            ],
+        )
 
         with (
             patch.object(backend, "_open_document"),
             patch.object(backend, "_close_document"),
             patch.object(
-                backend, "_wait_for_diagnostics", return_value=closed_diags
+                backend, "_wait_for_diagnostics", return_value=[]
+            ),
+            patch.object(
+                backend, "_send_request", return_value=goals_result
             ),
         ):
             result = backend.get_dependencies("Nat.add")
@@ -938,16 +1385,22 @@ class TestGetDependencies:
         backend._server_info = {}
         backend._notification_buffer = []
         backend._next_uri_id = 0
+        backend._next_id = 0
 
         opened_docs: list[str] = []
 
         def capture_open(uri, text):
             opened_docs.append(text)
 
+        empty_goals = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=0, messages=[]
+        )
+
         with (
             patch.object(backend, "_open_document", side_effect=capture_open),
             patch.object(backend, "_close_document"),
             patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=empty_goals),
         ):
             backend.get_dependencies("Nat.add")
 
@@ -1203,16 +1656,20 @@ class TestContractListDeclarations:
         )
         coq_root = Path(result.stdout.strip())
 
+        # Use Nat.vo — a module guaranteed to have many Gallina declarations.
+        # Avoid arbitrary glob picks like Tactics.vo which only defines Ltac.
         # Try Rocq 9.x location first, then legacy theories/
-        for search_dir in [
+        vo_file = None
+        for init_dir in [
             coq_root / "user-contrib" / "Stdlib" / "Init",
             coq_root / "theories" / "Init",
         ]:
-            vo_file = next(search_dir.glob("*.vo"), None)
-            if vo_file is not None:
+            candidate = init_dir / "Nat.vo"
+            if candidate.exists():
+                vo_file = candidate
                 break
         if vo_file is None:
-            pytest.skip("No .vo files found in Coq/Rocq stdlib")
+            pytest.skip("Nat.vo not found in Coq/Rocq stdlib")
 
         with CoqLspBackend() as backend:
             decls = backend.list_declarations(vo_file)

@@ -2,8 +2,9 @@
 
 Communicates with ``coq-lsp`` over stdin/stdout using the Language Server
 Protocol (Content-Length framed JSON-RPC).  Vernac commands are issued by
-opening synthetic ``.v`` documents; results come back as
-``textDocument/publishDiagnostics`` notifications.
+opening synthetic ``.v`` documents; ``textDocument/publishDiagnostics``
+signals that checking is complete, then ``proof/goals`` retrieves the
+per-sentence output (Search results, Print bodies, Check types, etc.).
 """
 
 from __future__ import annotations
@@ -25,9 +26,20 @@ logger = logging.getLogger(__name__)
 _SEARCH_LINE_RE = re.compile(r"^(\S+)\s*:\s*(.+)$")
 
 # Regex for parsing ``About`` output to extract the declaration kind.
+# Coq ≤8.x: "Nat.add is a Definition."
 _ABOUT_KIND_RE = re.compile(
     r"^(\S+)\s+is\s+(?:a\s+)?(.+?)(?:\.|$)", re.MULTILINE
 )
+
+# Rocq 9.x: "Expands to: Constant Corelib.Init.Nat.add"
+_EXPANDS_TO_RE = re.compile(r"^Expands to:\s+(\w+)\s", re.MULTILINE)
+
+# Map from Rocq 9.x "Expands to:" category to kind.
+_EXPANDS_TO_KIND: dict[str, str] = {
+    "constant": "definition",
+    "inductive": "inductive",
+    "constructor": "constructor",
+}
 
 # Regex for parsing ``Print Assumptions`` output.
 _ASSUMPTION_RE = re.compile(r"^\s*(\S+)\s*:\s*(.+)$", re.MULTILINE)
@@ -186,12 +198,12 @@ class CoqLspBackend:
     # ------------------------------------------------------------------
 
     def _wait_for_diagnostics(self, uri: str) -> list[dict[str, Any]]:
-        """Read messages until a non-empty publishDiagnostics arrives for *uri*.
+        """Read messages until publishDiagnostics arrives for *uri*.
 
-        coq-lsp sends an initial empty publishDiagnostics when a document is
-        opened (clearing previous state), followed by the real results after
-        checking completes.  We skip empty notifications to avoid returning
-        0 results for every module.
+        coq-lsp sends exactly one ``publishDiagnostics`` per document.  For
+        documents containing only Vernac queries (Search, Print, etc.) the
+        diagnostics list is empty — this is the normal document-ready signal.
+        The actual command output is retrieved via ``proof/goals`` afterwards.
         """
         # Check buffer first
         remaining: list[dict[str, Any]] = []
@@ -199,7 +211,6 @@ class CoqLspBackend:
             if (
                 msg.get("method") == "textDocument/publishDiagnostics"
                 and msg["params"]["uri"] == uri
-                and msg["params"]["diagnostics"]
             ):
                 self._notification_buffer = remaining
                 return msg["params"]["diagnostics"]
@@ -213,10 +224,7 @@ class CoqLspBackend:
                 msg.get("method") == "textDocument/publishDiagnostics"
                 and msg["params"]["uri"] == uri
             ):
-                if msg["params"]["diagnostics"]:
-                    return msg["params"]["diagnostics"]
-                # Skip empty diagnostics notification
-                continue
+                return msg["params"]["diagnostics"]
             self._notification_buffer.append(msg)
 
     # ------------------------------------------------------------------
@@ -307,33 +315,68 @@ class CoqLspBackend:
         self._next_uri_id += 1
         return uri
 
-    def _run_vernac_query(self, text: str) -> list[dict[str, Any]]:
-        """Open a synthetic document, wait for diagnostics, close it."""
+    def _run_vernac_query(
+        self, text: str, query_line: int = 0
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Open a synthetic document, wait for diagnostics, get proof/goals messages.
+
+        Returns ``(diagnostics, messages)``.  Diagnostics are used for error
+        detection (severity 1 = error); messages from ``proof/goals`` contain
+        the actual Vernac command output.
+        """
         uri = self._next_uri()
         self._open_document(uri, text)
         diags = self._wait_for_diagnostics(uri)
+
+        # Get sentence messages via proof/goals (skip if error diagnostics)
+        messages: list[dict[str, Any]] = []
+        if not any(d.get("severity") == 1 for d in diags):
+            goals_result = self._send_request(
+                "proof/goals",
+                {
+                    "textDocument": {"uri": uri},
+                    "position": {"line": query_line, "character": 0},
+                },
+            )
+            messages = goals_result.get("messages", [])
+
         self._close_document(uri)
-        return diags
+        return diags, messages
 
     def _get_declaration_kind(self, name: str) -> str:
         """Use ``About`` to determine the kind of a declaration."""
-        diags = self._run_vernac_query(f"About {name}.")
+        _diags, messages = self._run_vernac_query(f"About {name}.")
         all_text = "\n".join(
-            d["message"] for d in diags if d.get("severity", 3) != 1
+            m["text"] for m in messages if m.get("level", 3) != 1
         )
+
+        # Rocq 9.x: parse "Expands to: Constant/Inductive/Constructor ..."
+        expands_match = _EXPANDS_TO_RE.search(all_text)
+        if expands_match:
+            category = expands_match.group(1).lower()
+            if category in _EXPANDS_TO_KIND:
+                return _EXPANDS_TO_KIND[category]
+
+        # Coq ≤8.x: parse "X is a Definition/Lemma/Theorem."
         match = _ABOUT_KIND_RE.search(all_text)
         if match:
             raw_kind = match.group(2).strip().lower()
-            for key, value in _KIND_MAP.items():
-                if key in raw_kind:
-                    return value
+            # Skip non-kind matches like "not universe polymorphic"
+            if "universe" not in raw_kind and "transparent" not in raw_kind:
+                for key, value in _KIND_MAP.items():
+                    if key in raw_kind:
+                        return value
+                logger.warning(
+                    "Unknown declaration kind for %s: %r", name, raw_kind
+                )
+                return raw_kind
+
+        if "not a defined object" in all_text:
+            logger.debug("About failed for %s (not a defined object)", name)
+        else:
             logger.warning(
-                "Unknown declaration kind for %s: %r", name, raw_kind
+                "Could not determine kind for %s from About output", name
             )
-            return raw_kind
-        logger.warning(
-            "Could not determine kind for %s from About output", name
-        )
         return "definition"
 
     # ------------------------------------------------------------------
@@ -387,6 +430,25 @@ class CoqLspBackend:
                 continue
             msg = d["message"]
             match = _SEARCH_LINE_RE.match(msg)
+            if match:
+                results.append((match.group(1), match.group(2)))
+        return results
+
+    @staticmethod
+    def _parse_search_messages(
+        messages: list[dict[str, Any]],
+    ) -> list[tuple[str, str]]:
+        """Extract ``(name, type_sig)`` pairs from proof/goals messages.
+
+        Each message has ``{"text": "name : type_sig", "level": int}``.
+        Skips error messages (level 1).
+        """
+        results: list[tuple[str, str]] = []
+        for m in messages:
+            if m.get("level") == 1:
+                continue
+            text = m["text"]
+            match = _SEARCH_LINE_RE.match(text)
             if match:
                 results.append((match.group(1), match.group(2)))
         return results
@@ -445,7 +507,9 @@ class CoqLspBackend:
     ) -> list[tuple[str, str, Any]]:
         """List declarations from a compiled ``.vo`` file.
 
-        Returns a list of ``(name, kind, constr_t)`` tuples.
+        Returns a list of ``(name, kind, constr_t)`` tuples.  The Search
+        command is on line 1 of the synthetic document, so ``proof/goals``
+        must target line 1.
         """
         self._ensure_alive()
 
@@ -454,13 +518,13 @@ class CoqLspBackend:
             f"Require Import {logical_path}.\n"
             f"Search _ inside {logical_path}."
         )
-        diags = self._run_vernac_query(text)
+        diags, messages = self._run_vernac_query(text, query_line=1)
 
         # If there are error diagnostics, the Require likely failed
         if any(d.get("severity") == 1 for d in diags):
             return []
 
-        search_results = self._parse_search_diagnostics(diags)
+        search_results = self._parse_search_messages(messages)
         if not search_results:
             return []
 
@@ -479,34 +543,34 @@ class CoqLspBackend:
     def pretty_print(self, name: str) -> str:
         """Return the human-readable statement of a declaration."""
         self._ensure_alive()
-        diags = self._run_vernac_query(f"Print {name}.")
-        messages = [
-            d["message"] for d in diags if d.get("severity", 3) != 1
+        _diags, messages = self._run_vernac_query(f"Print {name}.")
+        texts = [
+            m["text"] for m in messages if m.get("level", 3) != 1
         ]
-        return "\n".join(messages).strip()
+        return "\n".join(texts).strip()
 
     def pretty_print_type(self, name: str) -> str | None:
         """Return the type signature of a declaration, or ``None``."""
         self._ensure_alive()
-        diags = self._run_vernac_query(f"Check {name}.")
+        diags, messages = self._run_vernac_query(f"Check {name}.")
         if any(d.get("severity") == 1 for d in diags):
             logger.warning("pretty_print_type failed for %s", name)
             return None
-        messages = [
-            d["message"] for d in diags if d.get("severity", 3) != 1
+        texts = [
+            m["text"] for m in messages if m.get("level", 3) != 1
         ]
-        if not messages:
+        if not texts:
             return None
-        return "\n".join(messages).strip() or None
+        return "\n".join(texts).strip() or None
 
     def get_dependencies(
         self, name: str
     ) -> list[tuple[str, str]]:
         """Return dependency pairs ``(target_name, relation)``."""
         self._ensure_alive()
-        diags = self._run_vernac_query(f"Print Assumptions {name}.")
+        _diags, messages = self._run_vernac_query(f"Print Assumptions {name}.")
         all_text = "\n".join(
-            d["message"] for d in diags if d.get("severity", 3) != 1
+            m["text"] for m in messages if m.get("level", 3) != 1
         )
 
         if "Closed under the global context" in all_text:
