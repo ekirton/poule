@@ -326,6 +326,7 @@ class TestInsertDependencies:
             writer.insert_dependencies([
                 {"src": decl_id, "dst": decl_id, "relation": "uses"},
             ])
+        writer.finalize()
 
 
 class TestInsertSymbolFreq:
@@ -417,12 +418,20 @@ def populated_db(tmp_db_path):
     return tmp_db_path, ids
 
 
+@pytest.fixture
+def reader(populated_db):
+    """Open an IndexReader on the populated database; close on teardown."""
+    db_path, ids = populated_db
+    r = IndexReader.open(db_path)
+    r._ids = ids  # attach for test access
+    yield r
+    r.close()
+
+
 class TestIndexReaderOpen:
     """IndexReader.open validates schema_version and opens read-only."""
 
-    def test_opens_valid_database(self, populated_db):
-        db_path, _ = populated_db
-        reader = IndexReader.open(db_path)
+    def test_opens_valid_database(self, reader):
         assert reader is not None
 
     def test_raises_index_not_found_for_missing_file(self, tmp_path):
@@ -440,10 +449,7 @@ class TestIndexReaderOpen:
         with pytest.raises(IndexVersionError):
             IndexReader.open(tmp_db_path)
 
-    def test_exposes_library_versions(self, populated_db):
-        db_path, _ = populated_db
-        reader = IndexReader.open(db_path)
-
+    def test_exposes_library_versions(self, reader):
         assert reader.coq_version == "8.19"
         assert reader.mathcomp_version == "2.2.0"
 
@@ -451,9 +457,8 @@ class TestIndexReaderOpen:
 class TestLoadWlHistograms:
     """load_wl_histograms returns decl_id → {h → histogram} map."""
 
-    def test_returns_all_histograms(self, populated_db):
-        db_path, ids = populated_db
-        reader = IndexReader.open(db_path)
+    def test_returns_all_histograms(self, reader):
+        ids = reader._ids
         histograms = reader.load_wl_histograms()
 
         id_a = ids["Coq.Init.Nat.add"]
@@ -461,9 +466,8 @@ class TestLoadWlHistograms:
         assert set(histograms[id_a].keys()) == {1, 3, 5}
         assert isinstance(histograms[id_a][3], dict)
 
-    def test_histograms_deserialized_from_json(self, populated_db):
-        db_path, ids = populated_db
-        reader = IndexReader.open(db_path)
+    def test_histograms_deserialized_from_json(self, reader):
+        ids = reader._ids
         histograms = reader.load_wl_histograms()
 
         id_a = ids["Coq.Init.Nat.add"]
@@ -473,9 +477,8 @@ class TestLoadWlHistograms:
 class TestLoadInvertedIndex:
     """load_inverted_index returns symbol → set[decl_id]."""
 
-    def test_returns_inverted_index(self, populated_db):
-        db_path, ids = populated_db
-        reader = IndexReader.open(db_path)
+    def test_returns_inverted_index(self, reader):
+        ids = reader._ids
         inv = reader.load_inverted_index()
 
         # "Coq.Init.Nat.add" appears in both declarations' symbol_set
@@ -483,9 +486,8 @@ class TestLoadInvertedIndex:
         assert ids["Coq.Init.Nat.add"] in inv["Coq.Init.Nat.add"]
         assert ids["Coq.Init.Nat.mul"] in inv["Coq.Init.Nat.add"]
 
-    def test_unique_symbol_maps_to_single_decl(self, populated_db):
-        db_path, ids = populated_db
-        reader = IndexReader.open(db_path)
+    def test_unique_symbol_maps_to_single_decl(self, reader):
+        ids = reader._ids
         inv = reader.load_inverted_index()
 
         # "Coq.Init.Nat.mul" only in mul's symbol_set
@@ -496,9 +498,7 @@ class TestLoadInvertedIndex:
 class TestLoadSymbolFrequencies:
     """load_symbol_frequencies returns symbol → freq map."""
 
-    def test_returns_frequencies(self, populated_db):
-        db_path, _ = populated_db
-        reader = IndexReader.open(db_path)
+    def test_returns_frequencies(self, reader):
         freqs = reader.load_symbol_frequencies()
 
         assert freqs["Coq.Init.Nat.add"] == 2
@@ -508,9 +508,7 @@ class TestLoadSymbolFrequencies:
 class TestGetDeclaration:
     """get_declaration returns a single row by name, or None."""
 
-    def test_returns_existing_declaration(self, populated_db):
-        db_path, _ = populated_db
-        reader = IndexReader.open(db_path)
+    def test_returns_existing_declaration(self, reader):
         decl = reader.get_declaration("Coq.Init.Nat.add")
 
         assert decl is not None
@@ -518,26 +516,22 @@ class TestGetDeclaration:
         assert decl["module"] == "Coq.Init.Nat"
         assert decl["kind"] == "definition"
 
-    def test_returns_none_for_missing(self, populated_db):
-        db_path, _ = populated_db
-        reader = IndexReader.open(db_path)
+    def test_returns_none_for_missing(self, reader):
         assert reader.get_declaration("Nonexistent.decl") is None
 
 
 class TestGetDeclarationsByIds:
     """get_declarations_by_ids returns rows for found IDs; omits missing."""
 
-    def test_returns_found_ids(self, populated_db):
-        db_path, ids = populated_db
-        reader = IndexReader.open(db_path)
+    def test_returns_found_ids(self, reader):
+        ids = reader._ids
         all_ids = list(ids.values())
         results = reader.get_declarations_by_ids(all_ids)
 
         assert len(results) == 2
 
-    def test_missing_ids_silently_omitted(self, populated_db):
-        db_path, ids = populated_db
-        reader = IndexReader.open(db_path)
+    def test_missing_ids_silently_omitted(self, reader):
+        ids = reader._ids
         results = reader.get_declarations_by_ids([ids["Coq.Init.Nat.add"], 99999])
 
         assert len(results) == 1
@@ -546,33 +540,25 @@ class TestGetDeclarationsByIds:
 class TestSearchFts:
     """search_fts returns declaration rows ranked by BM25, scores in [0, 1]."""
 
-    def test_returns_matching_results(self, populated_db):
-        db_path, _ = populated_db
-        reader = IndexReader.open(db_path)
+    def test_returns_matching_results(self, reader):
         results = reader.search_fts("add", limit=10)
 
         assert len(results) >= 1
         assert any(r["name"] == "Coq.Init.Nat.add" for r in results)
 
-    def test_scores_normalized_zero_to_one(self, populated_db):
-        db_path, _ = populated_db
-        reader = IndexReader.open(db_path)
+    def test_scores_normalized_zero_to_one(self, reader):
         results = reader.search_fts("Nat", limit=10)
 
         for r in results:
             assert 0.0 <= r["score"] <= 1.0
 
-    def test_respects_limit(self, populated_db):
-        db_path, _ = populated_db
-        reader = IndexReader.open(db_path)
+    def test_respects_limit(self, reader):
         results = reader.search_fts("Nat", limit=1)
 
         assert len(results) <= 1
 
-    def test_fts5_stemming_matches_stemmed_forms(self, populated_db):
+    def test_fts5_stemming_matches_stemmed_forms(self, reader):
         """Porter stemming should allow 'adds' to match 'add'."""
-        db_path, _ = populated_db
-        reader = IndexReader.open(db_path)
         results = reader.search_fts("adds", limit=10)
 
         # Porter stemmer reduces "adds" → "add", which should match
@@ -582,9 +568,8 @@ class TestSearchFts:
 class TestGetDependencies:
     """get_dependencies returns edges filtered by direction and relation."""
 
-    def test_outgoing_dependencies(self, populated_db):
-        db_path, ids = populated_db
-        reader = IndexReader.open(db_path)
+    def test_outgoing_dependencies(self, reader):
+        ids = reader._ids
 
         # mul depends on add (outgoing from mul)
         deps = reader.get_dependencies(
@@ -592,9 +577,8 @@ class TestGetDependencies:
         )
         assert len(deps) == 1
 
-    def test_incoming_dependencies(self, populated_db):
-        db_path, ids = populated_db
-        reader = IndexReader.open(db_path)
+    def test_incoming_dependencies(self, reader):
+        ids = reader._ids
 
         # add is depended on by mul (incoming to add)
         deps = reader.get_dependencies(
@@ -602,9 +586,8 @@ class TestGetDependencies:
         )
         assert len(deps) == 1
 
-    def test_filter_by_relation(self, populated_db):
-        db_path, ids = populated_db
-        reader = IndexReader.open(db_path)
+    def test_filter_by_relation(self, reader):
+        ids = reader._ids
 
         deps = reader.get_dependencies(
             ids["Coq.Init.Nat.mul"], direction="outgoing", relation="uses"
@@ -620,16 +603,13 @@ class TestGetDependencies:
 class TestGetDeclarationsByModule:
     """get_declarations_by_module returns all declarations in a module."""
 
-    def test_returns_module_declarations(self, populated_db):
-        db_path, _ = populated_db
-        reader = IndexReader.open(db_path)
+    def test_returns_module_declarations(self, reader):
         results = reader.get_declarations_by_module("Coq.Init.Nat", exclude_id=None)
 
         assert len(results) == 2
 
-    def test_excludes_specified_id(self, populated_db):
-        db_path, ids = populated_db
-        reader = IndexReader.open(db_path)
+    def test_excludes_specified_id(self, reader):
+        ids = reader._ids
         results = reader.get_declarations_by_module(
             "Coq.Init.Nat", exclude_id=ids["Coq.Init.Nat.add"]
         )
@@ -641,19 +621,14 @@ class TestGetDeclarationsByModule:
 class TestListModules:
     """list_modules returns Module entries with declaration counts."""
 
-    def test_returns_modules_with_counts(self, populated_db):
-        db_path, _ = populated_db
-        reader = IndexReader.open(db_path)
+    def test_returns_modules_with_counts(self, reader):
         modules = reader.list_modules("")
 
         assert len(modules) >= 1
         mod = next(m for m in modules if m["module"] == "Coq.Init.Nat")
         assert mod["count"] == 2
 
-    def test_filters_by_prefix(self, populated_db):
-        db_path, _ = populated_db
-        reader = IndexReader.open(db_path)
-
+    def test_filters_by_prefix(self, reader):
         results = reader.list_modules("Coq.Init")
         assert len(results) >= 1
 
@@ -749,15 +724,13 @@ class TestGetConstrTrees:
         writer.write_meta("created_at", "2026-03-16T00:00:00Z")
         writer.finalize()
 
-        reader = IndexReader.open(tmp_db_path)
-        trees = reader.get_constr_trees(list(ids.values()))
+        with IndexReader.open(tmp_db_path) as r:
+            trees = r.get_constr_trees(list(ids.values()))
 
         assert ids["A.with_tree"] in trees
         assert ids["A.without_tree"] not in trees
 
-    def test_empty_ids_returns_empty(self, populated_db):
-        db_path, _ = populated_db
-        reader = IndexReader.open(db_path)
+    def test_empty_ids_returns_empty(self, reader):
         trees = reader.get_constr_trees([])
 
         assert trees == {}

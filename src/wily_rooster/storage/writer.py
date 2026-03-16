@@ -135,18 +135,19 @@ class IndexWriter:
         self._conn.commit()
         self._conn.close()
 
+        conn = sqlite3.connect(str(self._db_path))
         try:
-            conn = sqlite3.connect(str(self._db_path))
             conn.execute(
                 "INSERT INTO declarations_fts(declarations_fts) VALUES('rebuild')"
             )
             conn.commit()
             result = conn.execute("PRAGMA integrity_check").fetchone()
-            conn.close()
         except Exception as e:
+            conn.close()
             if self._db_path.exists():
                 os.remove(self._db_path)
             raise StorageError(str(e)) from e
+        conn.close()
 
         if result[0] != "ok":
             if self._db_path.exists():
