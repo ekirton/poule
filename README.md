@@ -74,7 +74,7 @@ coqc --version
 
 ```bash
 # Clone the repository
-git clone <repo-url>
+git clone https://github.com/ekirton/wily-rooster.git
 cd wily-rooster
 
 # Install with uv
