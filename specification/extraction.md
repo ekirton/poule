@@ -48,9 +48,11 @@ The `About` response format is version-dependent:
 | Version | Format | Kind extraction |
 |---------|--------|----------------|
 | Coq ≤ 8.x | `<name> is [a] <Kind>.` | Extract `<Kind>` from the `is [a]` pattern |
-| Rocq 9.x | Multi-line; includes `Expands to: <Category> <path>` | Map `<Category>`: `Constant` → `definition`, `Inductive` → `inductive`, `Constructor` → `constructor` |
+| Rocq 9.x | Multi-line; includes `Expands to: <Category> <path>` | Map `<Category>`: `Constant` → `definition`, `Inductive` → `inductive`, `Constructor` → `constructor`, `Notation` → `notation` |
+| Rocq 9.x | `Ltac <path>` (single line) | Kind is `ltac` (excluded via §4.2) |
+| Rocq 9.x | `Module <path>` (single line) | Kind is `module` (excluded via §4.2) |
 
-**Parsing precedence (coq-lsp):** When both formats are present in the response, the Rocq 9.x `"Expands to:"` pattern takes precedence (it is more structured and less ambiguous than the `"is [a] <Kind>"` regex, which can false-match on non-kind lines).
+**Parsing precedence (coq-lsp):** The `About` response may contain multiple `Expands to:` lines. When a notation aliases a real constant, the response includes both `Expands to: Notation <path>` and `Expands to: Constant <path>` (or `Inductive`/`Constructor`). The backend shall prefer the first `Constant`, `Inductive`, or `Constructor` category over `Notation`. If only `Notation` categories are present, the kind is `"notation"` (excluded via §4.2). The Rocq 9.x `"Expands to:"` pattern takes precedence over the Coq ≤ 8.x `"is [a]"` pattern.
 
 **Fallback:** When `About` returns `"<name> not a defined object."` or no parseable kind information, the backend shall default to `"definition"`.
 
@@ -65,6 +67,18 @@ The `About` response format is version-dependent:
 > **Given** a declaration `Nat.add` in Coq 8.x where `About` returns `"Nat.add is a Definition."`,
 > **When** `list_declarations` processes this declaration,
 > **Then** the kind value is `"definition"` (Definition maps to definition via §4.2).
+
+> **Given** a notation `pred` in Rocq 9.x where `About` returns `Notation pred := Nat.pred\nExpands to: Notation Corelib.Init.Peano.pred\n...\nExpands to: Constant Corelib.Init.Nat.pred`,
+> **When** `list_declarations` processes this declaration,
+> **Then** the kind value is `"definition"` (the `Constant` category is preferred over `Notation`).
+
+> **Given** a tactic `reflexivity` in Rocq 9.x where `About` returns `Ltac Corelib.Init.Ltac.reflexivity`,
+> **When** `list_declarations` processes this declaration,
+> **Then** the kind value is `"ltac"` (excluded via §4.2).
+
+> **Given** a module `Decimal` in Rocq 9.x where `About` returns `Module Corelib.Init.Decimal`,
+> **When** `list_declarations` processes this declaration,
+> **Then** the kind value is `"module"` (excluded via §4.2).
 
 #### get_type(name)
 
@@ -102,10 +116,11 @@ The `About` response format is version-dependent:
 | `Instance` | `instance` |
 | `Axiom`, `Parameter`, `Conjecture` | `axiom` |
 | `Notation`, `Abbreviation`, `Section Variable` | *(excluded — not indexed)* |
+| `Ltac`, `Module` | *(excluded — not indexed)* |
 
 Excluded forms have no kernel term and shall be silently skipped.
 
-**Unknown kinds:** When the detected kind string does not match any row in the table above (including the excluded forms), `map_kind` shall return `"definition"`. The `map_kind` function shall return `None` only for explicitly excluded forms (Notation, Abbreviation, Section Variable). This prevents unknown kinds from silently dropping declarations from the index.
+**Unknown kinds:** When the detected kind string does not match any row in the table above (including the excluded forms), `map_kind` shall return `"definition"`. The `map_kind` function shall return `None` only for explicitly excluded forms (Notation, Abbreviation, Section Variable, Ltac, Module). This prevents unknown kinds from silently dropping declarations from the index.
 
 ### 4.3 Module Path Derivation
 

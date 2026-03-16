@@ -25,6 +25,8 @@ _EXCLUDED: frozenset[str] = frozenset({
     "notation",
     "abbreviation",
     "section variable",
+    "ltac",
+    "module",
 })
 
 

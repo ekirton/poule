@@ -83,6 +83,8 @@ class TestMapKindExcludedForms:
             "Notation",
             "Abbreviation",
             "Section Variable",
+            "Ltac",
+            "Module",
         ],
     )
     def test_excluded_form_returns_none(self, coq_form):
@@ -110,6 +112,10 @@ class TestMapKindCaseSensitivity:
             ("SECTION VARIABLE", None),
             ("notation", None),
             ("NOTATION", None),
+            ("ltac", None),
+            ("LTAC", None),
+            ("module", None),
+            ("MODULE", None),
         ],
     )
     def test_case_insensitive_input(self, coq_form, expected):

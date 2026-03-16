@@ -2075,6 +2075,56 @@ class TestParseAboutKind:
 
         assert CoqLspBackend._parse_about_kind("X", []) == "definition"
 
+    def test_rocq9_ltac_detected(self):
+        """Rocq 9.x: 'Ltac <path>' → ltac."""
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        msgs = [_make_sentence_message("Ltac Corelib.Init.Ltac.reflexivity")]
+        assert CoqLspBackend._parse_about_kind("reflexivity", msgs) == "ltac"
+
+    def test_rocq9_module_detected(self):
+        """Rocq 9.x: 'Module <path>' → module."""
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        msgs = [_make_sentence_message("Module Corelib.Init.Decimal")]
+        assert CoqLspBackend._parse_about_kind("Decimal", msgs) == "module"
+
+    def test_rocq9_notation_alias_prefers_constant(self):
+        """Rocq 9.x: notation aliasing a constant → definition (not notation).
+
+        When About output contains both 'Expands to: Notation ...' and
+        'Expands to: Constant ...', the Constant category takes precedence.
+        """
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        about_text = (
+            "Notation pred := Nat.pred\n"
+            "Expands to: Notation Corelib.Init.Peano.pred\n"
+            "Declared in library Corelib.Init.Peano, line 45, characters 0-41\n"
+            "\n"
+            "Nat.pred : nat -> nat\n"
+            "\n"
+            "Nat.pred is not universe polymorphic\n"
+            "Arguments Nat.pred n%_nat_scope\n"
+            "Nat.pred is transparent\n"
+            "Expands to: Constant Corelib.Init.Nat.pred\n"
+            "Declared in library Corelib.Init.Nat, line 39, characters 11-15"
+        )
+        msgs = [_make_sentence_message(about_text)]
+        assert CoqLspBackend._parse_about_kind("pred", msgs) == "definition"
+
+    def test_rocq9_pure_notation_detected(self):
+        """Rocq 9.x: notation with only 'Expands to: Notation' → notation."""
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        about_text = (
+            "Notation some_notation := ...\n"
+            "Expands to: Notation Corelib.Some.Path\n"
+            "Declared in library Corelib.Some, line 10, characters 0-30"
+        )
+        msgs = [_make_sentence_message(about_text)]
+        assert CoqLspBackend._parse_about_kind("some_notation", msgs) == "notation"
+
 
 @pytest.mark.requires_coq
 class TestContractQueryDeclarationData:

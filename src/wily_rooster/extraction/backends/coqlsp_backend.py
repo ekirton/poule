@@ -39,7 +39,14 @@ _EXPANDS_TO_KIND: dict[str, str] = {
     "constant": "definition",
     "inductive": "inductive",
     "constructor": "constructor",
+    "notation": "notation",
 }
+
+# Rocq 9.x: "Ltac Corelib.Init.Ltac.reflexivity" (tactic definition)
+_LTAC_RE = re.compile(r"^Ltac\s", re.MULTILINE)
+
+# Rocq 9.x: "Module Corelib.Init.Decimal" (module declaration)
+_MODULE_RE = re.compile(r"^Module\s", re.MULTILINE)
 
 # Regex for parsing ``Print Assumptions`` output.
 _ASSUMPTION_RE = re.compile(r"^\s*(\S+)\s*:\s*(.+)$", re.MULTILINE)
@@ -355,12 +362,27 @@ class CoqLspBackend:
         )
         logger.debug("About output for %s: %r", name, all_text)
 
-        # Rocq 9.x: parse "Expands to: Constant/Inductive/Constructor ..."
-        expands_match = _EXPANDS_TO_RE.search(all_text)
-        if expands_match:
-            category = expands_match.group(1).lower()
-            if category in _EXPANDS_TO_KIND:
-                return _EXPANDS_TO_KIND[category]
+        # Rocq 9.x: detect Ltac and Module formats before Expands-to
+        if _LTAC_RE.search(all_text):
+            return "ltac"
+        if _MODULE_RE.search(all_text):
+            return "module"
+
+        # Rocq 9.x: parse all "Expands to: <Category> ..." lines.
+        # Prefer Constant/Inductive/Constructor over Notation when both
+        # are present (notation aliasing a real constant).
+        expands_matches = _EXPANDS_TO_RE.findall(all_text)
+        if expands_matches:
+            notation_seen = False
+            for category_raw in expands_matches:
+                category = category_raw.lower()
+                kind = _EXPANDS_TO_KIND.get(category)
+                if kind and kind != "notation":
+                    return kind
+                if kind == "notation":
+                    notation_seen = True
+            if notation_seen:
+                return "notation"
 
         # Coq ≤8.x: parse "X is a Definition/Lemma/Theorem."
         match = _ABOUT_KIND_RE.search(all_text)

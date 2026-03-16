@@ -45,6 +45,8 @@ The `module` field on each declaration is the logical path of the `.vo` file fro
 
 Declaration kind is not always available directly from the backend's declaration listing. Some backends (e.g., coq-lsp) return only `(name, type_sig)` pairs and require a separate query per declaration to determine the kind. The kind detection mechanism is backend-dependent, and the response format may vary across Coq/Rocq versions. See the extraction specification (§4.1.1) for backend-specific detection contracts.
 
+In Rocq 9.x, the `About` response may include multiple `Expands to:` lines when a notation aliases a real constant (e.g., `pred` is a notation that expands to `Nat.pred`, which is a `Constant`). Kind detection must prefer the underlying constant/inductive/constructor category over the notation category when both are present. This ensures that notation aliases of indexable declarations remain in the index.
+
 ### Kind mapping
 
 Declaration kind values are stored as lowercase strings. The extraction layer maps Coq declaration forms to storage kinds and lowercases before storage.
@@ -68,6 +70,8 @@ Declaration kind values are stored as lowercase strings. The extraction layer ma
 | `Notation` | *(excluded)* | Not indexable — no kernel term |
 | `Abbreviation` | *(excluded)* | Not indexable — no kernel term |
 | `Section Variable` | *(excluded)* | Not present in closed `.vo` forms |
+| `Ltac` | *(excluded)* | Tactic definitions — no kernel term |
+| `Module` | *(excluded)* | Module declarations — no kernel term |
 
 ### Serialization
 
