@@ -6,6 +6,19 @@
 2. Read `data-models/expression-tree.md` and `data-models/index-entities.md` — these are **authoritative** for all entity names, node label names (e.g., `LAbs` not `LLambda`, `LLet` not `LLetIn`, `LPrimitive` not `LInt`), field types, constraints, and relationships. Architecture documents must use the exact names defined in the data model documents.
 3. When an entity appears in both a data model document and an architecture document, the data model document is authoritative for structure; the architecture document is authoritative for usage.
 
+## Upstream Authority Is Immutable
+
+Feature documents (`doc/features/`) and requirement documents (`doc/requirements/`) **must not be modified** when writing architecture documents. Architecture documents are derived from these sources — not the other way around.
+
+- If a feature document or requirement appears ambiguous, contradictory, or incomplete, file feedback with the relevant stakeholder — do not change the upstream document.
+
+## Data Model Authority
+
+Data model documents (`data-models/`) are authoritative for entity structure. Architecture documents **must not modify** data model documents. If an architecture document conflicts with a data model:
+
+- File feedback in `doc/architecture/feedback/` describing the conflict between the architecture document and the data model document.
+- Follow the feedback standards defined in `doc/architecture/feedback/CLAUDE.md`.
+
 ## Architecture Documents (Component Specifications)
 
 **Layer:** 3 — Design Specification

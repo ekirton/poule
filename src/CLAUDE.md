@@ -6,16 +6,17 @@ The `specification/*.md` files are the authoritative source for all implementati
 
 Authority chain: `specification/*.md` → `doc/architecture/` → `doc/features/` → `doc/requirements/`
 
-## Tests and Specifications Are Immutable
+## Upstream Authority Is Immutable
 
-Test files in `test/` and specification documents in `specification/` **must not be modified** when writing implementation code. Tests encode the specification contracts and were written first (TDD). Implementation must conform to both — not the other way around.
+Test files in `test/`, specification documents in `specification/`, architecture documents in `doc/architecture/`, and data model documents in `doc/architecture/data-models/` **must not be modified** when writing implementation code. Tests encode the specification contracts and were written first (TDD). Implementation must conform to all upstream layers — not the other way around.
 
 - If a test fails, fix the implementation — not the test.
 - If a test imports from a specific module path, create that module at that path.
 - If a test expects a specific function signature, implement that exact signature.
 - If a test expects a specific exception type, raise that exact exception.
-- If a specification appears ambiguous or incorrect, file feedback in `specification/feedback/` — do not change the spec.
-- If a test appears to conflict with its specification, file feedback in `test/feedback/` — do not change the test.
+- If a specification appears ambiguous or incorrect, file feedback in `specification/feedback/` — do not change the spec. Follow the feedback standards defined in `specification/feedback/CLAUDE.md`.
+- If a test appears to conflict with its specification, file feedback in `test/feedback/` — do not change the test. Follow the feedback standards defined in `test/feedback/CLAUDE.md`.
+- If an architecture or data model document conflicts with a specification, file feedback in `doc/architecture/feedback/`. Follow the feedback standards defined in `doc/architecture/feedback/CLAUDE.md`.
 
 ## Import Paths
 

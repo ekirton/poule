@@ -68,9 +68,22 @@ Example: feedback for `specification/storage.md` goes in `specification/feedback
 - **Delete empty feedback files.** When all issues in a feedback file are resolved and removed, delete the file. No empty feedback files.
 - **Number issues sequentially.** Renumber after deletions to keep the sequence contiguous.
 
+## Resolving Feedback
+
+When asked to resolve a feedback file, follow this workflow for each issue:
+
+1. **Read the feedback issue.** Understand the claimed problem, the affected spec section, and the suggested resolution.
+2. **Read the upstream authority.** Read the architecture document and data model documents that the specification is derived from. Identify the authoritative definition for the behavior in question.
+3. **Determine the root cause:**
+   - **Specification is wrong:** The spec conflicts with the architecture or data model document. The upstream authority is correct. Fix the specification to match the upstream authority.
+   - **Architecture is wrong:** The spec is correct (or the issue originates upstream). The architecture or data model document is ambiguous, contradictory, or incomplete. Do not change the architecture document. Instead, file detailed feedback in `doc/architecture/feedback/` following the standards in `doc/architecture/feedback/CLAUDE.md`.
+4. **Remove the resolved issue** from the feedback file. Do not mark it as resolved — delete it entirely.
+5. **Delete the feedback file** if all issues have been removed. No empty feedback files.
+
 ## Lifecycle
 
 1. **Created** during implementation planning or code generation when a spec problem is found.
 2. **Read** by the specifier during the next specification revision pass.
-3. **Issues removed** as the specifier resolves them in the source specification. Do not mark as resolved — delete the issue entirely.
-4. **File deleted** when all issues are resolved and removed (no empty feedback files).
+3. **Issues resolved** by fixing the specification or escalating to the upstream layer's feedback folder.
+4. **Issues removed** from the feedback file after resolution. Do not mark as resolved — delete entirely.
+5. **File deleted** when all issues are resolved and removed (no empty feedback files).

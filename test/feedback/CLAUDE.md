@@ -68,9 +68,23 @@ Example: feedback for `test/test_storage.py` goes in `test/feedback/storage.md`.
 - **Delete empty feedback files.** When all issues in a feedback file are resolved and removed, delete the file. No empty feedback files.
 - **Number issues sequentially.** Renumber after deletions to keep the sequence contiguous.
 
+## Resolving Feedback
+
+When asked to resolve a feedback file, follow this workflow for each issue:
+
+1. **Read the feedback issue.** Understand the claimed problem, the affected test, and the suggested resolution.
+2. **Read the upstream authority.** Read the specification (and if needed, the architecture or data model document) that the test is derived from. Identify the authoritative definition for the behavior under test.
+3. **Determine the root cause:**
+   - **Test is wrong:** The test assertion conflicts with the specification. The specification is correct. Fix the test to match the spec. Run the test to verify it passes.
+   - **Specification is wrong:** The test is correct but the specification is ambiguous, contradictory, or incomplete. Do not change the specification. Instead, file detailed feedback in `specification/feedback/` following the standards in `specification/feedback/CLAUDE.md`. Note in the feedback that the test expects a specific behavior and explain the discrepancy.
+   - **Architecture is wrong:** The conflict originates in an architecture or data model document. Do not change the architecture document. Instead, file detailed feedback in `doc/architecture/feedback/` following the standards in `doc/architecture/feedback/CLAUDE.md`.
+4. **Remove the resolved issue** from the feedback file. Do not mark it as resolved — delete it entirely.
+5. **Delete the feedback file** if all issues have been removed. No empty feedback files.
+
 ## Lifecycle
 
 1. **Created** during implementation or code generation when a test problem is found.
 2. **Read** by the test author during the next test revision pass.
-3. **Issues removed** as the test author resolves them in the test file.
-4. **File deleted** when all issues are resolved (no empty feedback files).
+3. **Issues resolved** by fixing the test or escalating to the upstream layer's feedback folder.
+4. **Issues removed** from the feedback file after resolution. Do not mark as resolved — delete entirely.
+5. **File deleted** when all issues are resolved and removed (no empty feedback files).

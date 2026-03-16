@@ -38,7 +38,7 @@ class TestSymbolWeight:
 
         w = symbol_weight(1_000_000)
         assert w > 1.0
-        assert w < 1.01  # Very close to 1.0
+        assert w < 1.2  # 1.0 + 2.0 / log2(1_000_001) ≈ 1.1003
 
 
 # ---------------------------------------------------------------------------

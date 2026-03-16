@@ -13,6 +13,14 @@ Specifications are **derived from** architecture documents (`doc/architecture/`)
 
 **Cross-spec consistency:** When referencing types, labels, or contracts defined in another specification, read that specification to verify the names and signatures match. Do not assume — check.
 
+## Upstream Authority Is Immutable
+
+Architecture documents (`doc/architecture/`) and data model documents (`doc/architecture/data-models/`) **must not be modified** when writing specifications. Specifications are derived from these sources — not the other way around.
+
+- If an architecture document appears ambiguous, contradictory, or incomplete, file feedback in `doc/architecture/feedback/` — do not change the architecture document.
+- If a data model document conflicts with an architecture document, file feedback in `doc/architecture/feedback/` citing both sources.
+- Follow the feedback standards defined in `doc/architecture/feedback/CLAUDE.md`.
+
 ## Core Principle
 
 Specification misunderstanding — not model capability — is the primary cause of code generation failure. Every sentence must earn its place by adding information the implementer needs to make a decision. Noise actively degrades output quality.

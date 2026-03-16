@@ -68,9 +68,23 @@ Example: feedback for `doc/architecture/retrieval-pipeline.md` goes in `doc/arch
 - **Delete empty feedback files.** When all issues in a feedback file are resolved and removed, delete the file. No empty feedback files.
 - **Number issues sequentially.** Renumber after deletions to keep the sequence contiguous.
 
+## Resolving Feedback
+
+When asked to resolve a feedback file, follow this workflow for each issue:
+
+1. **Read the feedback issue.** Understand the claimed problem, the affected section, and the suggested resolution.
+2. **Read the upstream authority.** Read the data model documents and any related requirements or feature documents. Identify the authoritative definition for the design element in question.
+3. **Determine the root cause:**
+   - **Architecture document is wrong:** The document conflicts with the data model or misinterprets the requirements. The upstream authority is correct. Fix the architecture document to match the upstream authority.
+   - **Data model is wrong:** The conflict originates in a data model document. The architecture document's intent is correct but the data model is ambiguous or contradictory. Fix the data model document if you are the data model owner. Otherwise, escalate to the data model owner.
+   - **Requirements are wrong or ambiguous:** The conflict originates upstream of architecture. Do not change the requirements. Escalate to the relevant stakeholder.
+4. **Remove the resolved issue** from the feedback file. Do not mark it as resolved — delete it entirely.
+5. **Delete the feedback file** if all issues have been removed. No empty feedback files.
+
 ## Lifecycle
 
 1. **Created** during specification writing or implementation planning when an architecture problem is found.
 2. **Read** by the architect during the next architecture revision pass.
-3. **Issues removed** as the architect resolves them in the source document.
-4. **File deleted** when all issues are resolved (no empty feedback files).
+3. **Issues resolved** by fixing the architecture document or escalating to the upstream authority owner.
+4. **Issues removed** from the feedback file after resolution. Do not mark as resolved — delete entirely.
+5. **File deleted** when all issues are resolved and removed (no empty feedback files).

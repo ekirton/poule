@@ -396,8 +396,8 @@ class TestNodeCountUpdated:
 
         cse_normalize(tree)
 
-        # After CSE: Prod(App(Ind, Ind), CseVar(0)) -> 4 nodes
-        assert tree.node_count == 4
+        # After CSE: Prod(App(Ind, Ind), CseVar(0)) -> 5 nodes
+        assert tree.node_count == 5
 
 
 # ---------------------------------------------------------------------------
@@ -660,8 +660,8 @@ class TestSpecExamples:
         assert second.label.id == 0
         assert second.children == []
 
-        # Node count reduced
-        assert tree.node_count == 4
+        # Node count reduced: LProd + LApp + LInd(list) + LInd(nat) + LCseVar(0) = 5
+        assert tree.node_count == 5
 
 
 # ---------------------------------------------------------------------------

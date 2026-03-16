@@ -12,7 +12,10 @@
 2. Read its parent architecture document (linked at the top of the spec).
 3. Read `doc/architecture/data-models/expression-tree.md` and `doc/architecture/data-models/index-entities.md` — these are authoritative for all entity names, node labels, field types, and constraints. All names in tasks must match the data model documents exactly.
 4. Read cross-referenced specification documents to verify interface contracts match.
-5. If a specification contradicts a data model or architecture document, file feedback in `specification/feedback/` rather than silently adopting the incorrect name.
+5. If a specification contradicts a data model or architecture document, file feedback in `specification/feedback/` rather than silently adopting the incorrect name. Follow the feedback standards defined in `specification/feedback/CLAUDE.md`.
+6. If an architecture or data model document appears ambiguous or contradictory, file feedback in `doc/architecture/feedback/`. Follow the feedback standards defined in `doc/architecture/feedback/CLAUDE.md`.
+
+**Upstream authority is immutable.** Specification documents (`specification/`), architecture documents (`doc/architecture/`), and data model documents (`doc/architecture/data-models/`) must not be modified when writing task breakdowns.
 
 **When generating task breakdowns:**
 
