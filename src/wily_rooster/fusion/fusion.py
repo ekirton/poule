@@ -1,0 +1,144 @@
+"""Metric fusion: collapse match, structural score, and Reciprocal Rank Fusion.
+
+Implements the fusion strategies defined in specification/fusion.md.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Sequence
+
+from wily_rooster.models.labels import (
+    LAbs,
+    LApp,
+    LCase,
+    LCoFix,
+    LConst,
+    LConstruct,
+    LCseVar,
+    LFix,
+    LInd,
+    LLet,
+    LPrimitive,
+    LProd,
+    LProj,
+    LRel,
+    LSort,
+    NodeLabel,
+)
+from wily_rooster.models.tree import ExprTree, TreeNode
+
+
+# ---------------------------------------------------------------------------
+# Category mapping
+# ---------------------------------------------------------------------------
+
+_CATEGORY_MAP: dict[type, str] = {
+    LAbs: "Binder",
+    LProd: "Binder",
+    LLet: "Binder",
+    LApp: "Application",
+    LConst: "ConstantRef",
+    LInd: "ConstantRef",
+    LConstruct: "ConstantRef",
+    LRel: "Variable",
+    LCseVar: "Variable",
+    LSort: "Sort",
+    LCase: "Control",
+    LFix: "Control",
+    LCoFix: "Control",
+    LProj: "Projection",
+    LPrimitive: "Primitive",
+}
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def clamp_score(score: float) -> float:
+    """Clamp *score* to [0.0, 1.0]."""
+    return max(0.0, min(1.0, score))
+
+
+def node_category(label: NodeLabel) -> str:
+    """Return the category string for a given node label."""
+    return _CATEGORY_MAP[type(label)]
+
+
+def collapse_match(tree_a: ExprTree, tree_b: ExprTree) -> float:
+    """Recursive structural similarity between two expression trees.
+
+    Returns a float in [0.0, 1.0].
+    """
+    score_sum = _collapse_node(tree_a.root, tree_b.root)
+    denominator = max(tree_a.node_count, tree_b.node_count)
+    if denominator == 0:
+        return 0.0
+    return score_sum / denominator
+
+
+def structural_score(
+    wl: float,
+    ted: float,
+    cm: float,
+    cj: float,
+    *,
+    has_ted: bool,
+) -> float:
+    """Weighted sum of fine-ranking channel scores.
+
+    When *has_ted* is True the TED weight is included; otherwise the weight
+    is redistributed across the remaining channels.
+    """
+    if has_ted:
+        return 0.15 * wl + 0.40 * ted + 0.30 * cm + 0.15 * cj
+    return 0.25 * wl + 0.50 * cm + 0.25 * cj
+
+
+def rrf_fuse(
+    ranked_lists: Sequence[Sequence[str]],
+    k: int = 60,
+) -> list[tuple[str, float]]:
+    """Reciprocal Rank Fusion over multiple ranked ID lists.
+
+    Each element of *ranked_lists* is a sequence of declaration IDs ordered by
+    score descending.  Returns ``[(decl_id, rrf_score), ...]`` sorted by RRF
+    score descending.
+    """
+    scores: dict[str, float] = defaultdict(float)
+    for ranked in ranked_lists:
+        for rank_0, decl_id in enumerate(ranked):
+            scores[decl_id] += 1.0 / (k + rank_0 + 1)  # 1-based rank
+    # Sort descending by score, then by insertion order for ties (stable sort)
+    return sorted(scores.items(), key=lambda item: item[1], reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _collapse_node(a: TreeNode, b: TreeNode) -> float:
+    """Return the sum of node-level scores for the subtree pair."""
+    cat_a = node_category(a.label)
+    cat_b = node_category(b.label)
+
+    if cat_a != cat_b:
+        # Different category: 0.0, no recursion.
+        return 0.0
+
+    # Same category — determine node score.
+    if type(a.label) is type(b.label):
+        node_score = 1.0
+    else:
+        node_score = 0.5
+
+    # Recurse into children pairwise.
+    paired = min(len(a.children), len(b.children))
+    child_score = 0.0
+    for i in range(paired):
+        child_score += _collapse_node(a.children[i], b.children[i])
+
+    return node_score + child_score

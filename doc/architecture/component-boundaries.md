@@ -94,8 +94,9 @@ Compiled .vo files (external)
 
 | Architecture Document | Produces Specifications |
 |----------------------|----------------------|
-| [coq-extraction.md](coq-extraction.md) | Extraction pipeline spec |
+| [data-models/](data-models/) | [specification/data-structures.md](../../specification/data-structures.md) |
+| [coq-extraction.md](coq-extraction.md) | [specification/extraction.md](../../specification/extraction.md) |
 | [coq-normalization.md](coq-normalization.md) | [specification/coq-normalization.md](../../specification/coq-normalization.md), [specification/cse-normalization.md](../../specification/cse-normalization.md) |
-| [storage.md](storage.md) | Storage schema spec |
-| [retrieval-pipeline.md](retrieval-pipeline.md) | [specification/pipeline.md](../../specification/pipeline.md), [specification/fusion.md](../../specification/fusion.md) |
-| [mcp-server.md](mcp-server.md) | MCP server spec (tool signatures, error contract) |
+| [storage.md](storage.md) | [specification/storage.md](../../specification/storage.md) |
+| [retrieval-pipeline.md](retrieval-pipeline.md) | [specification/pipeline.md](../../specification/pipeline.md), [specification/fusion.md](../../specification/fusion.md), [specification/channel-wl-kernel.md](../../specification/channel-wl-kernel.md), [specification/channel-mepo.md](../../specification/channel-mepo.md), [specification/channel-fts.md](../../specification/channel-fts.md), [specification/channel-ted.md](../../specification/channel-ted.md), [specification/channel-const-jaccard.md](../../specification/channel-const-jaccard.md) |
+| [mcp-server.md](mcp-server.md) | [specification/mcp-server.md](../../specification/mcp-server.md) |
