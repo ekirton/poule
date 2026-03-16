@@ -10,7 +10,19 @@ Based on the MePo algorithm (see [doc/background/tree-based-retrieval.md](../doc
 
 ---
 
-## Symbol Weight Function
+## 1. Purpose
+
+Retrieve declarations that share mathematical symbols with the query, using inverse-frequency weighting to prioritize declarations sharing rare (more informative) symbols. The iterative expansion discovers transitive relevance — declarations that share symbols with already-selected declarations.
+
+---
+
+## 2. Scope
+
+Covers the symbol weight function, relevance scoring, iterative selection algorithm, and offline precomputation. Does not cover symbol extraction from expression trees (see [extraction.md](extraction.md)) or how MePo results are fused with other channels (see [fusion.md](fusion.md)).
+
+---
+
+## 3. Symbol Weight Function
 
 ```
 function symbol_weight(symbol, freq_table):
@@ -22,7 +34,7 @@ Rare symbols (low frequency) get high weight. A symbol appearing in 1 declaratio
 
 ---
 
-## Relevance Score
+## 4. Relevance Score
 
 For a candidate declaration `d` with symbol set `symbols(d)`, and the current working symbol set `S`:
 
@@ -37,7 +49,7 @@ function relevance(d, S, freq_table):
 
 ---
 
-## Iterative Selection
+## 5. Iterative Selection
 
 MePo selects declarations in rounds. Each round adds new symbols from selected declarations, allowing transitive relevance discovery.
 
@@ -75,7 +87,7 @@ function mepo_select(query_symbols, library, freq_table, p=0.6, c=2.4, max_round
 
 ---
 
-## Offline Precomputation
+## 6. Offline Precomputation
 
 1. For each declaration, extract its symbol set (all `LConst`, `LInd`, `LConstruct` names from the expression tree). Store in `declarations.symbol_set` as a JSON array.
 2. Build the global `symbol_freq` table by counting how many declarations each symbol appears in.
@@ -83,9 +95,57 @@ function mepo_select(query_symbols, library, freq_table, p=0.6, c=2.4, max_round
 
 ---
 
-## Online Query
+## 7. Online Query
 
 1. Extract symbols from the query expression.
 2. Run iterative selection.
 3. Return results with scores.
 
+---
+
+## 8. Error Specification
+
+| Error Condition | Classification | Outcome |
+|-----------------|---------------|---------|
+| Query has no extractable symbols | Edge case | Return empty result list |
+| Symbol not found in `freq_table` | Dependency error | Treat as frequency 1 (maximally rare); log warning |
+| Declaration has empty symbol set | Edge case | Relevance is 0.0 (denominator is 0); never selected |
+| All declarations filtered below threshold in every round | Normal case | Return empty result list |
+| `log2(f + 1)` produces 0 (f=0) | Edge case | `log2(1)` = 0; formula yields division by zero. Guard: if `f == 0`, return weight 3.0 (same as `f = 1`) |
+
+---
+
+## 9. Examples
+
+### Example: Single-round selection
+
+**Given**: Query symbols: `{Nat.add, Nat.S}`. Library has 3 declarations:
+- D1: symbols `{Nat.add, Nat.S, Nat.O}`, all with freq=100
+- D2: symbols `{Nat.mul, Nat.S}`, all with freq=100
+- D3: symbols `{List.map, List.cons}`, all with freq=50
+
+Weights at freq=100: `1.0 + 2.0/log2(101)` ≈ 1.30. All symbols have similar weight.
+
+**When**: `mepo_select({Nat.add, Nat.S}, library, freq_table, p=0.6)` runs round 0 (threshold=0.6).
+
+**Then**:
+- D1: overlap = `{Nat.add, Nat.S}`, 2 of 3 symbols. Relevance ≈ 2/3 = 0.67 ≥ 0.6 → **selected**
+- D2: overlap = `{Nat.S}`, 1 of 2 symbols. Relevance = 0.50 < 0.6 → **not selected in round 0**
+- D3: overlap = `{}`, 0 of 2 symbols. Relevance = 0.0 → **not selected**
+
+After round 0: S expands to `{Nat.add, Nat.S, Nat.O}`.
+
+Round 1 (threshold ≈ 0.25): D2 relevance with expanded S = `{Nat.S}` / `{Nat.mul, Nat.S}` = 0.50 ≥ 0.25 → **selected**.
+
+### Example: Rare symbol boost
+
+**Given**: Query symbols: `{MyProject.custom_lemma}` (appears in only 2 declarations). Library declaration D1 has symbols `{MyProject.custom_lemma, Nat.add}` where `Nat.add` has freq=5000.
+
+**When**: Relevance of D1 is computed.
+
+**Then**:
+- Weight of `MyProject.custom_lemma`: `1.0 + 2.0/log2(3)` ≈ 2.26
+- Weight of `Nat.add`: `1.0 + 2.0/log2(5001)` ≈ 1.16
+- Relevance = 2.26 / (2.26 + 1.16) ≈ 0.66
+
+The rare symbol contributes disproportionately to relevance, making D1 likely to pass the 0.6 threshold despite only 1 of 2 symbols matching.

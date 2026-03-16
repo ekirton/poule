@@ -8,7 +8,19 @@ Pipeline: [pipeline.md](pipeline.md)
 
 ---
 
-## Reciprocal Rank Fusion
+## 1. Purpose
+
+Provide parameter-free rank combination so that items appearing in multiple retrieval channels rank higher than items appearing in only one. Fine-ranking metric fusion handles structural sub-channels; RRF handles cross-channel combination.
+
+---
+
+## 2. Scope
+
+Covers the RRF algorithm, fine-ranking weighted sums, and collapse-match similarity. Does not cover individual channel scoring (see channel specs) or the orchestration that decides which channels to invoke (see [pipeline.md](pipeline.md)).
+
+---
+
+## 3. Reciprocal Rank Fusion
 
 All channels produce independent ranked lists. RRF combines them without learned weights.
 
@@ -40,7 +52,7 @@ Each MCP search tool invokes a different subset of channels:
 
 ---
 
-## Fine-Ranking Metric Fusion
+## 4. Fine-Ranking Metric Fusion
 
 When multiple structural metrics are computed for the same candidate (from `search_by_structure`), they are combined with a weighted sum before RRF fusion with other channels.
 
@@ -107,3 +119,58 @@ This metric is asymmetric: it measures how well the query structure appears with
 
 The `same_category` grouping uses the same node categories as the TED cost model (see [channel-ted.md](channel-ted.md#cost-model)).
 
+---
+
+## 5. Error Specification
+
+| Error Condition | Classification | Outcome |
+|-----------------|---------------|---------|
+| All input ranked lists are empty | Normal case | Return empty fused list |
+| Single ranked list provided to RRF | Normal case | Return that list re-scored with RRF formula (ranks preserved) |
+| `collapse_match` receives tree with unbounded depth (stack overflow risk) | Invariant violation | Cap recursion depth at 200; return 0.0 beyond |
+| `wl_cosine`, `ted_similarity`, `const_jaccard`, or `collapse_match` returns value outside [0, 1] | Invariant violation | Clamp to [0, 1]; log warning |
+
+**Design rule**: Fusion never fails. Degenerate inputs produce degenerate (empty or single-source) outputs.
+
+---
+
+## 6. Examples
+
+### Example: RRF with 3 channels
+
+**Given**: Three ranked lists for `search_by_type`:
+- WL channel: `[D1, D2, D3]` (D1 at rank 1)
+- MePo channel: `[D2, D4, D1]`
+- FTS5 channel: `[D3, D1, D5]`
+
+**When**: `rrf_fuse([wl, mepo, fts5], k=60)`.
+
+**Then**: RRF scores (k=60):
+- D1: 1/(60+1) + 1/(60+3) + 1/(60+2) = 0.01639 + 0.01587 + 0.01613 = **0.04839**
+- D2: 1/(60+2) + 1/(60+1) = 0.01613 + 0.01639 = **0.03252**
+- D3: 1/(60+3) + 1/(60+1) = 0.01587 + 0.01639 = **0.03226**
+- D4: 1/(60+2) = **0.01613**
+- D5: 1/(60+3) = **0.01587**
+
+Final ranking: D1, D2, D3, D4, D5. D1 ranks first because it appears in all 3 channels.
+
+### Example: Fine-ranking with TED available
+
+**Given**: Query tree has 20 nodes. Candidate C has 30 nodes. Metrics:
+- `wl_cosine(query, C)` = 0.82
+- `ted_similarity(query, C)` = 0.65
+- `collapse_match(query, C)` = 0.71
+- `const_jaccard(query, C)` = 0.50
+
+**When**: Both trees ≤ 50 nodes, so TED formula applies.
+
+**Then**: `structural_score = 0.15*0.82 + 0.40*0.65 + 0.30*0.71 + 0.15*0.50 = 0.123 + 0.260 + 0.213 + 0.075 = 0.671`
+
+### Example: Fine-ranking without TED
+
+**Given**: Query tree has 80 nodes (> 50). Same candidate C with:
+- `wl_cosine` = 0.82, `collapse_match` = 0.71, `const_jaccard` = 0.50
+
+**When**: Query exceeds 50 nodes, so no-TED formula applies.
+
+**Then**: `structural_score = 0.25*0.82 + 0.50*0.71 + 0.25*0.50 = 0.205 + 0.355 + 0.125 = 0.685`
