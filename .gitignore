@@ -9,3 +9,6 @@ dist/
 build/
 .venv/
 .coverage
+
+# Generated artifacts
+index.db
