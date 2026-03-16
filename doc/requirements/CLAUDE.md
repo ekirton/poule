@@ -4,6 +4,8 @@
 
 **Location:** `doc/requirements/<product-or-initiative>.md`
 
+**Authority:** PRDs are the **top-level authority** for project scope, goals, and priorities. All downstream documents — user stories, features, architecture, specifications, and tasks — must be traceable to PRD requirements. PRDs are not derived from any other project document.
+
 **When writing or editing PRDs:**
 
 - Write in business domain language with no technical details.

@@ -1,5 +1,11 @@
 # Specification Feedback Writing Guidelines
 
+## Authority
+
+Feedback documents are informed by the authority chain: data model documents (`doc/architecture/data-models/`) → architecture documents (`doc/architecture/`) → specifications (`specification/`). When filing feedback, verify the issue against the authoritative source before reporting it.
+
+**Before writing feedback:** Read the specification's parent architecture document and the relevant data model documents (`doc/architecture/data-models/expression-tree.md`, `doc/architecture/data-models/index-entities.md`). An apparent spec issue may already be resolved in the authoritative source — in that case, the feedback should cite the authoritative source and recommend aligning the spec with it.
+
 ## Purpose
 
 Feedback documents capture issues, ambiguities, and gaps discovered in specification files during implementation planning or code generation. They exist to inform the specifier — not to fix the spec directly.

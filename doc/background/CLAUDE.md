@@ -8,6 +8,8 @@ Read `index.md` to understand what documents exist in this directory and their p
 
 **Location:** `doc/background/<topic>.md`
 
+**Authority:** Research documents are **reference material** — they inform but do not constrain any other layer. They have no downstream authority. No other document is derived from research documents; instead, they provide evidence that supports or challenges design decisions made in feature and architecture documents.
+
 **When writing or editing research documents:**
 
 - Capture background research: technology surveys, current art, academic literature reviews, benchmarks.

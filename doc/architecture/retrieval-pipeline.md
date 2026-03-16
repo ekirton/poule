@@ -13,9 +13,9 @@ Technical design for the multi-channel retrieval pipeline and fusion logic.
 ### search_by_structure
 
 ```
-1. Parse the query expression (via coq-lsp or the Coq parser)
-2. coq_normalize(constr_t)              → normalized expr_tree
-3. cse_normalize(tree)                   → CSE-reduced tree
+1. Parse the query expression (via coq-lsp) → ConstrNode (parser lifecycle owned by pipeline; started on first structural query, kept alive for server lifetime)
+2. coq_normalize(constr_node)            → normalized ExprTree (includes constr_to_tree + recompute_depths + assign_node_ids)
+3. cse_normalize(tree)                   → CSE-reduced tree (recomputes depths + node_ids)
 4. wl_histogram(tree, h=3)              → query histogram
 5. wl_screen(histogram, library, N=500) → top-500 WL candidates
 6. For candidates with node_count ≤ 50:
@@ -31,27 +31,30 @@ Technical design for the multi-channel retrieval pipeline and fusion logic.
 ### search_by_type (multi-channel)
 
 ```
-1. Parse the type expression
-2. Run WL screening pipeline (above)    → structural ranked list
-3. Extract symbols, run MePo            → symbol ranked list
-4. Run FTS5 query on pretty-printed type → lexical ranked list
-5. rrf_fuse([structural, symbol, lexical], k=60) → final ranked list
+1. Parse and normalize the type expression (once — shared across all channels)
+2. Run WL screening pipeline (above)                 → structural ranked list
+3. Extract symbols from normalized tree, run MePo     → symbol ranked list
+4. Run FTS5 query (`fts_query`) on the original user-provided type_expr string → lexical ranked list
+5. rrf_fuse([structural, symbol, lexical], k=60)      → final ranked list
 6. Return top-N results
 ```
+
+Note: `extract_symbols` at query time is equivalent to `extract_consts` (const-jaccard) operating on the `ExprTree`. Implementations should reuse `extract_consts`.
 
 ### search_by_symbols
 
 ```
-1. Receive symbol list from caller
+1. Accept a symbol list directly from the caller
 2. Run MePo iterative selection (p=0.6, c=2.4, max_rounds=5)
-3. Optionally compute const_jaccard for top candidates
-4. Return ranked results
+3. Return ranked results
 ```
+
+Note: Const Jaccard refinement for `search_by_symbols` is deferred to Phase 2.
 
 ### search_by_name
 
 ```
-1. Preprocess query for FTS5 (qualified name → AND terms, escape specials)
+1. Preprocess query for FTS5 via fts_query (qualified name → split on "." → AND terms, escape specials)
 2. Run FTS5 MATCH with BM25 weights (name=10.0, statement=1.0, module=5.0)
 3. Return ranked results
 ```
@@ -59,13 +62,23 @@ Technical design for the multi-channel retrieval pipeline and fusion logic.
 ## WL Kernel Screening
 
 Precompute WL histogram vectors for all declarations at h=3. On query:
-1. Extract and normalize the query expression
+1. Parse and normalize the query expression (normalization happens once and the normalized tree is shared across all channels — structural scoring, symbol extraction, and FTS)
 2. Compute WL histogram at h=3
-3. Apply size filter (ratio threshold 1.2 for small, 1.8 for large expressions)
-4. Cosine similarity against all precomputed vectors (sparse dot product)
+3. Apply size filter (see size filter thresholds below)
+4. Cosine similarity against all precomputed vectors (sparse dot product, producing a float result)
 5. Return top-N candidates (N=200-500, tunable for recall)
 
 Sub-second on 100K items. Histograms loaded into memory at server startup (~100MB for 100K declarations).
+
+**Critical constraint**: The query h value must match the indexed h value. Comparing histograms computed at different h values produces meaningless similarity scores because the label spaces differ.
+
+**MD5 encoding**: All MD5 calls (in WL labeling and CSE hashing) produce lowercase 32-character hex strings from UTF-8-encoded input. This applies uniformly to all WL iterations including iteration 0: the simplified label string (e.g., `"Prod_d0"`) is MD5-hashed before being stored as a histogram key. This ensures all histogram keys have a uniform format (32-character lowercase hex).
+
+**node_count definition**: `node_count` is computed on the post-CSE-normalized tree. Both the stored declaration `node_count` and the online query `node_count` must use the same measurement point for size filter consistency.
+
+**Size filter thresholds**: For queries with fewer than 600 nodes, reject candidates with size ratio > 1.2. For queries with 600+ nodes, reject candidates with size ratio > 1.8.
+
+**Query normalization failure**: If `recompute_depths()`, `assign_node_ids()`, or `cse_normalize()` fails on the query expression (e.g., recursion depth exceeded), return an empty candidate list and log a warning.
 
 ## MePo Symbol Overlap
 
@@ -74,6 +87,10 @@ Iterative breadth-first selection with inverse-frequency weighting:
 - Relevance: weighted overlap of candidate's symbols with working set, normalized by candidate's total weight
 - Iterative expansion: each round adds selected declarations' symbols to the working set, with decaying threshold (`p * (1/c)^round`)
 - Parameters: p=0.6, c=2.4, max_rounds=5
+- **Batch expansion**: Symbol set expansion is batch — the working symbol set `S` is updated only after all candidates in a round are evaluated, not during iteration within a round
+- **Missing symbol handling**: If a query-time symbol is not found in `symbol_freq` (i.e., it does not appear in any indexed declaration), treat its frequency as 1. This applies only to query-time symbols; declaration symbols are guaranteed to be in `symbol_freq` by the indexing invariant.
+
+**Constructor-to-inductive mapping**: `LConstruct` nodes store the parent inductive type's FQN as their name plus a zero-based constructor index (see [expression-tree.md](data-models/expression-tree.md)). All constructors of the same inductive type contribute the same symbol name (the parent inductive FQN). This mapping happens at tree construction time (coq-normalization), not at symbol extraction time — no additional mapping is needed during `extract_symbols`.
 
 Typical runtime: <200ms for 100K declarations with inverted index.
 
@@ -81,13 +98,25 @@ Typical runtime: <200ms for 100K declarations with inverted index.
 
 SQLite FTS5 with Porter stemming and Unicode tokenization. BM25 ranking with column weights biased toward name matches. Queries preprocessed to handle qualified name patterns. Runtime: <10ms.
 
+**Query classification priority**: Rule 1 (contains `.`) > Rule 2 (contains `_`, no spaces) > Rule 3 (everything else — the fallback for all remaining queries including mixed inputs).
+
+**Rebuild idempotency**: The FTS5 `rebuild` command reconstructs the index from scratch each time and is idempotent — no guards against double-rebuild are needed.
+
+**Token limit**: A 20-token safety limit is applied uniformly to all query types. For AND queries, dropping tokens makes the query less restrictive; for OR queries, dropping tokens reduces recall.
+
 ## TED Fine Ranking
 
-Zhang-Shasha tree edit distance on CSE-normalized trees. Applied only to expressions ≤ 50 nodes. Cost model distinguishes leaf vs. interior operations and same-category vs. cross-category renames. Threshold can be raised to 200-500 nodes with an OCaml/Rust APTED implementation.
+Zhang-Shasha tree edit distance on CSE-normalized trees. Applied only to expression pairs where **both** trees have node_count ≤ 50. Cost model distinguishes leaf vs. interior operations and same-category vs. cross-category renames. Threshold can be raised to 200-500 nodes with an OCaml/Rust APTED implementation.
+
+**Negative similarity**: The similarity formula `1.0 - edit_distance / max(node_count(T1), node_count(T2))` can produce negative values for sufficiently different trees. Clamp to 0.0 — no warning needed, as negative pre-clamp values are expected for structurally dissimilar trees (e.g., cross-category renames).
+
+**Tree retrieval**: Candidate trees are deserialized from `declarations.constr_tree` BLOBs by the pipeline orchestrator before passing to `ted_rerank`. Use a batched `SELECT constr_tree FROM declarations WHERE id IN (...)` query rather than individual lookups.
 
 ## Fine-Ranking Metric Fusion
 
-For candidates with TED available (node_count ≤ 50):
+`wl_cosine` in the weighted sums below is the cosine similarity score from WL screening for the same query-candidate pair — not a separately computed value.
+
+For candidates where **both** query and candidate have node_count ≤ 50 (TED available):
 
 ```
 structural_score = 0.15 * wl_cosine
@@ -116,7 +145,7 @@ k=60 (standard). Each channel contributes independently. No learned weights.
 
 | MCP Tool | Channels Used |
 |----------|--------------|
-| `search_by_structure` | WL + TED + Const Jaccard, fused with RRF |
-| `search_by_symbols` | MePo, optionally Const Jaccard |
+| `search_by_structure` | WL + TED + collapse-match + Const Jaccard, combined via weighted sum (no RRF — uses only the fine-ranking weighted sum) |
+| `search_by_symbols` | MePo only in Phase 1. Const Jaccard refinement is deferred to Phase 2. |
 | `search_by_name` | FTS5 only |
 | `search_by_type` | WL + MePo + FTS5, fused with RRF |

@@ -17,7 +17,7 @@ The core indexing unit representing one Coq/Rocq declaration extracted from a co
 | `module` | qualified name | Required; must be a valid module path (e.g., `Coq.Arith.PeanoNat`) |
 | `kind` | enumeration | Required; one of: `lemma`, `theorem`, `definition`, `instance`, `inductive`, `constructor`, `axiom` |
 | `statement` | text | Required; pretty-printed for display and full-text search |
-| `type_expr` | text | Required; pretty-printed type signature |
+| `type_expr` | text | Optional; pretty-printed type signature; null when type extraction is unsupported for this kind |
 | `constr_tree` | serialized tree | Optional; CSE-normalized expression tree (see [expression-tree.md](expression-tree.md)); null when extraction is unsupported for this kind |
 | `node_count` | positive integer | Required; must be > 0; determines which ranking metrics apply (TED threshold at 50) |
 | `symbol_set` | list of qualified names | Required; JSON-encoded; each entry must be a fully qualified constant, inductive, or constructor name |
@@ -58,7 +58,7 @@ A precomputed Weisfeiler-Lehman histogram vector for one declaration at one iter
 | Field | Type | Constraints |
 |-------|------|-------------|
 | `decl_id` | reference to declaration | Required; must reference an existing declaration |
-| `h` | bounded integer | Required; must be one of {1, 3, 5}; h=3 is the primary query depth |
+| `h` | bounded integer | Required; must be one of {1, 3, 5}; h=3 is the only depth computed in Phase 1; h∈{1, 5} are reserved for future experimentation |
 | `histogram` | map of label to count | Required; JSON-encoded; all values must be non-negative integers; sparse (only labels with count > 0) |
 
 **Composite key**: (`decl_id`, `h`). One vector per declaration per h value.
@@ -99,7 +99,7 @@ A key-value metadata entry managing index lifecycle and version compatibility.
 |-----|-----------------|
 | `schema_version` | Parseable as a positive integer; must match the tool's expected version |
 | `coq_version` | Valid version string (e.g., `8.19`) |
-| `mathcomp_version` | Valid version string, or `null` if MathComp was not indexed |
+| `mathcomp_version` | Valid version string, or `"none"` if MathComp was not indexed |
 | `created_at` | Valid ISO 8601 timestamp |
 
 ### Relationships

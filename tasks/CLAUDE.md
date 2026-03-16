@@ -4,6 +4,16 @@
 
 **Location:** `tasks/<feature-or-story>.md`
 
+**Authority:** Task breakdowns are **derived from** specification documents (`specification/`) which are derived from architecture documents (`doc/architecture/`). Specifications are the direct authority for task content; architecture documents and data models are the indirect authority.
+
+**Before generating task breakdowns:**
+
+1. Read the specification document being decomposed.
+2. Read its parent architecture document (linked at the top of the spec).
+3. Read `doc/architecture/data-models/expression-tree.md` and `doc/architecture/data-models/index-entities.md` — these are authoritative for all entity names, node labels, field types, and constraints. All names in tasks must match the data model documents exactly.
+4. Read cross-referenced specification documents to verify interface contracts match.
+5. If a specification contradicts a data model or architecture document, file feedback in `specification/feedback/` rather than silently adopting the incorrect name.
+
 **When generating task breakdowns:**
 
 - Decompose from architecture documents and user story documents — not from feature documents or PRDs directly.

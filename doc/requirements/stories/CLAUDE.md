@@ -4,6 +4,13 @@
 
 **Location:** `doc/requirements/stories/<feature-or-epic>.md`
 
+**Authority:** User stories are **derived from** PRDs (`doc/requirements/`). They are authoritative for acceptance criteria consumed by downstream architecture documents, specifications, and task breakdowns. Stories trace upstream to PRDs, never to architecture or design documents.
+
+**Before writing or editing user stories:**
+
+1. Read the PRD this story traces to. Verify the story's scope falls within the PRD's stated requirements.
+2. Ensure acceptance criteria use concrete values that are testable.
+
 **When writing or editing user stories:**
 
 - Open each document with a `Derived from` pointer to the PRD it traces to. Stories are derived from PRDs (Layer 1), never from architecture or design documents.

@@ -87,7 +87,8 @@ Compiled .vo files (external)
 | Mechanism | SQLite read of `index_meta` |
 | Direction | Read-only on startup |
 | Purpose | Schema version check, library version check |
-| On mismatch | Triggers Coq Library Extraction for full re-index |
+| Phase 1 behavior | Validates `schema_version` only; library versions stored for informational purposes. Schema mismatch → `INDEX_VERSION_MISMATCH` error directing user to re-index manually. |
+| Phase 2 behavior | Additionally validates `coq_version` and `mathcomp_version` against installed versions; mismatch → `INDEX_VERSION_MISMATCH` error. |
 
 ## Source-to-Specification Mapping
 

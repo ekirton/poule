@@ -1,5 +1,18 @@
 # Specification Writing Guidelines
 
+## Authority
+
+Specifications are **derived from** architecture documents (`doc/architecture/`) — they are Layer 4 artifacts that decompose Layer 3 design into implementable units.
+
+**Before writing or editing any specification:**
+
+1. Read the parent architecture document referenced at the top of the spec.
+2. Read `doc/architecture/data-models/expression-tree.md` and `doc/architecture/data-models/index-entities.md` — these are **authoritative** for all entity names, field types, constraints, node label names, and relationships. If a specification names an entity, field, node label, or constraint, it **must** match the data model documents exactly.
+3. Read `doc/architecture/component-boundaries.md` for the dependency graph and boundary contracts.
+4. When a specification and an architecture document disagree, the architecture document wins. When an architecture document and a data model document disagree on entity structure, the data model document wins.
+
+**Cross-spec consistency:** When referencing types, labels, or contracts defined in another specification, read that specification to verify the names and signatures match. Do not assume — check.
+
 ## Core Principle
 
 Specification misunderstanding — not model capability — is the primary cause of code generation failure. Every sentence must earn its place by adding information the implementer needs to make a decision. Noise actively degrades output quality.
