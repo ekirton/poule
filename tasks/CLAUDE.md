@@ -35,3 +35,8 @@
 ```
 
 **One per:** feature, user story, or cohesive implementation unit
+
+**Marking tasks complete:**
+
+- When a task is implemented, update its checkbox from `- [ ]` to `- [x]`.
+- When **all** tasks in a file are complete, delete the file entirely.
