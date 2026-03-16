@@ -56,3 +56,15 @@ The Weaviate MCP server's pattern of offering `semantic_search`, `keyword_search
 ### Why high default limits
 
 All search tools default to returning 50 results. This biases toward recall over precision — the LLM filtering layer is responsible for precision. A user will never see 50 raw results; they see the 3-5 the LLM selects and explains.
+
+## Error Behavior
+
+All tools return structured error responses rather than empty results when something goes wrong. This allows the LLM to relay actionable guidance to the user instead of silently returning nothing.
+
+| Condition | Behavior |
+|-----------|----------|
+| No index database at configured path | All tools return an error indicating the index is missing, with instructions to run the indexing command |
+| Index schema version mismatch (tool updated) | All tools return an error while re-indexing is in progress, or block until re-index completes (see [library-indexing.md](library-indexing.md)) |
+| Library version changed (stale index) | Index is rebuilt before returning results; the query may take longer on the first call after a library update |
+| `get_lemma` with unknown name | Returns a clear "not found" error with the queried name |
+| Malformed query expression | Returns a parse error with the failing input |
