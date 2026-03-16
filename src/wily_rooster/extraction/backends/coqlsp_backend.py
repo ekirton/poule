@@ -343,9 +343,13 @@ class CoqLspBackend:
         self._close_document(uri)
         return diags, messages
 
-    def _get_declaration_kind(self, name: str) -> str:
-        """Use ``About`` to determine the kind of a declaration."""
-        _diags, messages = self._run_vernac_query(f"About {name}.")
+    @staticmethod
+    def _parse_about_kind(name: str, messages: list[dict[str, Any]]) -> str:
+        """Parse ``About`` output messages to determine the declaration kind.
+
+        Extracted from ``_get_declaration_kind`` so it can be reused for
+        batched About queries.
+        """
         all_text = "\n".join(
             m["text"] for m in messages if m.get("level", 3) != 1
         )
@@ -378,6 +382,104 @@ class CoqLspBackend:
                 "Could not determine kind for %s from About output", name
             )
         return "definition"
+
+    def _get_declaration_kind(self, name: str) -> str:
+        """Use ``About`` to determine the kind of a declaration."""
+        _diags, messages = self._run_vernac_query(f"About {name}.")
+        return self._parse_about_kind(name, messages)
+
+    # ------------------------------------------------------------------
+    # Batched Vernac queries
+    # ------------------------------------------------------------------
+
+    _VERNAC_BATCH_SIZE = 100
+
+    def _run_vernac_batch(
+        self, commands: list[str]
+    ) -> list[list[dict[str, Any]]]:
+        """Execute multiple Vernac commands in a single document.
+
+        Builds one document with one command per line, opens it once, waits
+        for diagnostics once, then issues ``proof/goals`` for each line.
+
+        Returns a list of message lists — one per command.  On global error
+        diagnostics (all severity-1), returns empty lists for all commands.
+        """
+        if not commands:
+            return []
+
+        self._ensure_alive()
+        text = "\n".join(commands)
+        uri = self._next_uri()
+        self._open_document(uri, text)
+        diags = self._wait_for_diagnostics(uri)
+
+        # On global errors, return empty results for all commands
+        if any(d.get("severity") == 1 for d in diags):
+            self._close_document(uri)
+            return [[] for _ in commands]
+
+        results: list[list[dict[str, Any]]] = []
+        for line_idx in range(len(commands)):
+            goals_result = self._send_request(
+                "proof/goals",
+                {
+                    "textDocument": {"uri": uri},
+                    "position": {"line": line_idx, "character": 0},
+                },
+            )
+            results.append(goals_result.get("messages", []))
+
+        self._close_document(uri)
+        return results
+
+    def query_declaration_data(
+        self, names: list[str]
+    ) -> dict[str, tuple[str, list[tuple[str, str]]]]:
+        """Batch Print + Print Assumptions queries for multiple declarations.
+
+        For each name, issues ``Print <name>.`` and ``Print Assumptions <name>.``
+        in shared documents (≤50 declarations = ≤100 lines per document).
+
+        Returns a dict mapping name → ``(statement, dependency_pairs)``.
+        """
+        self._ensure_alive()
+        result: dict[str, tuple[str, list[tuple[str, str]]]] = {}
+        batch_size = 50  # 50 declarations = 100 lines (Print + Print Assumptions)
+
+        for i in range(0, len(names), batch_size):
+            batch_names = names[i : i + batch_size]
+            commands: list[str] = []
+            for name in batch_names:
+                commands.append(f"Print {name}.")
+                commands.append(f"Print Assumptions {name}.")
+
+            all_messages = self._run_vernac_batch(commands)
+
+            for j, name in enumerate(batch_names):
+                # Print messages at index j*2, Print Assumptions at j*2+1
+                print_msgs = all_messages[j * 2] if j * 2 < len(all_messages) else []
+                assumptions_msgs = all_messages[j * 2 + 1] if j * 2 + 1 < len(all_messages) else []
+
+                # Parse Print output → statement
+                texts = [
+                    m["text"] for m in print_msgs if m.get("level", 3) != 1
+                ]
+                statement = "\n".join(texts).strip()
+
+                # Parse Print Assumptions output → dependencies
+                all_text = "\n".join(
+                    m["text"] for m in assumptions_msgs if m.get("level", 3) != 1
+                )
+                deps: list[tuple[str, str]] = []
+                if "Closed under the global context" not in all_text:
+                    for match in _ASSUMPTION_RE.finditer(all_text):
+                        dep_name = match.group(1)
+                        deps.append((dep_name, "assumes"))
+
+                result[name] = (statement, deps)
+
+        return result
 
     # ------------------------------------------------------------------
     # Module path derivation
@@ -510,6 +612,9 @@ class CoqLspBackend:
         Returns a list of ``(name, kind, constr_t)`` tuples.  The Search
         command is on line 1 of the synthetic document, so ``proof/goals``
         must target line 1.
+
+        About queries for kind detection are batched into documents of
+        ≤100 commands each to reduce document lifecycle overhead.
         """
         self._ensure_alive()
 
@@ -528,9 +633,12 @@ class CoqLspBackend:
         if not search_results:
             return []
 
+        # Batch About queries for kind detection
+        names = [name for name, _type_sig in search_results]
+        kinds = self._batch_get_kinds(names)
+
         declarations: list[tuple[str, str, Any]] = []
-        for name, type_sig in search_results:
-            kind = self._get_declaration_kind(name)
+        for (name, type_sig), kind in zip(search_results, kinds):
             constr_t: dict[str, Any] = {
                 "name": name,
                 "type_signature": type_sig,
@@ -539,6 +647,21 @@ class CoqLspBackend:
             declarations.append((name, kind, constr_t))
 
         return declarations
+
+    def _batch_get_kinds(self, names: list[str]) -> list[str]:
+        """Batch About queries and parse kinds for a list of declaration names."""
+        kinds: list[str] = []
+        batch_size = self._VERNAC_BATCH_SIZE
+
+        for i in range(0, len(names), batch_size):
+            batch_names = names[i : i + batch_size]
+            commands = [f"About {name}." for name in batch_names]
+            all_messages = self._run_vernac_batch(commands)
+
+            for name, messages in zip(batch_names, all_messages):
+                kinds.append(self._parse_about_kind(name, messages))
+
+        return kinds
 
     def pretty_print(self, name: str) -> str:
         """Return the human-readable statement of a declaration."""

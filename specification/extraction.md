@@ -41,7 +41,7 @@ The system shall define a `Backend` protocol with operations:
 
 The backend shall determine each declaration's kind during `list_declarations`. The mechanism is backend-dependent because not all backends return kind information directly from declaration listing.
 
-**coq-lsp backend:** The `Search _ inside M.` command returns `(name, type_sig)` pairs without declaration kinds. The backend shall issue an `About <name>.` Vernac command per declaration and parse the response to determine the kind.
+**coq-lsp backend:** The `Search _ inside M.` command returns `(name, type_sig)` pairs without declaration kinds. The backend shall issue an `About <name>.` Vernac command per declaration and parse the response to determine the kind. About queries for declarations within a single module may be batched into a single synthetic document with one command per line (batch size capped at 100 commands per document). The contract (one About per declaration, version-dependent parsing) is unchanged.
 
 The `About` response format is version-dependent:
 
@@ -121,7 +121,7 @@ For each declaration extracted from a `.vo` file:
 4. `extract_consts(tree)` → symbol set
 5. `wl_histogram(tree, h=3)` → WL vector (Phase 1 computes h=3 only)
 6. `pretty_print(name)` → statement
-7. `pretty_print_type(name)` → type expression (nullable)
+7. Type expression: derived from the Search output `type_signature` field in `constr_t` when available; falls back to `pretty_print_type(name)` otherwise (nullable)
 
 The declaration row, WL vector, and declaration data are co-inserted in the same batch transaction (batch size: 1000 declarations).
 
@@ -205,7 +205,7 @@ Error hierarchy:
 - The entire process runs without GPU, network access, or external API keys.
 - Batch size: 1000 declarations per transaction.
 - Progress reporting at per-declaration granularity.
-- **Kind detection overhead (coq-lsp):** The per-declaration `About` query for kind detection adds O(N) backend round-trips. For large targets (stdlib+mathcomp, ~10,000+ declarations), full extraction may take 30+ minutes.
+- **Kind detection overhead (coq-lsp):** About queries are batched into shared documents (≤100 commands each), and Print + Print Assumptions queries are batched similarly (≤50 declarations = ≤100 lines per document), reducing document lifecycle overhead by 3–10x compared to per-declaration queries.
 
 ## 7. Examples
 

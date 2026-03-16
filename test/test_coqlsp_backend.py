@@ -1749,3 +1749,363 @@ class TestContractGetDependencies:
         assert all(
             isinstance(d, tuple) and len(d) == 2 for d in deps
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 16. Batched Vernac Queries (_run_vernac_batch)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestRunVernacBatch:
+    """_run_vernac_batch executes multiple commands in a single document."""
+
+    def _make_backend(self):
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        backend = CoqLspBackend.__new__(CoqLspBackend)
+        backend._proc = Mock()
+        backend._proc.poll.return_value = None
+        backend._server_info = {}
+        backend._notification_buffer = []
+        backend._next_uri_id = 0
+        backend._next_id = 0
+        return backend
+
+    def test_multi_command_returns_per_line_messages(self):
+        """Three commands → three message lists, one per line."""
+        backend = self._make_backend()
+
+        msg_line0 = [_make_sentence_message("result for line 0")]
+        msg_line1 = [_make_sentence_message("result for line 1")]
+        msg_line2 = [_make_sentence_message("result for line 2")]
+
+        goals_responses = [
+            _make_goals_result("file:///tmp/wily_query_0.v", line=i, messages=msgs)
+            for i, msgs in enumerate([msg_line0, msg_line1, msg_line2])
+        ]
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", side_effect=goals_responses),
+        ):
+            results = backend._run_vernac_batch([
+                "About Nat.add.",
+                "About Nat.mul.",
+                "About Nat.sub.",
+            ])
+
+        assert len(results) == 3
+        assert results[0][0]["text"] == "result for line 0"
+        assert results[1][0]["text"] == "result for line 1"
+        assert results[2][0]["text"] == "result for line 2"
+
+    def test_single_document_open_and_close(self):
+        """Batch opens only one document and closes it after all queries."""
+        backend = self._make_backend()
+
+        open_calls = []
+        close_calls = []
+
+        def capture_open(uri, text):
+            open_calls.append((uri, text))
+
+        def capture_close(uri):
+            close_calls.append(uri)
+
+        goals_result = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=0, messages=[]
+        )
+
+        with (
+            patch.object(backend, "_open_document", side_effect=capture_open),
+            patch.object(backend, "_close_document", side_effect=capture_close),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=goals_result),
+        ):
+            backend._run_vernac_batch(["About Nat.add.", "About Nat.mul."])
+
+        assert len(open_calls) == 1
+        assert len(close_calls) == 1
+        # Document text should contain both commands on separate lines
+        doc_text = open_calls[0][1]
+        assert "About Nat.add." in doc_text
+        assert "About Nat.mul." in doc_text
+        assert "\n" in doc_text
+
+    def test_error_diagnostics_returns_empty_lists(self):
+        """Global error diagnostics → empty lists for all commands."""
+        backend = self._make_backend()
+
+        error_diags = [_make_diagnostic("Error: something broke", severity=1)]
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(
+                backend, "_wait_for_diagnostics", return_value=error_diags
+            ),
+            patch.object(
+                backend, "_send_request",
+                side_effect=AssertionError("should not call proof/goals on error"),
+            ),
+        ):
+            results = backend._run_vernac_batch(["About X.", "About Y."])
+
+        assert len(results) == 2
+        assert results[0] == []
+        assert results[1] == []
+
+    def test_empty_commands_returns_empty(self):
+        """Empty command list returns empty result."""
+        backend = self._make_backend()
+        results = backend._run_vernac_batch([])
+        assert results == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 17. Batched list_declarations (About queries)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestBatchedListDeclarations:
+    """list_declarations batches About queries to reduce document lifecycle overhead."""
+
+    def _make_backend(self):
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        backend = CoqLspBackend.__new__(CoqLspBackend)
+        backend._proc = Mock()
+        backend._proc.poll.return_value = None
+        backend._server_info = {}
+        backend._notification_buffer = []
+        backend._next_uri_id = 0
+        backend._next_id = 0
+        return backend
+
+    def test_fewer_document_opens_than_declarations(self):
+        """With batching, fewer documents should be opened than declarations."""
+        backend = self._make_backend()
+
+        # 3 search results
+        search_messages = [
+            _make_sentence_message("Nat.add : nat -> nat -> nat"),
+            _make_sentence_message("Nat.mul : nat -> nat -> nat"),
+            _make_sentence_message("Nat.sub : nat -> nat -> nat"),
+        ]
+        search_goals = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=1, messages=search_messages
+        )
+
+        # Batched About returns 3 message lists in one document
+        about_batch = [
+            [_make_sentence_message("Nat.add is a definition")],
+            [_make_sentence_message("Nat.mul is a definition")],
+            [_make_sentence_message("Nat.sub is a definition")],
+        ]
+
+        open_calls = []
+
+        def capture_open(uri, text):
+            open_calls.append(text)
+
+        with (
+            patch.object(backend, "_open_document", side_effect=capture_open),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=search_goals),
+            patch.object(backend, "_run_vernac_batch", return_value=about_batch),
+        ):
+            result = backend.list_declarations(
+                Path("/coq/user-contrib/Stdlib/Init/Nat.vo")
+            )
+
+        assert len(result) == 3
+        # Search doc is opened via _open_document (1 call).
+        # About queries go through _run_vernac_batch (mocked), NOT _open_document.
+        # So total _open_document calls = 1 (Search only), not 4 (1 + 3 per-decl About)
+        assert len(open_calls) == 1
+
+    def test_batched_about_results_parsed_correctly(self):
+        """Batched About results are parsed with _parse_about_kind."""
+        backend = self._make_backend()
+
+        search_messages = [
+            _make_sentence_message("Nat.add : nat -> nat -> nat"),
+            _make_sentence_message("nat : Set"),
+        ]
+        search_goals = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=1, messages=search_messages
+        )
+
+        about_batch = [
+            [_make_sentence_message("Expands to: Constant Corelib.Init.Nat.add")],
+            [_make_sentence_message("Expands to: Inductive Corelib.Init.Datatypes.nat")],
+        ]
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=search_goals),
+            patch.object(backend, "_run_vernac_batch", return_value=about_batch),
+        ):
+            result = backend.list_declarations(
+                Path("/coq/user-contrib/Stdlib/Init/Nat.vo")
+            )
+
+        kinds = {r[0]: r[1] for r in result}
+        assert kinds["Nat.add"] == "definition"
+        assert kinds["nat"] == "inductive"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 18. query_declaration_data (batched Print + Print Assumptions)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestQueryDeclarationData:
+    """query_declaration_data batches Print + Print Assumptions queries."""
+
+    def _make_backend(self):
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        backend = CoqLspBackend.__new__(CoqLspBackend)
+        backend._proc = Mock()
+        backend._proc.poll.return_value = None
+        backend._server_info = {}
+        backend._notification_buffer = []
+        backend._next_uri_id = 0
+        backend._next_id = 0
+        return backend
+
+    def test_returns_statement_and_dependencies(self):
+        """Each declaration gets (statement, dependency_list)."""
+        backend = self._make_backend()
+
+        # 2 declarations: each gets Print + Print Assumptions = 4 lines
+        batch_messages = [
+            # Print Nat.add
+            [_make_sentence_message(
+                "Nat.add =\nfix add (n m : nat) : nat := match n with 0 => m | S p => S (add p m) end"
+            )],
+            # Print Assumptions Nat.add
+            [_make_sentence_message("Closed under the global context")],
+            # Print Nat.mul
+            [_make_sentence_message("Nat.mul = ...")],
+            # Print Assumptions Nat.mul
+            [_make_sentence_message("  ax1 : Prop\n  ax2 : nat")],
+        ]
+
+        with patch.object(backend, "_run_vernac_batch", return_value=batch_messages):
+            result = backend.query_declaration_data(["Nat.add", "Nat.mul"])
+
+        assert "Nat.add" in result
+        assert "Nat.mul" in result
+
+        stmt_add, deps_add = result["Nat.add"]
+        assert "Nat.add" in stmt_add
+        assert deps_add == []  # Closed under global context
+
+        stmt_mul, deps_mul = result["Nat.mul"]
+        assert "Nat.mul" in stmt_mul
+        assert len(deps_mul) >= 1
+        assert any(d[0] == "ax1" for d in deps_mul)
+
+    def test_batches_at_50_declarations(self):
+        """More than 50 declarations should result in multiple batch calls."""
+        backend = self._make_backend()
+
+        names = [f"Decl.n{i}" for i in range(75)]
+        batch_call_count = [0]
+
+        def mock_batch(commands):
+            batch_call_count[0] += 1
+            # Return empty messages for each command
+            return [[] for _ in commands]
+
+        with patch.object(backend, "_run_vernac_batch", side_effect=mock_batch):
+            backend.query_declaration_data(names)
+
+        # 75 declarations = 150 commands → 2 batches (100 + 50)
+        assert batch_call_count[0] == 2
+
+    def test_empty_names_returns_empty_dict(self):
+        """Empty names list returns empty result."""
+        backend = self._make_backend()
+        result = backend.query_declaration_data([])
+        assert result == {}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 19. _parse_about_kind (extracted static method)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestParseAboutKind:
+    """_parse_about_kind extracts kind from About messages."""
+
+    def test_rocq9_constant(self):
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        msgs = [_make_sentence_message("Expands to: Constant Corelib.Init.Nat.add")]
+        assert CoqLspBackend._parse_about_kind("Nat.add", msgs) == "definition"
+
+    def test_rocq9_inductive(self):
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        msgs = [_make_sentence_message("Expands to: Inductive Corelib.Init.Datatypes.nat")]
+        assert CoqLspBackend._parse_about_kind("nat", msgs) == "inductive"
+
+    def test_coq8_lemma(self):
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        msgs = [_make_sentence_message("foo is a lemma")]
+        assert CoqLspBackend._parse_about_kind("foo", msgs) == "lemma"
+
+    def test_not_defined_falls_back(self):
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        msgs = [_make_sentence_message("X not a defined object.")]
+        assert CoqLspBackend._parse_about_kind("X", msgs) == "definition"
+
+    def test_empty_messages_falls_back(self):
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        assert CoqLspBackend._parse_about_kind("X", []) == "definition"
+
+
+@pytest.mark.requires_coq
+class TestContractQueryDeclarationData:
+    """Contract: real coq-lsp returns statement and dependencies for declarations."""
+
+    def test_real_backend_query_declaration_data(self):
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        with CoqLspBackend() as backend:
+            result = backend.query_declaration_data(["Nat.add", "Nat.mul"])
+
+        assert "Nat.add" in result
+        assert "Nat.mul" in result
+        stmt_add, deps_add = result["Nat.add"]
+        assert isinstance(stmt_add, str)
+        assert len(stmt_add) > 0
+        assert isinstance(deps_add, list)
+
+
+@pytest.mark.requires_coq
+class TestContractRunVernacBatch:
+    """Contract: real coq-lsp returns per-line messages for batched commands."""
+
+    def test_real_backend_run_vernac_batch(self):
+        from wily_rooster.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        with CoqLspBackend() as backend:
+            results = backend._run_vernac_batch([
+                "About Nat.add.",
+                "About Nat.mul.",
+            ])
+
+        assert len(results) == 2
+        assert all(isinstance(r, list) for r in results)

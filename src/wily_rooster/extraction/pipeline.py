@@ -171,11 +171,23 @@ def process_declaration(
     constr_t: Any,
     backend: Any,
     module_path: str,
+    *,
+    statement: str | None = None,
+    dependency_names: list[tuple[str, str]] | None = None,
 ) -> DeclarationResult | None:
     """Process a single declaration through the normalization pipeline.
 
     Returns a :class:`DeclarationResult` on success (possibly with partial
     normalization data), or ``None`` if the declaration kind is excluded.
+
+    Parameters
+    ----------
+    statement:
+        Pre-fetched statement from batched queries.  Falls back to
+        ``backend.pretty_print(name)`` if ``None``.
+    dependency_names:
+        Pre-fetched dependency pairs from batched queries.  Falls back to
+        ``backend.get_dependencies(name)`` if ``None``.
     """
     from wily_rooster.channels.const_jaccard import extract_consts
     from wily_rooster.channels.wl_kernel import wl_histogram
@@ -202,12 +214,16 @@ def process_declaration(
             exc_info=True,
         )
 
-    # Backend queries for display data
-    statement = backend.pretty_print(name)
-    type_expr = backend.pretty_print_type(name)
+    # Type expression: prefer constr_t["type_signature"] from Search output
+    type_expr = None
+    if isinstance(constr_t, dict):
+        type_expr = constr_t.get("type_signature")
 
-    # Dependencies (for pass 2)
-    dependency_names = backend.get_dependencies(name)
+    # Display data: use pre-fetched or fall back to per-declaration queries
+    if statement is None:
+        statement = backend.pretty_print(name)
+    if dependency_names is None:
+        dependency_names = backend.get_dependencies(name)
 
     return DeclarationResult(
         name=name,
@@ -350,6 +366,24 @@ def run_extraction(
         total_decls = len(all_declarations)
 
         # ------------------------------------------------------------------
+        # Batch Print + Print Assumptions queries
+        # ------------------------------------------------------------------
+        decl_data: dict[str, tuple[str, list[tuple[str, str]]]] = {}
+        _query_fn = getattr(backend, "query_declaration_data", None)
+        if _query_fn is not None:
+            decl_names = [name for name, _kind, _constr_t, _vo in all_declarations]
+            try:
+                batch_result = _query_fn(decl_names)
+                # Validate result is a real dict (not a Mock artifact)
+                if isinstance(batch_result, dict):
+                    decl_data = batch_result
+            except ExtractionError:
+                _cleanup_db(db_path)
+                raise
+            except Exception:
+                logger.debug("query_declaration_data not available, using per-declaration queries")
+
+        # ------------------------------------------------------------------
         # Pass 1: Per-declaration processing with batching
         # ------------------------------------------------------------------
         name_to_id: dict[str, int] = {}
@@ -364,9 +398,15 @@ def run_extraction(
 
             module_path = str(vo_path)
 
+            # Use pre-fetched data if available
+            prefetched = decl_data.get(name)
+            stmt = prefetched[0] if prefetched else None
+            deps = prefetched[1] if prefetched else None
+
             try:
                 result = process_declaration(
-                    name, kind, constr_t, backend, module_path
+                    name, kind, constr_t, backend, module_path,
+                    statement=stmt, dependency_names=deps,
                 )
             except Exception:
                 logger.warning("Failed to process declaration %s", name, exc_info=True)

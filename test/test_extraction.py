@@ -1189,3 +1189,112 @@ class TestExtractionError:
 
         with pytest.raises(ExtractionError):
             raise ExtractionError("test")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 12. Type Signature Passthrough from Search Output
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestTypeSigPassthrough:
+    """process_declaration uses constr_t['type_signature'] for type_expr
+    instead of calling backend.pretty_print_type (§4.4 step 7)."""
+
+    def test_type_expr_from_constr_t_type_signature(self):
+        from wily_rooster.extraction.pipeline import process_declaration
+
+        backend = _make_mock_backend()
+        constr_t = {
+            "name": "Nat.add",
+            "type_signature": "nat -> nat -> nat",
+            "source": "coq-lsp",
+        }
+
+        # coq_normalize will fail on a plain dict, producing partial result —
+        # but type_expr should still come from constr_t["type_signature"]
+        result = process_declaration(
+            "Nat.add", "Definition", constr_t, backend, "/fake/Nat.vo",
+            statement="Nat.add = ...", dependency_names=[],
+        )
+
+        assert result is not None
+        assert result.type_expr == "nat -> nat -> nat"
+        # pretty_print_type should NOT be called since type_sig comes from constr_t
+        backend.pretty_print_type.assert_not_called()
+
+    def test_no_pretty_print_type_call_when_type_sig_available(self):
+        """When constr_t has type_signature, pretty_print_type is NOT called."""
+        from wily_rooster.extraction.pipeline import process_declaration
+
+        backend = _make_mock_backend()
+        constr_t = {
+            "name": "Nat.add",
+            "type_signature": "nat -> nat -> nat",
+            "source": "coq-lsp",
+        }
+
+        process_declaration(
+            "Nat.add", "Definition", constr_t, backend, "/fake/Nat.vo",
+            statement="stmt", dependency_names=[],
+        )
+
+        backend.pretty_print_type.assert_not_called()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 13. Pre-fetched Statement and Dependencies
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestPrefetchedData:
+    """process_declaration uses pre-fetched statement and dependencies
+    when provided, avoiding per-declaration backend calls."""
+
+    def test_uses_prefetched_statement(self):
+        from wily_rooster.extraction.pipeline import process_declaration
+
+        backend = _make_mock_backend()
+        constr_t = {"name": "A", "type_signature": "Prop", "source": "coq-lsp"}
+
+        result = process_declaration(
+            "A", "Lemma", constr_t, backend, "/fake.vo",
+            statement="pre-fetched statement", dependency_names=[],
+        )
+
+        assert result is not None
+        assert result.statement == "pre-fetched statement"
+        backend.pretty_print.assert_not_called()
+
+    def test_uses_prefetched_dependencies(self):
+        from wily_rooster.extraction.pipeline import process_declaration
+
+        backend = _make_mock_backend()
+        constr_t = {"name": "A", "type_signature": "Prop", "source": "coq-lsp"}
+        prefetched_deps = [("B", "assumes"), ("C", "assumes")]
+
+        result = process_declaration(
+            "A", "Lemma", constr_t, backend, "/fake.vo",
+            statement="stmt", dependency_names=prefetched_deps,
+        )
+
+        assert result is not None
+        assert result.dependency_names == prefetched_deps
+        backend.get_dependencies.assert_not_called()
+
+    def test_falls_back_to_backend_when_no_prefetch(self):
+        from wily_rooster.extraction.pipeline import process_declaration
+
+        backend = _make_mock_backend()
+        backend.pretty_print.return_value = "backend statement"
+        backend.get_dependencies.return_value = [("X", "assumes")]
+        constr_t = {"name": "A", "type_signature": "Prop", "source": "coq-lsp"}
+
+        result = process_declaration(
+            "A", "Lemma", constr_t, backend, "/fake.vo",
+        )
+
+        assert result is not None
+        assert result.statement == "backend statement"
+        assert result.dependency_names == [("X", "assumes")]
+        backend.pretty_print.assert_called_once()
+        backend.get_dependencies.assert_called_once()
