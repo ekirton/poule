@@ -19,6 +19,18 @@ System-level view of all components, their boundaries, and the dependency graph.
 | Proof Search Engine | Best-first tree search over tactic candidates, candidate generation (LLM + solver + few-shot), state caching, diversity filtering | [proof-search-engine.md](proof-search-engine.md) |
 | Fill Admits Orchestrator | Admit location in .v files, per-admit session lifecycle, proof search invocation, script assembly | [fill-admits-orchestrator.md](fill-admits-orchestrator.md) |
 | Neural Training Pipeline | Bi-encoder training, evaluation, fine-tuning, quantization from extracted proof traces | [neural-training.md](neural-training.md) |
+| Hammer Automation | Multi-strategy CoqHammer invocation (hammer → sauto → qauto) within proof sessions | [hammer-automation.md](hammer-automation.md) |
+| Vernacular Introspection | Single `coq_query` tool dispatching Print/Check/About/Locate/Search/Compute/Eval to Coq backends | [vernacular-introspection.md](vernacular-introspection.md) |
+| Assumption Auditing | Axiom dependency extraction, classification, batch auditing, and comparison via `Print Assumptions` | [assumption-auditing.md](assumption-auditing.md) |
+| Universe Inspection | Universe constraint retrieval, graph construction, inconsistency diagnosis, polymorphic inspection | [universe-inspection.md](universe-inspection.md) |
+| Typeclass Debugging | Instance listing, resolution tracing, failure explanation, conflict detection via typeclass debug commands | [typeclass-debugging.md](typeclass-debugging.md) |
+| Deep Dependency Analysis | Transitive closure, impact analysis, cycle detection, module-level summaries over dependency graph | [deep-dependency-analysis.md](deep-dependency-analysis.md) |
+| Literate Documentation | Alectryon subprocess adapter for interactive proof documentation generation | [literate-documentation.md](literate-documentation.md) |
+| Code Extraction Management | Coq code extraction to OCaml/Haskell/Scheme with preview, write, and failure diagnosis | [code-extraction-management.md](code-extraction-management.md) |
+| Independent Proof Checking | coqchk subprocess adapter for independent verification of compiled .vo files | [independent-proof-checking.md](independent-proof-checking.md) |
+| Build System Integration | Build system detection, project file generation, build execution, package/dependency management via coq_makefile/dune/opam | [build-system-integration.md](build-system-integration.md) |
+| Notation Inspection | Notation lookup, scope inspection, precedence/associativity extraction, ambiguity resolution | [notation-inspection.md](notation-inspection.md) |
+| Tactic Documentation | Tactic lookup, comparison, contextual suggestion, hint database inspection | [tactic-documentation.md](tactic-documentation.md) |
 | Claude Code / LLM | Intent interpretation, query formulation, result filtering, explanation | External (not owned by this project) |
 
 ### Cross-Cutting Concerns
