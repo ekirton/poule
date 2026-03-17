@@ -1,20 +1,20 @@
 # MCP Server
 
-Thin adapter between Claude Code, the retrieval pipeline, the proof session manager, and the Mermaid renderer — exposing search, proof interaction, and visualization tools via the Model Context Protocol.
+Thin adapter between Claude Code, the retrieval pipeline, the proof session manager, the proof search engine, the fill admits orchestrator, and the Mermaid renderer — exposing search, proof interaction, proof search, and visualization tools via the Model Context Protocol.
 
-**Architecture**: [mcp-server.md](../doc/architecture/mcp-server.md), [mermaid-renderer.md](../doc/architecture/mermaid-renderer.md), [component-boundaries.md](../doc/architecture/component-boundaries.md), [response-types.md](../doc/architecture/data-models/response-types.md), [proof-types.md](../doc/architecture/data-models/proof-types.md)
+**Architecture**: [mcp-server.md](../doc/architecture/mcp-server.md), [proof-search-engine.md](../doc/architecture/proof-search-engine.md), [fill-admits-orchestrator.md](../doc/architecture/fill-admits-orchestrator.md), [mermaid-renderer.md](../doc/architecture/mermaid-renderer.md), [component-boundaries.md](../doc/architecture/component-boundaries.md), [response-types.md](../doc/architecture/data-models/response-types.md), [proof-types.md](../doc/architecture/data-models/proof-types.md)
 
 ---
 
 ## 1. Purpose
 
-Define the MCP server that translates MCP tool calls into pipeline queries, session manager operations, and renderer invocations — validates inputs, formats responses, manages index lifecycle on startup, and serializes proof interaction types.
+Define the MCP server that translates MCP tool calls into pipeline queries, session manager operations, search engine invocations, fill-admits orchestration, and renderer invocations — validates inputs, formats responses, manages index lifecycle on startup, and serializes proof interaction types.
 
 ## 2. Scope
 
-**In scope**: 7 search tool handlers, 12 proof interaction tool handlers (11 P0 + 1 P1), 4 visualization tool handlers, input validation, error formatting, index state management, startup checks, response construction, proof state serialization, visualization dispatch.
+**In scope**: 7 search tool handlers, 12 proof interaction tool handlers (11 P0 + 1 P1), 2 proof search tool handlers, 4 visualization tool handlers, input validation, error formatting, index state management, startup checks, response construction, proof state serialization, visualization dispatch.
 
-**Out of scope**: Search logic (owned by pipeline/channels), storage management (owned by storage), Coq expression parsing (owned by pipeline), session state management (owned by proof-session), proof type definitions (owned by data-models/proof-types), serialization format details (owned by proof-serialization), Mermaid diagram generation logic (owned by mermaid-renderer).
+**Out of scope**: Search logic (owned by pipeline/channels), storage management (owned by storage), Coq expression parsing (owned by pipeline), session state management (owned by proof-session), proof search algorithm (owned by proof-search-engine), admit location and orchestration (owned by fill-admits-orchestrator), proof type definitions (owned by data-models/proof-types), serialization format details (owned by proof-serialization), Mermaid diagram generation logic (owned by mermaid-renderer).
 
 ## 3. Definitions
 
@@ -254,9 +254,51 @@ All visualization tools delegate diagram generation to the Mermaid renderer. The
 > **When** `visualize_proof_sequence(session_id)` is called
 > **Then** the response is a `PROOF_INCOMPLETE` error
 
-### 4.5 Input Validation
+### 4.5 Proof Search Tool Signatures
 
-The server shall validate all inputs before delegating to the pipeline, session manager, or renderer:
+All proof search tools delegate to the Proof Search Engine or Fill Admits Orchestrator. The MCP server does not implement search algorithms or admit location logic.
+
+#### proof_search(session_id, timeout?, max_depth?, max_breadth?)
+
+- REQUIRES: `session_id` is a non-empty string. `timeout` is a positive number (default: 30). `max_depth` is a positive integer (default: 10). `max_breadth` is a positive integer (default: 20).
+- ENSURES: Returns a SearchResult (see proof-search-engine spec §5). On success, includes the verified proof script. On failure, includes best partial proof and statistics.
+- Delegates to: `search_engine.proof_search(session_id, timeout, max_depth, max_breadth)`
+- On unknown/expired/crashed session: returns the appropriate session error.
+
+> **Given** an active proof session with an open goal
+> **When** `proof_search(session_id)` is called
+> **Then** the engine runs best-first search and returns a SearchResult
+
+> **Given** a non-existent session ID
+> **When** `proof_search(session_id)` is called
+> **Then** a `SESSION_NOT_FOUND` error is returned
+
+> **Given** a proof search that times out
+> **When** the result is returned
+> **Then** it has `status = "failure"` with `states_explored > 0` and `wall_time_ms` near the timeout value
+
+#### fill_admits(file_path, timeout_per_admit?, max_depth?, max_breadth?)
+
+- REQUIRES: `file_path` is a non-empty string (absolute path to a .v file). `timeout_per_admit` is a positive number (default: 30). `max_depth` is a positive integer (default: 10). `max_breadth` is a positive integer (default: 20).
+- ENSURES: Returns a FillAdmitsResult (see fill-admits-orchestrator spec §5). Includes per-admit outcomes and the modified script.
+- Delegates to: `orchestrator.fill_admits(file_path, timeout_per_admit, max_depth, max_breadth)`
+- On file not found: returns `FILE_NOT_FOUND` error.
+
+> **Given** a .v file with two `admit.` calls
+> **When** `fill_admits(file_path)` is called
+> **Then** the orchestrator processes each admit and returns a FillAdmitsResult
+
+> **Given** a .v file with no admits
+> **When** `fill_admits(file_path)` is called
+> **Then** a FillAdmitsResult with `total_admits = 0` and unmodified script is returned
+
+> **Given** a non-existent file path
+> **When** `fill_admits(file_path)` is called
+> **Then** a `FILE_NOT_FOUND` error is returned
+
+### 4.6 Input Validation
+
+The server shall validate all inputs before delegating to the pipeline, session manager, search engine, orchestrator, or renderer:
 
 | Validation | Rule |
 |-----------|------|
@@ -271,10 +313,12 @@ The server shall validate all inputs before delegating to the pipeline, session 
 | `detail_level` parameter | Must be one of `"summary"`, `"standard"`, `"detailed"` (default: `"standard"`) |
 | `max_depth` parameter | Must be a positive integer (default: 2) |
 | `max_nodes` parameter | Must be a positive integer (default: 50) |
+| `timeout` / `timeout_per_admit` parameter | Must be a positive number; values ≤ 0 are clamped to 1 |
+| `max_breadth` parameter | Must be a positive integer; values ≤ 0 are clamped to 1 |
 
 Invalid inputs that cannot be clamped shall return a `PARSE_ERROR` response.
 
-### 4.6 Index State Management
+### 4.7 Index State Management
 
 On startup, the server shall check the index in this order:
 
@@ -285,7 +329,7 @@ On startup, the server shall check the index in this order:
 
 Proof interaction tools do not depend on the search index. They shall function even when the index is missing or version-mismatched. Visualization tools that operate on sessions (`visualize_proof_state`, `visualize_proof_tree`, `visualize_proof_sequence`) do not depend on the search index. `visualize_dependencies` requires the search index.
 
-### 4.7 Response Formatting
+### 4.8 Response Formatting
 
 All successful responses shall be formatted as MCP content with `type: "text"` containing a JSON-serialized result.
 
@@ -309,7 +353,7 @@ For `visualize_proof_sequence`, the response contains a `diagrams` array:
 {"diagrams": [{"step_index": 0, "tactic": null, "mermaid": "..."}, {"step_index": 1, "tactic": "intro n", "mermaid": "..."}]}
 ```
 
-### 4.8 Proof Error Response Enrichment
+### 4.9 Proof Error Response Enrichment
 
 When a proof interaction tool returns a `TACTIC_ERROR`, the response shall include both the error object and the unchanged `ProofState` in the response body. This allows the LLM to report both the error and the current state without a separate `observe_proof_state` call.
 
@@ -371,6 +415,17 @@ The MCP server translates `SessionError` exceptions from the session manager int
 `DIAGRAM_TRUNCATED` is a warning, not a fatal error — the response includes a valid (truncated) diagram alongside the warning. The `truncated: true` flag in the response indicates truncation occurred.
 
 Session-related errors for visualization tools (`SESSION_NOT_FOUND`, `SESSION_EXPIRED`, `BACKEND_CRASHED`, `STEP_OUT_OF_RANGE`) use the same error codes and message templates as proof interaction tools (§5.2).
+
+### 5.4 Proof Search Errors
+
+| Condition | Error Code | Message Template |
+|-----------|-----------|-----------------|
+| Session not found (proof_search) | `SESSION_NOT_FOUND` | `Proof session {session_id} not found or has expired.` |
+| Session expired (proof_search) | `SESSION_EXPIRED` | `Proof session {session_id} was closed after 30 minutes of inactivity.` |
+| Backend crashed (proof_search) | `BACKEND_CRASHED` | `The Coq backend for session {session_id} has crashed. Close the session and open a new one.` |
+| File not found (fill_admits) | `FILE_NOT_FOUND` | `File not found: {file_path}` |
+
+Session-related errors for `proof_search` use the same error codes and message templates as proof interaction tools (§5.2). The `fill_admits` handler propagates `FILE_NOT_FOUND` from the orchestrator. Per-admit errors are included in the FillAdmitsResult, not raised as MCP errors.
 
 ## 6. Non-Functional Requirements
 
@@ -485,6 +540,39 @@ Response:
 }
 ```
 
+### Successful proof_search
+
+Request: `proof_search(session_id="abc123", timeout=30)`
+
+Response:
+```json
+{
+  "content": [{"type": "text", "text": "{\"status\": \"success\", \"proof_script\": [\"intro n.\", \"simpl.\", \"reflexivity.\"], \"states_explored\": 12, \"unique_states\": 8, \"wall_time_ms\": 1500, \"steps\": [{\"tactic\": \"intro n.\", \"state_before\": {...}, \"state_after\": {...}}, ...]}"}]
+}
+```
+
+### Proof search timeout
+
+Request: `proof_search(session_id="abc123", timeout=5)`
+
+Response:
+```json
+{
+  "content": [{"type": "text", "text": "{\"status\": \"failure\", \"proof_script\": null, \"states_explored\": 200, \"unique_states\": 150, \"wall_time_ms\": 5000, \"best_partial\": [\"intro n.\", \"simpl.\"], \"steps\": []}"}]
+}
+```
+
+### Successful fill_admits
+
+Request: `fill_admits(file_path="/path/to/example.v", timeout_per_admit=30)`
+
+Response:
+```json
+{
+  "content": [{"type": "text", "text": "{\"total_admits\": 2, \"filled\": 1, \"unfilled\": 1, \"results\": [{\"proof_name\": \"foo\", \"admit_index\": 0, \"line_number\": 1, \"status\": \"filled\", \"replacement\": [\"reflexivity.\"], \"search_stats\": null, \"error\": null}, {\"proof_name\": \"bar\", \"admit_index\": 0, \"line_number\": 2, \"status\": \"unfilled\", \"replacement\": null, \"search_stats\": {\"states_explored\": 200, \"unique_states\": 150, \"wall_time_ms\": 30000}, \"error\": null}], \"modified_script\": \"...\"}"}]
+}
+```
+
 ### Successful visualize_dependencies
 
 Request: `visualize_dependencies(name="Nat.add_comm", max_depth=1)`
@@ -505,6 +593,7 @@ Response:
 - Proof interaction responses use `serialize_*` functions from `poule.serialization.serialize`.
 - Proof interaction handler functions are `async` to match the session manager's async interface.
 - Visualization handler functions are `async` (session resolution is async); the renderer call itself is synchronous.
+- Proof search handler functions are `async`. `handle_proof_search` delegates to `search_engine.proof_search()`. `handle_fill_admits` delegates to `orchestrator.fill_admits()`.
 - Package location: `src/poule/server/`.
-- Handler naming convention: `handle_<tool_name>` (e.g., `handle_open_proof_session`, `handle_visualize_proof_state`).
+- Handler naming convention: `handle_<tool_name>` (e.g., `handle_open_proof_session`, `handle_visualize_proof_state`, `handle_proof_search`, `handle_fill_admits`).
 - Visualization handlers import from `poule.rendering.mermaid_renderer`.
