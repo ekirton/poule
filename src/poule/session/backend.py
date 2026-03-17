@@ -3,6 +3,8 @@
 Implements the CoqBackend protocol defined in specification/coq-proof-backend.md.
 Each instance wraps a single coq-lsp process for interactive proof exploration.
 Communication uses LSP JSON-RPC over stdin/stdout with Content-Length framing.
+Proof interaction uses the Petanque API (petanque/start, petanque/run,
+petanque/goals, petanque/premises) available in coq-lsp 0.2.x.
 """
 
 from __future__ import annotations
@@ -47,6 +49,8 @@ class CoqProofBackend:
     """Async wrapper around a single coq-lsp process for proof interaction.
 
     Implements the CoqBackend protocol from specification/coq-proof-backend.md.
+    Uses the Petanque API (petanque/start, petanque/run, petanque/goals,
+    petanque/premises) for stateful proof exploration.
     """
 
     def __init__(self, proc: asyncio.subprocess.Process) -> None:
@@ -54,15 +58,14 @@ class CoqProofBackend:
         self._next_id = 0
         self._notification_buffer: list[dict[str, Any]] = []
         self._doc_uri: Optional[str] = None
-        self._doc_version = 0
-        self._doc_text = ""
         self._file_path: Optional[str] = None
-        self._proof_start_line: Optional[int] = None
-        self._proof_body_start_line: Optional[int] = None
-        self._tactic_count = 0
-        self._current_goals: Optional[dict] = None
         self._shut_down = False
         self.original_script: list[str] = []
+
+        # Petanque state management
+        self._petanque_state: Optional[int] = None  # current state token
+        self._state_stack: list[int] = []            # for undo
+        self._original_states: list[int] = []        # state at each original step
 
     # ------------------------------------------------------------------
     # LSP message framing (async)
@@ -161,60 +164,61 @@ class CoqProofBackend:
                 self._notification_buffer.append(msg)
 
     # ------------------------------------------------------------------
-    # Document lifecycle
+    # Petanque API wrappers
     # ------------------------------------------------------------------
 
-    async def _open_document(self, uri: str, text: str) -> None:
-        self._doc_version = 1
-        await self._send_notification(
-            "textDocument/didOpen",
-            {
-                "textDocument": {
-                    "uri": uri,
-                    "languageId": "coq",
-                    "version": self._doc_version,
-                    "text": text,
-                },
-            },
-        )
-
-    async def _change_document(self, uri: str, new_text: str) -> None:
-        self._doc_version += 1
-        await self._send_notification(
-            "textDocument/didChange",
-            {
-                "textDocument": {"uri": uri, "version": self._doc_version},
-                "contentChanges": [{"text": new_text}],
-            },
-        )
-
-    async def _close_document(self, uri: str) -> None:
-        await self._send_notification(
-            "textDocument/didClose",
-            {"textDocument": {"uri": uri}},
-        )
-
-    # ------------------------------------------------------------------
-    # proof/goals query
-    # ------------------------------------------------------------------
-
-    async def _get_goals_at(self, line: int, character: int = 0) -> dict[str, Any]:
+    async def _petanque_start(self, proof_name: str) -> int:
+        """Call petanque/start and return the initial state token."""
         result = await self._send_request(
-            "proof/goals",
-            {
-                "textDocument": {"uri": self._doc_uri},
-                "position": {"line": line, "character": character},
-            },
+            "petanque/start",
+            {"uri": self._doc_uri, "thm": proof_name},
         )
-        return result
+        return result["st"]
+
+    async def _petanque_run(self, st: int, tac: str) -> dict[str, Any]:
+        """Call petanque/run and return the full result dict."""
+        return await self._send_request(
+            "petanque/run",
+            {"st": st, "tac": tac},
+        )
+
+    async def _petanque_goals(self, st: int) -> Optional[dict[str, Any]]:
+        """Call petanque/goals and return the goals dict (or None if proof done)."""
+        return await self._send_request(
+            "petanque/goals",
+            {"st": st},
+        )
+
+    async def _petanque_premises(self, st: int) -> list[dict[str, Any]]:
+        """Call petanque/premises and return the list of premise dicts."""
+        result = await self._send_request(
+            "petanque/premises",
+            {"st": st},
+        )
+        # result is directly a list
+        if isinstance(result, list):
+            return result
+        return []
 
     # ------------------------------------------------------------------
-    # State translation (§4.3)
+    # State translation
     # ------------------------------------------------------------------
 
-    def _translate_goals(self, goals_data: dict[str, Any]) -> ProofState:
-        """Translate coq-lsp goals response to ProofState."""
-        raw_goals = goals_data.get("goals", [])
+    def _translate_petanque_goals(
+        self, goals_result: Optional[dict[str, Any]], step_index: int = 0
+    ) -> ProofState:
+        """Translate petanque/goals response to ProofState."""
+        if goals_result is None:
+            return ProofState(
+                schema_version=1,
+                session_id="",
+                step_index=step_index,
+                is_complete=True,
+                focused_goal_index=None,
+                goals=[],
+            )
+
+        raw_goals = goals_result.get("goals", [])
         goals = []
         for i, g in enumerate(raw_goals):
             hyps = []
@@ -222,7 +226,6 @@ class CoqProofBackend:
                 names = h.get("names", [])
                 ty = h.get("ty", "")
                 body = h.get("def", None)
-                # coq-lsp may return multiple names for one hyp binding
                 for name in names:
                     hyps.append(Hypothesis(name=name, type=ty, body=body))
             goals.append(Goal(index=i, type=g.get("ty", ""), hypotheses=hyps))
@@ -231,10 +234,27 @@ class CoqProofBackend:
         return ProofState(
             schema_version=1,
             session_id="",
-            step_index=0,
+            step_index=step_index,
             is_complete=is_complete,
             focused_goal_index=0 if goals else None,
             goals=goals,
+        )
+
+    # ------------------------------------------------------------------
+    # Document lifecycle
+    # ------------------------------------------------------------------
+
+    async def _open_document(self, uri: str, text: str) -> None:
+        await self._send_notification(
+            "textDocument/didOpen",
+            {
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": "coq",
+                    "version": 1,
+                    "text": text,
+                },
+            },
         )
 
     # ------------------------------------------------------------------
@@ -248,9 +268,9 @@ class CoqProofBackend:
 
         self._file_path = file_path
         self._doc_uri = path.as_uri()
-        self._doc_text = path.read_text(encoding="utf-8")
+        doc_text = path.read_text(encoding="utf-8")
 
-        await self._open_document(self._doc_uri, self._doc_text)
+        await self._open_document(self._doc_uri, doc_text)
         diags = await self._wait_for_diagnostics(self._doc_uri)
 
         errors = [d for d in diags if d.get("severity") == 1]
@@ -259,13 +279,12 @@ class CoqProofBackend:
             raise RuntimeError(f"Coq check failed: {msg}")
 
     async def position_at_proof(self, proof_name: str) -> ProofState:
-        if self._doc_text is None:
+        if self._doc_uri is None:
             raise RuntimeError("No file loaded")
 
-        # Parse the file text to find the proof and extract its structure.
-        # We work on the full text (not lines) to handle inline proofs like:
-        #   "Lemma x : T. Proof. tactic1. tactic2. Qed."
-        text = self._doc_text
+        # Parse the file text to extract the original proof script.
+        path = Path(self._file_path)  # type: ignore[arg-type]
+        text = path.read_text(encoding="utf-8")
 
         # Find the proof declaration
         decl_pattern = re.compile(
@@ -295,308 +314,108 @@ class CoqProofBackend:
             tactics = _TACTIC_RE.findall(body_text)
             self.original_script = [t.strip() for t in tactics if t.strip()]
 
-        # Build a normalized preamble for the working document.
-        # Everything before the proof's Proof. keyword, plus "Proof." on its own line.
-        # This ensures coq-lsp processes the preamble correctly regardless of
-        # the original file's line structure.
-        preamble_text = text[:decl_match.start() + proof_kw_match.end()].rstrip()
-        # Ensure Proof. is on its own line for clean positioning
-        # Split at the Proof. boundary to normalize
-        pre_proof = text[:decl_match.start() + proof_kw_match.start()].rstrip()
-        self._working_preamble = pre_proof + "\nProof."
-        self._working_tactics: list[str] = []
-        self._tactic_count = 0
+        # Use petanque/start to get the initial proof state
+        try:
+            initial_st = await self._petanque_start(proof_name)
+        except RuntimeError as exc:
+            raise ValueError(f"Cannot start proof '{proof_name}': {exc}") from exc
 
-        # Update document to just the preamble (no tactics yet)
-        new_text = self._working_preamble + "\n"
-        await self._change_document(self._doc_uri, new_text)
-        self._doc_text = new_text
-        await self._wait_for_diagnostics(self._doc_uri)
+        self._petanque_state = initial_st
+        self._state_stack = []
 
-        # Get initial proof state — query at the "Proof." line
-        preamble_lines = self._working_preamble.splitlines()
-        proof_line = len(preamble_lines) - 1
-        # Query at end of "Proof." to get state after it
-        char_pos = len("Proof.")
-        goals_result = await self._get_goals_at(proof_line, char_pos)
+        # Build original state history by running the original script silently
+        self._original_states = [initial_st]
+        st = initial_st
+        for tac in self.original_script:
+            try:
+                run_result = await self._petanque_run(st, tac)
+                st = run_result["st"]
+                self._original_states.append(st)
+            except RuntimeError:
+                # If a step fails, stop building history
+                break
 
-        goals_data = goals_result.get("goals")
-        if goals_data is None:
-            raise ValueError(f"No proof state at {proof_name} — proof may not be active")
-
-        state = self._translate_goals(goals_data)
-        return state
+        # Get and return the initial proof state
+        goals_result = await self._petanque_goals(initial_st)
+        return self._translate_petanque_goals(goals_result, step_index=0)
 
     async def execute_tactic(self, tactic: str) -> ProofState:
         if self._shut_down:
             raise RuntimeError("Backend has been shut down")
+        if self._petanque_state is None:
+            raise RuntimeError("No proof in progress")
 
-        # Append the tactic to the working document
-        self._working_tactics.append(tactic)
-        new_text = self._working_preamble + "\n" + "\n".join(self._working_tactics) + "\n"
-        await self._change_document(self._doc_uri, new_text)
-        self._doc_text = new_text
-        diags = await self._wait_for_diagnostics(self._doc_uri)
+        run_result = await self._petanque_run(self._petanque_state, tactic)
+        proof_finished = run_result.get("proof_finished", False)
+        new_st = run_result["st"]
 
-        # Check for errors — any error diagnostic means the tactic failed
-        tactic_line = len(self._working_preamble.splitlines()) + len(self._working_tactics) - 1
-        tactic_errors = [d for d in diags if d.get("severity") == 1]
+        # Push old state for undo
+        self._state_stack.append(self._petanque_state)
+        self._petanque_state = new_st
 
-        if tactic_errors:
-            # Revert — remove the failed tactic
-            self._working_tactics.pop()
-            revert_text = self._working_preamble + "\n"
-            if self._working_tactics:
-                revert_text += "\n".join(self._working_tactics) + "\n"
-            await self._change_document(self._doc_uri, revert_text)
-            self._doc_text = revert_text
-            await self._wait_for_diagnostics(self._doc_uri)
-
-            msg = "; ".join(d.get("message", "") for d in tactic_errors)
-            raise RuntimeError(f"Tactic failed: {msg}")
-
-        self._tactic_count += 1
-
-        # Get the proof state after the tactic
-        char_pos = len(tactic)
-        goals_result = await self._get_goals_at(tactic_line, char_pos)
-
-        goals_data = goals_result.get("goals")
-        if goals_data is None:
-            # Proof might be complete — no goals field means Qed-like state
+        if proof_finished:
             return ProofState(
                 schema_version=1,
                 session_id="",
-                step_index=0,
+                step_index=len(self._state_stack),
                 is_complete=True,
                 focused_goal_index=None,
                 goals=[],
             )
 
-        return self._translate_goals(goals_data)
+        goals_result = await self._petanque_goals(new_st)
+        return self._translate_petanque_goals(
+            goals_result, step_index=len(self._state_stack)
+        )
 
     async def get_current_state(self) -> ProofState:
-        if not self._working_tactics:
-            # At initial state — query after preamble
-            preamble_lines = self._working_preamble.splitlines()
-            query_line = len(preamble_lines) - 1
-            char_pos = len(preamble_lines[-1]) if preamble_lines else 0
-        else:
-            # Query after last tactic
-            tactic_line = len(self._working_preamble.splitlines()) + len(self._working_tactics) - 1
-            query_line = tactic_line
-            char_pos = len(self._working_tactics[-1])
+        if self._petanque_state is None:
+            raise RuntimeError("No proof in progress")
 
-        goals_result = await self._get_goals_at(query_line, char_pos)
-        goals_data = goals_result.get("goals")
-        if goals_data is None:
-            return ProofState(
-                schema_version=1, session_id="", step_index=0,
-                is_complete=True, focused_goal_index=None, goals=[],
-            )
-        return self._translate_goals(goals_data)
+        goals_result = await self._petanque_goals(self._petanque_state)
+        return self._translate_petanque_goals(
+            goals_result, step_index=len(self._state_stack)
+        )
 
     async def undo(self) -> None:
-        if not self._working_tactics:
+        if not self._state_stack:
             return
-
-        self._working_tactics.pop()
-        self._tactic_count = max(0, self._tactic_count - 1)
-
-        new_text = self._working_preamble + "\n"
-        if self._working_tactics:
-            new_text += "\n".join(self._working_tactics) + "\n"
-        await self._change_document(self._doc_uri, new_text)
-        self._doc_text = new_text
-        await self._wait_for_diagnostics(self._doc_uri)
+        self._petanque_state = self._state_stack.pop()
 
     async def get_premises_at_step(self, step: int) -> list[dict[str, str]]:
-        """Extract premises used at a tactic step.
+        """Return premises available at the given proof step.
 
-        Uses a heuristic approach: run the proof up to the step, then
-        use Coq's 'Show Proof.' to get the partial proof term and diff
-        against the previous step's proof term.
-
-        For now, uses a simpler approach: examine the tactic string for
-        referenced lemma names and classify them via About queries.
+        Uses petanque/premises to query the available premises at the
+        state corresponding to the given step in the original proof script.
         """
-        if step < 1 or step > len(self.original_script):
+        if step < 1 or step > len(self._original_states):
             return []
 
-        tactic = self.original_script[step - 1]
+        # State after executing `step` tactics from the original script
+        # (index 0 = before any tactic, index 1 = after tactic 1, etc.)
+        state_idx = min(step, len(self._original_states) - 1)
+        st = self._original_states[state_idx]
 
-        # Build document up to step, add "Show Proof." to get term info
-        tactics_up_to = self.original_script[:step]
-        show_proof_doc = (
-            self._working_preamble + "\n"
-            + "\n".join(tactics_up_to) + "\n"
-            + "Show Proof.\n"
-        )
+        try:
+            raw_premises = await self._petanque_premises(st)
+        except RuntimeError:
+            return []
 
-        # Use a separate synthetic document for premise queries
-        query_uri = f"file:///tmp/poule_premise_query_{step}.v"
-        await self._send_notification(
-            "textDocument/didOpen",
-            {
-                "textDocument": {
-                    "uri": query_uri,
-                    "languageId": "coq",
-                    "version": 1,
-                    "text": show_proof_doc,
-                },
-            },
-        )
-        await self._wait_for_diagnostics(query_uri)
-
-        # Get the Show Proof output (messages at the Show Proof line)
-        show_line = len(self._working_preamble.splitlines()) + len(tactics_up_to)
-        goals_result = await self._send_request(
-            "proof/goals",
-            {
-                "textDocument": {"uri": query_uri},
-                "position": {"line": show_line, "character": 0},
-            },
-        )
-
-        # Also get the previous step's proof term for diffing
-        prev_terms: set[str] = set()
-        if step > 1:
-            prev_doc = (
-                self._working_preamble + "\n"
-                + "\n".join(self.original_script[:step - 1]) + "\n"
-                + "Show Proof.\n"
-            )
-            prev_uri = f"file:///tmp/poule_premise_prev_{step}.v"
-            await self._send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": prev_uri,
-                        "languageId": "coq",
-                        "version": 1,
-                        "text": prev_doc,
-                    },
-                },
-            )
-            await self._wait_for_diagnostics(prev_uri)
-            prev_show_line = len(self._working_preamble.splitlines()) + step - 1
-            prev_result = await self._send_request(
-                "proof/goals",
-                {
-                    "textDocument": {"uri": prev_uri},
-                    "position": {"line": prev_show_line, "character": 0},
-                },
-            )
-            prev_messages = prev_result.get("messages", [])
-            for m in prev_messages:
-                if m.get("level", 3) != 1:
-                    prev_terms.update(_extract_qualified_names(m.get("text", "")))
-            await self._send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": prev_uri}},
-            )
-
-        # Extract premises from Show Proof output
-        messages = goals_result.get("messages", [])
-        current_terms: set[str] = set()
-        for m in messages:
-            if m.get("level", 3) != 1:
-                current_terms.update(_extract_qualified_names(m.get("text", "")))
-
-        # New terms = premises introduced by this tactic
-        new_terms = current_terms - prev_terms
-
-        # Also parse the tactic itself for explicit references
-        tactic_refs = _extract_qualified_names(tactic)
-        new_terms.update(tactic_refs)
-
-        await self._send_notification(
-            "textDocument/didClose",
-            {"textDocument": {"uri": query_uri}},
-        )
-
-        # Classify each premise
         premises = []
-        for name in sorted(new_terms):
-            # Skip common non-premise names
-            if name in ("Proof", "Qed", "Defined", "Admitted"):
+        for p in raw_premises:
+            name = p.get("full_name", "")
+            if not name:
                 continue
-            kind = await self._classify_premise(name)
-            if kind:
-                premises.append({"name": name, "kind": kind})
+            # Extract kind from info if available
+            info = p.get("info")
+            kind = "lemma"
+            if isinstance(info, dict):
+                inner = info.get("Ok", info)
+                if isinstance(inner, dict):
+                    kind = inner.get("kind", "lemma")
+            premises.append({"name": name, "kind": kind})
 
         return premises
-
-    async def _classify_premise(self, name: str) -> Optional[str]:
-        """Classify a premise name via About query.
-
-        Uses the working preamble (which includes Require Import lines)
-        so that short names like Nat.add_comm resolve correctly.
-        """
-        query_uri = f"file:///tmp/poule_about_{id(name)}.v"
-        # Include the preamble up to (but not including) Proof. so that
-        # Require Import statements are in scope for the About query.
-        preamble_lines = self._working_preamble.splitlines()
-        # Remove the trailing "Proof." line to avoid opening a proof context
-        context_lines = [l for l in preamble_lines if not re.match(r"\s*Proof\b", l)]
-        text = "\n".join(context_lines) + f"\nAbout {name}."
-        await self._send_notification(
-            "textDocument/didOpen",
-            {
-                "textDocument": {
-                    "uri": query_uri,
-                    "languageId": "coq",
-                    "version": 1,
-                    "text": text,
-                },
-            },
-        )
-        diags = await self._wait_for_diagnostics(query_uri)
-
-        # Get About output — at the last line (where the About command is)
-        about_line = len(text.splitlines()) - 1
-        result = await self._send_request(
-            "proof/goals",
-            {
-                "textDocument": {"uri": query_uri},
-                "position": {"line": about_line, "character": 0},
-            },
-        )
-
-        await self._send_notification(
-            "textDocument/didClose",
-            {"textDocument": {"uri": query_uri}},
-        )
-
-        # Check for errors
-        if any(d.get("severity") == 1 for d in diags):
-            return None
-
-        messages = result.get("messages", [])
-        about_text = "\n".join(m.get("text", "") for m in messages if m.get("level", 3) != 1)
-
-        # Rocq 9.x: "Expands to: Constant ..."
-        if "Constant" in about_text:
-            # Check if it's a lemma/theorem vs definition
-            if any(kw in about_text.lower() for kw in ("lemma", "theorem", "proposition", "corollary")):
-                return "lemma"
-            return "lemma"  # Most constants used as premises are lemmas
-        if "Inductive" in about_text:
-            return "constructor"
-
-        # Coq <=8.x: "X is a Lemma/Definition/..."
-        about_lower = about_text.lower()
-        if "lemma" in about_lower or "theorem" in about_lower:
-            return "lemma"
-        if "definition" in about_lower:
-            return "definition"
-        if "constructor" in about_lower:
-            return "constructor"
-
-        # Default for known names
-        if about_text:
-            return "lemma"
-        return None
 
     async def shutdown(self) -> None:
         if self._shut_down:
@@ -620,19 +439,6 @@ class CoqProofBackend:
                 await self._proc.wait()
             except Exception:
                 pass
-
-
-# ------------------------------------------------------------------
-# Utility functions
-# ------------------------------------------------------------------
-
-# Regex for qualified Coq names (e.g., Coq.Arith.PeanoNat.Nat.add_comm)
-_QUALIFIED_NAME_RE = re.compile(r"\b([A-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)+)\b")
-
-
-def _extract_qualified_names(text: str) -> set[str]:
-    """Extract fully qualified Coq names from text."""
-    return set(_QUALIFIED_NAME_RE.findall(text))
 
 
 # ------------------------------------------------------------------
