@@ -12,9 +12,9 @@ Define the CLI layer that accepts user commands from the terminal, validates inp
 
 ## 2. Scope
 
-**In scope**: 7 search subcommands, 1 proof replay subcommand, 3 extraction subcommands, 6 neural subcommands, shared option handling, input validation, human-readable and JSON output formatting, index state checks, error reporting.
+**In scope**: 7 search subcommands, 1 proof replay subcommand, 1 distribution subcommand, 3 extraction subcommands, 6 neural subcommands, shared option handling, input validation, human-readable and JSON output formatting, index state checks, error reporting.
 
-**Out of scope**: Search logic (owned by pipeline/channels), storage management (owned by storage), Coq expression parsing (owned by pipeline), MCP protocol handling (owned by MCP server), extraction logic (owned by extraction-campaign), output serialization (owned by extraction-output).
+**Out of scope**: Search logic (owned by pipeline/channels), storage management (owned by storage), Coq expression parsing (owned by pipeline), MCP protocol handling (owned by MCP server), extraction logic (owned by extraction-campaign), output serialization (owned by extraction-output), download client internals (owned by prebuilt-distribution).
 
 ## 3. Definitions
 
@@ -394,6 +394,10 @@ JSON (`--json`): a single QualityReport JSON object (compact format).
 > **When** `validate-training-data stdlib.jsonl mathcomp.jsonl` is run
 > **Then** a validation report is printed to stdout and exit code is 0
 
+### 4.16 download-index(output, include_model, model_dir, force)
+
+Specified in [prebuilt-distribution.md](prebuilt-distribution.md) §4.7. This subcommand downloads prebuilt index databases and model checkpoints from GitHub Releases. It does not require `--db` or any index state checks — it produces the index rather than consuming it.
+
 ## 5. Error Specification
 
 | Condition | Exit code | stderr message |
@@ -419,6 +423,10 @@ JSON (`--json`): a single QualityReport JSON object (compact format).
 | GPU out of memory (train, fine-tune) | 1 | `GPU out of memory. Try reducing --batch-size (current: {n}).` |
 | Quantization validation failure (quantize) | 1 | `Quantization quality check failed: max cosine distance {d:.4f} >= 0.02 threshold.` |
 | Training data file not found (train, fine-tune, validate-training-data) | 1 | `Training data file not found: {path}` |
+| Output file exists, no --force (download-index) | 1 | `{path} already exists. Use --force to overwrite.` |
+| No matching release (download-index) | 1 | `No index release found on GitHub.` |
+| Checksum mismatch (download-index) | 1 | `Checksum verification failed for {label}. Expected {expected}, got {actual}. File deleted.` |
+| Network failure (download-index) | 1 | `Failed to reach GitHub API: {details}` |
 
 Errors are always printed to stderr. Successful output is always printed to stdout. This separation supports piping and redirection.
 

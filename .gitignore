@@ -12,3 +12,4 @@ build/
 
 # Generated artifacts
 index.db
+*.onnx

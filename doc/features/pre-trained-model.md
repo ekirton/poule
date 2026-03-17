@@ -36,6 +36,10 @@ The pre-trained model targets the following profile based on research evidence:
 
 ## Design Rationale
 
+### Distribution mechanism
+
+The pre-trained model and a prebuilt search index (covering stdlib + MathComp) are distributed via GitHub Releases. Users download both artifacts with a single CLI command (`download-index --include-model`), verified by SHA-256 checksums. This eliminates the need to install the Coq toolchain or run extraction for the common case. See the [distribution architecture](../architecture/prebuilt-distribution.md) for the full protocol.
+
 ### Why ship a model rather than download on first use
 
 Downloading a model at runtime introduces network dependencies, versioning complexity, and failure modes (offline environments, corporate firewalls, CDN outages). The model is small enough (<500MB quantized) to distribute with the tool. This follows the zero-config deployment principle: install, index, search.

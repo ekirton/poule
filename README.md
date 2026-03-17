@@ -69,7 +69,23 @@ uv sync
 
 ## Quick Start
 
-### 1. Index a Coq Library
+### 1. Get the Search Index
+
+**Option A — Download the prebuilt index** (no Coq installation required):
+
+```bash
+uv run python -m poule.cli download-index
+```
+
+To also download the neural premise selection model:
+
+```bash
+uv run python -m poule.cli download-index --include-model
+```
+
+You can also download manually from [GitHub Releases](https://github.com/ekirton/poule/releases).
+
+**Option B — Build from source** (requires Coq toolchain):
 
 ```bash
 uv run python -m poule.extraction --target stdlib+mathcomp --db index.db --progress

@@ -28,6 +28,7 @@ from poule.pipeline.search import (
 )
 from poule.server.validation import validate_limit
 from poule.storage.errors import IndexNotFoundError, IndexVersionError
+from poule.cli.download import download_index
 from poule.extraction.campaign import run_campaign
 from poule.extraction.dependency_graph import extract_dependency_graph
 from poule.extraction.reporting import generate_quality_report
@@ -65,6 +66,9 @@ _limit_option = click.option("--limit", default=50, type=int, help="Maximum numb
 def cli():
     """Wily Rooster — search the Coq/Rocq declaration index."""
     pass
+
+
+cli.add_command(download_index)
 
 
 # ---------------------------------------------------------------------------
