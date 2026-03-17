@@ -407,3 +407,7 @@ class SessionManager:
         ss = self._registry.get(session_id)
         if ss is not None:
             ss.last_active_at = dt
+
+
+# Alias used by some component tests.
+ProofSessionManager = SessionManager

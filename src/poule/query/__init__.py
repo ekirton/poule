@@ -1,0 +1,1 @@
+"""Vernacular introspection query package."""
