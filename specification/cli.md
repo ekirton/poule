@@ -12,7 +12,7 @@ Define the CLI layer that accepts user commands from the terminal, validates inp
 
 ## 2. Scope
 
-**In scope**: 7 search subcommands, shared option handling, input validation, human-readable and JSON output formatting, index state checks, error reporting.
+**In scope**: 7 search subcommands, 1 proof replay subcommand, shared option handling, input validation, human-readable and JSON output formatting, index state checks, error reporting.
 
 **Out of scope**: Search logic (owned by pipeline/channels), storage management (owned by storage), Coq expression parsing (owned by pipeline), MCP protocol handling (owned by MCP server).
 
@@ -143,6 +143,57 @@ For `list-modules`: a JSON array of `Module` objects.
 
 JSON output shall be compact (no pretty-printing) to support piping to `jq` and other tools.
 
+### 4.6 replay-proof(file_path, proof_name)
+
+- REQUIRES: `file_path` is a non-empty string. `proof_name` is a non-empty string.
+- ENSURES: Opens a proof session, extracts the complete proof trace, formats and prints the trace to stdout, closes the session, and exits with code 0.
+- On file not found: prints error to stderr, exits with code 1.
+- On proof not found: prints error to stderr, exits with code 1.
+- On backend crash: prints error to stderr, exits with code 1.
+- Session is always closed (even on error) to prevent resource leaks.
+- Delegates to: `SessionManager.create_session`, `SessionManager.extract_trace`, `SessionManager.get_premises` (if `--premises`), `SessionManager.close_session`.
+
+**Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--json` | flag | false | Output as JSON instead of human-readable format |
+| `--premises` | flag | false | Include per-step premise annotations |
+
+**Output formatting:**
+
+Human-readable (default):
+```
+Proof: <proof_name>
+File:  <file_path>
+Steps: <total_steps>
+
+--- Step 0 (initial) ---
+Goal 1: <goal_type>
+  <hyp_name> : <hyp_type>
+
+--- Step 1: <tactic> ---
+Goal 1: <goal_type>
+  <hyp_name> : <hyp_type>
+```
+
+When `--premises` is active, each step block with a tactic appends a premises line:
+```
+  Premises: <name> (<kind>), <name> (<kind>)
+```
+
+JSON without `--premises`: the output of `serialize_proof_trace(trace)`.
+
+JSON with `--premises`: `{"trace": <parsed trace object>, "premises": [<parsed premise annotation objects>]}`. Both values are JSON objects (not embedded strings).
+
+**Given/When/Then examples:**
+
+1. GIVEN `test.v` contains proof `add_comm` with 3 steps WHEN `replay-proof test.v add_comm` is run THEN stdout contains "Proof: add_comm", "Steps: 3", and three step blocks, and exit code is 0.
+
+2. GIVEN `test.v` contains proof `add_comm` WHEN `replay-proof test.v add_comm --json` is run THEN stdout is valid JSON matching the `ProofTrace` schema with `total_steps` and `steps` fields.
+
+3. GIVEN `test.v` does not exist WHEN `replay-proof test.v add_comm` is run THEN stderr contains "File not found" and exit code is 1.
+
 ## 5. Error Specification
 
 | Condition | Exit code | stderr message |
@@ -153,6 +204,9 @@ JSON output shall be compact (no pretty-printing) to support piping to `jq` and 
 | Parse failure | 1 | `Failed to parse expression: {details}` |
 | Invalid usage (missing args, bad option) | 2 | Usage error from argument parser |
 | Empty results | 0 | (no output in human-readable; `[]` in JSON) |
+| File not found (replay-proof) | 1 | `File not found: {path}` |
+| Proof not found (replay-proof) | 1 | `Proof not found: {name}` |
+| Backend crashed (replay-proof) | 1 | `Backend crashed during proof replay.` |
 
 Errors are always printed to stderr. Successful output is always printed to stdout. This separation supports piping and redirection.
 
@@ -202,6 +256,51 @@ $ echo $?
 1
 ```
 
+### replay-proof (human-readable)
+
+```
+$ wily-rooster replay-proof test.v add_comm
+Proof: add_comm
+File:  test.v
+Steps: 2
+
+--- Step 0 (initial) ---
+Goal 1: forall n m : nat, n + m = m + n
+  n : nat
+  m : nat
+
+--- Step 1: intros n m. ---
+Goal 1: n + m = m + n
+  n : nat
+  m : nat
+
+--- Step 2: ring. ---
+(proof complete)
+```
+
+### replay-proof (JSON)
+
+```
+$ wily-rooster replay-proof test.v add_comm --json
+{"schema_version":1,"session_id":"...","proof_name":"add_comm","file_path":"test.v","total_steps":2,"steps":[...]}
+```
+
+### replay-proof (JSON with premises)
+
+```
+$ wily-rooster replay-proof test.v add_comm --json --premises
+{"trace":{"schema_version":1,...},"premises":[{"step_index":1,"tactic":"intros n m.","premises":[]},...]}
+```
+
+### replay-proof (error)
+
+```
+$ wily-rooster replay-proof nonexistent.v add_comm
+File not found: nonexistent.v
+$ echo $?
+1
+```
+
 ## 8. Language-Specific Notes (Python)
 
 - Use `click` for argument parsing (consistent with the existing extraction CLI).
@@ -210,4 +309,6 @@ $ echo $?
 - Reuse pipeline search functions from `wily_rooster.pipeline.search`.
 - Reuse `SearchResult`, `LemmaDetail`, `Module` from `wily_rooster.models.responses`.
 - JSON serialization via `dataclasses.asdict()` + `json.dumps()` (same as MCP server).
+- For proof replay: use `SessionManager` from `wily_rooster.session.manager`, `serialize_proof_trace` and `serialize_premise_annotation` from `wily_rooster.serialization.serialize`.
+- Use `asyncio.run()` to bridge Click's sync execution model to the async `SessionManager` API.
 - Package location: `src/wily_rooster/cli/`.

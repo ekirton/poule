@@ -316,3 +316,54 @@ Derived from [doc/requirements/proof-interaction-protocol.md](../proof-interacti
 **Acceptance criteria:**
 - GIVEN multiple concurrent sessions WHEN the Coq backend process for one session crashes THEN all other sessions continue to operate normally
 - GIVEN a crashed session WHEN any tool is called with that session ID THEN a structured error is returned indicating the backend process crashed
+
+---
+
+## Epic 8: Batch Proof Replay CLI
+
+### 8.1 Replay Proof Trace via CLI
+
+**As a** Coq developer or dataset-building script,
+**I want to** run `replay-proof` from the terminal with a file path and proof name and receive the complete proof trace,
+**so that** I can extract proof data without an MCP client.
+
+**Priority:** P0
+**Stability:** Stable
+
+**Acceptance criteria:**
+- GIVEN a valid .v file and a named proof within it WHEN `replay-proof <file_path> <proof_name>` is executed THEN the command prints a human-readable trace to stdout showing each proof step with its tactic, goals, and hypotheses, and exits with code 0
+- GIVEN a valid .v file and proof WHEN `replay-proof <file_path> <proof_name> --json` is executed THEN the command prints the serialized proof trace as JSON to stdout and exits with code 0
+- GIVEN the JSON output WHEN it is parsed THEN it conforms to the `ProofTrace` schema produced by `serialize_proof_trace()`
+
+**Traces to:** R2-P0-5 (extract full proof state at each step)
+
+### 8.2 Replay Proof with Premise Annotations
+
+**As an** AI researcher building premise selection datasets,
+**I want to** include per-step premise annotations when replaying a proof,
+**so that** I can extract both proof traces and premise data in a single command invocation.
+
+**Priority:** P0
+**Stability:** Stable
+
+**Acceptance criteria:**
+- GIVEN a valid proof WHEN `replay-proof <file_path> <proof_name> --premises` is executed THEN the output includes per-step premise annotations alongside the proof trace
+- GIVEN `--json --premises` flags WHEN the command is executed THEN the JSON output wraps the trace and premises as `{"trace": ..., "premises": [...]}`
+- GIVEN the premise annotations WHEN they are inspected THEN each annotation includes the step index, tactic, and list of premises with name and kind
+
+**Traces to:** R2-P0-6 (extract premise annotations)
+
+### 8.3 Replay Proof Error Handling
+
+**As a** CI pipeline or script author,
+**I want** `replay-proof` to report errors to stderr with a nonzero exit code,
+**so that** I can detect failures programmatically.
+
+**Priority:** P0
+**Stability:** Stable
+
+**Acceptance criteria:**
+- GIVEN a file path that does not exist WHEN `replay-proof` is executed THEN an error message is printed to stderr and the command exits with code 1
+- GIVEN a valid file but a nonexistent proof name WHEN `replay-proof` is executed THEN an error message is printed to stderr and the command exits with code 1
+- GIVEN a Coq backend crash during replay WHEN the error is detected THEN an error message is printed to stderr, the session is cleaned up, and the command exits with code 1
+- GIVEN missing required arguments WHEN `replay-proof` is executed THEN the command exits with code 2 (usage error)

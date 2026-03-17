@@ -1,18 +1,19 @@
 # CLI
 
-The command-line interface for both indexing and search operations.
+The command-line interface for indexing, search, and proof replay operations.
 
-**Feature**: [CLI Search](../features/cli-search.md)
-**Stories**: [Epic 1: Library Indexing](../requirements/stories/tree-search-mcp.md#epic-1-library-indexing), [Epic 7: Standalone CLI Search](../requirements/stories/tree-search-mcp.md#epic-7-standalone-cli-search)
+**Features**: [CLI Search](../features/cli-search.md), [CLI Proof Replay](../features/cli-proof-replay.md)
+**Stories**: [Epic 1: Library Indexing](../requirements/stories/tree-search-mcp.md#epic-1-library-indexing), [Epic 7: Standalone CLI Search](../requirements/stories/tree-search-mcp.md#epic-7-standalone-cli-search), [Epic 8: Batch Proof Replay CLI](../requirements/stories/proof-interaction-protocol.md#epic-8-batch-proof-replay-cli)
 
 ---
 
 ## Entry Point
 
-A single CLI entry point exposes two command groups:
+A single CLI entry point exposes three command groups:
 
 - **`index`** — library extraction and index construction (existing)
 - **Search subcommands** — `search-by-name`, `search-by-type`, `search-by-structure`, `search-by-symbols`, `get-lemma`, `find-related`, `list-modules`
+- **Proof subcommands** — `replay-proof`
 
 All search subcommands share common options:
 
@@ -81,7 +82,26 @@ wily-rooster list-modules --db <path> [<prefix>] [--json]
 
 Optional positional argument: `prefix` — module prefix to filter by (default: empty, lists all top-level modules).
 
-## Pipeline Integration
+## Proof Subcommand Signatures
+
+### replay-proof
+
+```
+wily-rooster replay-proof <file_path> <proof_name> [--json] [--premises]
+```
+
+Positional arguments: `file_path` — path to a .v file; `proof_name` — name of the proof to replay.
+
+Options:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--json` | flag | false | Output as JSON instead of human-readable format |
+| `--premises` | flag | false | Include per-step premise annotations |
+
+No `--db` option — proof replay is independent of the search index.
+
+## Pipeline Integration (Search)
 
 ```
 CLI subcommand
@@ -105,6 +125,26 @@ Each CLI subcommand:
 3. Formats results and writes to stdout
 
 The CLI reuses `PipelineContext` and all pipeline functions identically to the MCP server. No search logic lives in the CLI layer.
+
+## Pipeline Integration (Proof Replay)
+
+```
+CLI replay-proof subcommand
+  │
+  │ asyncio.run(_replay_proof_async(...))
+  ▼
+SessionManager
+  │
+  │ create_session → extract_trace → get_premises (optional) → close_session
+  ▼
+ProofTrace (+ PremiseAnnotation list)
+  │
+  │ format_proof_trace(trace, premises, json_mode)
+  ▼
+stdout
+```
+
+The proof replay command uses `asyncio.run()` to bridge Click's synchronous world to the async `SessionManager` API. The session is always closed in a `finally` block, even on error.
 
 ## Index State Checks
 
@@ -149,6 +189,33 @@ For `get-lemma`: a single JSON `LemmaDetail` object.
 
 JSON field names and value types match the MCP response types defined in [data-models/response-types.md](data-models/response-types.md).
 
+### Proof Replay Output
+
+#### Human-Readable (default)
+
+```
+Proof: <proof_name>
+File:  <file_path>
+Steps: <total_steps>
+
+--- Step 0 (initial) ---
+Goal 1: <goal_type>
+  <hypothesis_name> : <hypothesis_type>
+
+--- Step 1: <tactic> ---
+Goal 1: <goal_type>
+  <hypothesis_name> : <hypothesis_type>
+  Premises: <premise_name> (<kind>), ...
+```
+
+Header with proof metadata, then one block per step showing the tactic applied, goals with hypotheses, and optionally premise annotations.
+
+#### JSON (`--json`)
+
+Without `--premises`: the output of `serialize_proof_trace(trace)`.
+
+With `--premises`: `{"trace": <serialize_proof_trace output>, "premises": [<serialize_premise_annotation output>, ...]}`.
+
 ## Error Handling
 
 | Condition | Behavior |
@@ -158,3 +225,6 @@ JSON field names and value types match the MCP response types defined in [data-m
 | Declaration not found (`get-lemma`, `find-related`) | Print error to stderr, exit 1 |
 | Parse failure (type/structure queries) | Print parse error to stderr, exit 1 |
 | Empty results | Print nothing (human-readable) or `[]` (JSON), exit 0 |
+| File not found (proof replay) | Print error to stderr, exit 1 |
+| Proof not found (proof replay) | Print error to stderr, exit 1 |
+| Backend crashed (proof replay) | Print error to stderr, exit 1 |

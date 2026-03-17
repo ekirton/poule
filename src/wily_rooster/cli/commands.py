@@ -1,7 +1,8 @@
-"""CLI subcommands for searching the Coq/Rocq declaration index."""
+"""CLI subcommands for searching the Coq/Rocq declaration index and replaying proofs."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -11,8 +12,11 @@ import click
 from wily_rooster.cli.formatting import (
     format_lemma_detail,
     format_modules,
+    format_proof_trace,
     format_search_results,
 )
+from wily_rooster.session.errors import SessionError
+from wily_rooster.session.manager import SessionManager
 from wily_rooster.models.responses import LemmaDetail, Module, SearchResult
 from wily_rooster.pipeline.context import create_context
 from wily_rooster.pipeline.parser import ParseError
@@ -327,6 +331,71 @@ def cmd_list_modules(db: str, json_mode: bool, prefix: str):
         click.echo(output)
     elif json_mode:
         click.echo("[]")
+
+
+# ---------------------------------------------------------------------------
+# replay-proof
+# ---------------------------------------------------------------------------
+
+
+_json_option_proof = click.option("--json", "json_mode", is_flag=True, default=False, help="Output as JSON.")
+_premises_option = click.option("--premises", is_flag=True, default=False, help="Include premise annotations.")
+
+
+@cli.command("replay-proof")
+@_json_option_proof
+@_premises_option
+@click.argument("file_path")
+@click.argument("proof_name")
+def cmd_replay_proof(json_mode: bool, premises: bool, file_path: str, proof_name: str):
+    """Replay a proof and output the complete trace."""
+    try:
+        asyncio.run(_replay_proof_async(file_path, proof_name, json_mode, premises))
+    except SystemExit:
+        raise
+    except SessionError as exc:
+        _handle_session_error(exc)
+
+
+async def _replay_proof_async(
+    file_path: str, proof_name: str, json_mode: bool, include_premises: bool,
+) -> None:
+    backend_factory = _get_backend_factory()
+    mgr = SessionManager(backend_factory)
+    session_id, _ = await mgr.create_session(file_path, proof_name)
+    try:
+        trace = await mgr.extract_trace(session_id)
+        premise_list = None
+        if include_premises:
+            premise_list = await mgr.get_premises(session_id)
+        output = format_proof_trace(trace, premises=premise_list, json_mode=json_mode)
+        click.echo(output)
+    except SessionError:
+        await mgr.close_session(session_id)
+        raise
+    else:
+        await mgr.close_session(session_id)
+
+
+def _get_backend_factory():
+    """Return the default Coq backend factory. Patchable by tests."""
+    from wily_rooster.session.backend import create_coq_backend
+    return create_coq_backend
+
+
+_SESSION_ERROR_MESSAGES = {
+    "FILE_NOT_FOUND": lambda exc: exc.message,
+    "PROOF_NOT_FOUND": lambda exc: exc.message,
+    "BACKEND_CRASHED": lambda _: "Backend crashed during proof replay.",
+}
+
+
+def _handle_session_error(exc: SessionError) -> None:
+    """Map SessionError to stderr message and exit 1."""
+    formatter = _SESSION_ERROR_MESSAGES.get(exc.code)
+    msg = formatter(exc) if formatter else (exc.message or str(exc))
+    click.echo(msg, err=True)
+    sys.exit(1)
 
 
 # ---------------------------------------------------------------------------

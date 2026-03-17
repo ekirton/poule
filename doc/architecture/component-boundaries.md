@@ -12,7 +12,7 @@ System-level view of all components, their boundaries, and the dependency graph.
 | Storage | SQLite schema, index metadata, FTS5 index | [storage.md](storage.md) |
 | Retrieval Pipeline | Retrieval channels, metric computation, fusion | [retrieval-pipeline.md](retrieval-pipeline.md) |
 | MCP Server | Protocol translation, input validation, error handling, response formatting, proof state serialization | [mcp-server.md](mcp-server.md) |
-| CLI | Command-line interface for indexing and search, output formatting | [cli.md](cli.md) |
+| CLI | Command-line interface for indexing, search, and proof replay, output formatting | [cli.md](cli.md) |
 | Proof Session Manager | Session lifecycle, Coq backend process management, tactic dispatch, state caching, premise extraction | [proof-session.md](proof-session.md) |
 | Claude Code / LLM | Intent interpretation, query formulation, result filtering, explanation | External (not owned by this project) |
 
@@ -35,12 +35,12 @@ Claude Code / LLM          Terminal user
   │ MCP tool calls (stdio)    │ CLI subcommands
   ▼                           ▼
 MCP Server                  CLI
-  │         │                 │
-  │ search  │ proof           │ search
-  │ queries │ session ops     │ queries
-  ▼         ▼                 ▼
-Retrieval   Proof Session   Retrieval
-Pipeline    Manager         Pipeline
+  │         │                 │         │
+  │ search  │ proof           │ search  │ proof
+  │ queries │ session ops     │ queries │ replay
+  ▼         ▼                 ▼         ▼
+Retrieval   Proof Session   Retrieval  Proof Session
+Pipeline    Manager         Pipeline   Manager
   │           │                │
   │ SQLite    │ coq-lsp /      │ SQLite
   │ queries   │ SerAPI         │ queries
@@ -75,6 +75,17 @@ Note: The Proof Session Manager and the Search Backend (Retrieval Pipeline + Sto
 | Search response types | `SearchResult`, `LemmaDetail`, `Module`, structured errors |
 | Proof response types | `ProofState`, `ProofTrace`, `PremiseAnnotation`, `Session`, structured errors (see [data-models/proof-types.md](data-models/proof-types.md)) |
 | Error contract | See [mcp-server.md](mcp-server.md) § Error Contract |
+
+### CLI → Proof Session Manager
+
+| Property | Value |
+|----------|-------|
+| Mechanism | Internal function calls (in-process), async via `asyncio.run()` |
+| Direction | Request-response |
+| Input | File path + proof name (replay-proof command) |
+| Output | ProofTrace, optionally list[PremiseAnnotation], or structured errors |
+| Shared with | MCP Server → Proof Session Manager (same `SessionManager` API) |
+| Lifecycle | Session created and closed within a single command invocation |
 
 ### CLI → Retrieval Pipeline
 
