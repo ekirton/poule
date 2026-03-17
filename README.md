@@ -30,8 +30,19 @@ Wily Rooster indexes compiled Coq `.vo` libraries into a SQLite database and pro
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) (recommended package manager)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Anthropic's agentic coding tool — used to interact with the MCP server)
 - Coq/Rocq 8.19+ (for indexing and proof interaction)
 - coq-lsp or SerAPI (for `.vo` file extraction and proof backend)
+
+### Installing Claude Code
+
+Claude Code is Anthropic's CLI tool for agentic coding with Claude. Install it globally via npm:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+Then launch it in any project directory with `claude`. For full installation instructions, system requirements, and configuration options, see the [official Claude Code documentation](https://docs.anthropic.com/en/docs/claude-code).
 
 ## Installation
 
