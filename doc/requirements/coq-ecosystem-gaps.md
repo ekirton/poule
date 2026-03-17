@@ -14,7 +14,7 @@ The Coq/Rocq ecosystem has several unmet needs that hinder adoption and producti
 | Proof Interaction Protocol | Medium-High | None | Tool builders, AI researchers | [proof-interaction-protocol.md](proof-interaction-protocol.md) |
 | Training Data Extraction | High | Interaction Protocol | AI researchers, tool builders | [training-data-extraction.md](training-data-extraction.md) |
 | Proof Search & Automation | High | Interaction Protocol, Search | All Coq users | [proof-search-automation.md](proof-search-automation.md) |
-| Neural Premise Selection | Medium | Extraction | CoqHammer users, researchers | — |
+| Neural Premise Selection | Medium | Extraction | CoqHammer users, researchers | [neural-premise-selection.md](neural-premise-selection.md) |
 | Proof Visualization Widgets | High | None | Educators, formalization developers | [proof-visualization-widgets.md](proof-visualization-widgets.md) |
 | CI/CD Tooling | Medium | None | All Coq project maintainers | — (out of scope) |
 | Package Registry | Medium | None (benefits from CI/CD) | All Coq users, especially newcomers | — (out of scope) |
