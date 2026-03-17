@@ -12,7 +12,7 @@ Define the read and write interfaces for the SQLite search index database, inclu
 
 ## 2. Scope
 
-**In scope**: Schema DDL, `IndexWriter` (write path), `IndexReader` (read path), version validation, in-memory data loading (WL histograms, inverted index, symbol frequencies), declaration and dependency queries.
+**In scope**: Schema DDL, `IndexWriter` (write path), `IndexReader` (read path), version validation, in-memory data loading (WL histograms, inverted index, symbol frequencies, declaration node counts), declaration and dependency queries.
 
 **Out of scope**: Extraction logic (owned by extraction), retrieval algorithms (owned by pipeline and channels), MCP protocol handling (owned by mcp-server).
 
@@ -112,6 +112,11 @@ The `IndexReader` manages the read path during online queries.
 - REQUIRES: Database is open and valid.
 - ENSURES: Returns a map of `symbol → freq` from the `symbol_freq` table.
 
+#### load_declaration_node_counts()
+
+- REQUIRES: Database is open and valid.
+- ENSURES: Returns a map of `decl_id → node_count` from the `declarations` table for all declarations with a non-null `node_count`.
+
 #### get_declaration(name)
 
 - REQUIRES: `name` is a fully qualified declaration name.
@@ -200,6 +205,7 @@ reader = IndexReader.open("/path/to/index.db")  # validates schema_version
 histograms = reader.load_wl_histograms()         # into memory
 inv_index = reader.load_inverted_index()          # into memory
 sym_freq = reader.load_symbol_frequencies()       # into memory
+node_counts = reader.load_declaration_node_counts()  # into memory
 ```
 
 ## 8. Language-Specific Notes (Python)

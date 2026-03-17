@@ -12,8 +12,14 @@ EXPECTED_SCHEMA_VERSION = "1"
 
 
 class IndexReader:
-    def __init__(self, conn: sqlite3.Connection):
-        self._conn = conn
+    def __init__(self, conn_or_path: sqlite3.Connection | str | Path):
+        if isinstance(conn_or_path, (str, Path)):
+            reader = self.open(conn_or_path)
+            self._conn = reader._conn
+            self._coq_version = reader._coq_version
+            self._mathcomp_version = reader._mathcomp_version
+            return
+        self._conn = conn_or_path
         self._conn.row_factory = sqlite3.Row
 
     def close(self) -> None:
@@ -94,6 +100,12 @@ class IndexReader:
     def load_symbol_frequencies(self) -> dict[str, int]:
         rows = self._conn.execute(
             "SELECT symbol, freq FROM symbol_freq"
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    def load_declaration_node_counts(self) -> dict[int, int]:
+        rows = self._conn.execute(
+            "SELECT id, node_count FROM declarations WHERE node_count IS NOT NULL"
         ).fetchall()
         return {row[0]: row[1] for row in rows}
 

@@ -113,7 +113,36 @@ Computing symbol frequencies...
 Finalizing index...
 ```
 
-### 2. Start the MCP Server
+### 2. Search from the Command Line
+
+All search tools are available as standalone CLI commands via `python -m wily_rooster.cli`:
+
+```bash
+# Search by name (glob or substring)
+uv run python -m wily_rooster.cli search-by-name --db index.db "Nat.add_comm"
+
+# Search by type signature (multi-channel fusion)
+uv run python -m wily_rooster.cli search-by-type --db index.db "nat -> nat -> nat"
+
+# Search by structural similarity
+uv run python -m wily_rooster.cli search-by-structure --db index.db "forall n, n + 0 = n"
+
+# Search by symbol names (space-separated)
+uv run python -m wily_rooster.cli search-by-symbols --db index.db Coq.Init.Nat.add Coq.Init.Datatypes.nat
+
+# Get full details for a specific declaration
+uv run python -m wily_rooster.cli get-lemma --db index.db "Coq.Arith.PeanoNat.Nat.add_comm"
+
+# Navigate the dependency graph
+uv run python -m wily_rooster.cli find-related --db index.db --relation uses "Coq.Arith.PeanoNat.Nat.add_comm"
+
+# Browse the module hierarchy
+uv run python -m wily_rooster.cli list-modules --db index.db "Coq.Arith"
+```
+
+All search commands accept `--limit N` (default 50, max 200) and `--json` for machine-readable output.
+
+### 3. Start the MCP Server
 
 ```bash
 uv run python -m wily_rooster.server --db index.db
@@ -121,7 +150,7 @@ uv run python -m wily_rooster.server --db index.db
 
 The server communicates via stdio, compatible with Claude Code's MCP configuration.
 
-### 3. Configure Claude Code
+### 4. Configure Claude Code
 
 Add to your Claude Code MCP config (`~/.claude/mcp.json`):
 

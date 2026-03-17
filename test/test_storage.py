@@ -505,6 +505,31 @@ class TestLoadSymbolFrequencies:
         assert freqs["Coq.Init.Nat.mul"] == 1
 
 
+class TestLoadDeclarationNodeCounts:
+    """load_declaration_node_counts returns decl_id → node_count map."""
+
+    def test_returns_all_node_counts(self, reader):
+        ids = reader._ids
+        counts = reader.load_declaration_node_counts()
+
+        assert ids["Coq.Init.Nat.add"] in counts
+        assert ids["Coq.Init.Nat.mul"] in counts
+
+    def test_values_are_integers(self, reader):
+        counts = reader.load_declaration_node_counts()
+
+        for node_count in counts.values():
+            assert isinstance(node_count, int)
+
+    def test_node_counts_match_inserted_values(self, reader):
+        ids = reader._ids
+        counts = reader.load_declaration_node_counts()
+
+        # Both declarations use default node_count=5
+        assert counts[ids["Coq.Init.Nat.add"]] == 5
+        assert counts[ids["Coq.Init.Nat.mul"]] == 5
+
+
 class TestGetDeclaration:
     """get_declaration returns a single row by name, or None."""
 
