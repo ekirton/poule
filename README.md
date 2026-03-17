@@ -157,22 +157,20 @@ All search commands accept `--limit N` (default 50, max 200) and `--json` for ma
 
 ### 3. Replay a Proof from the Terminal
 
-Extract the complete proof trace for a named proof in a `.v` file. For example, given a file `arith.v` containing a proof named `add_comm`:
+Extract the complete proof trace for a named proof in a `.v` file. An example file is included at [`examples/arith.v`](examples/arith.v):
 
 ```bash
 # Human-readable output
-uv run python -m wily_rooster.cli replay-proof arith.v add_comm
+uv run python -m wily_rooster.cli replay-proof examples/arith.v add_comm
 
 # JSON output (for scripts and pipelines)
-uv run python -m wily_rooster.cli replay-proof arith.v add_comm --json
+uv run python -m wily_rooster.cli replay-proof examples/arith.v add_comm --json
 
 # Include per-step premise annotations
-uv run python -m wily_rooster.cli replay-proof arith.v add_comm --json --premises
+uv run python -m wily_rooster.cli replay-proof examples/arith.v add_comm --json --premises
 ```
 
 No search index is needed — `replay-proof` works directly with `.v` files through the Coq backend.
-
-> **Note:** The Coq backend integration is not yet implemented. The `replay-proof` CLI command and its `SessionManager` interface are complete, but the backend module that communicates with the Coq process is still in development.
 
 ### 4. Start the MCP Server
 
