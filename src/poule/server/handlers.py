@@ -515,3 +515,70 @@ async def handle_visualize_proof_sequence(
     entries = renderer.render_proof_sequence(trace, dl)
     diagrams = [_serialize(entry) for entry in entries]
     return _format_json({"diagrams": diagrams})
+
+
+# ---------------------------------------------------------------------------
+# Proof search handlers (Spec §4.5)
+# ---------------------------------------------------------------------------
+
+def _clamp_positive(value: float | int, default: float | int) -> float | int:
+    """Clamp a value to be positive; use default if None."""
+    if value is None:
+        return default
+    return max(1, value)
+
+
+async def handle_proof_search(
+    *,
+    search_engine: Any,
+    session_id: str,
+    timeout: float | None = 30,
+    max_depth: int | None = 10,
+    max_breadth: int | None = 20,
+) -> dict:
+    """Handle proof_search MCP tool call (spec §4.5)."""
+    try:
+        session_id = validate_string(session_id)
+    except (ValueError, Exception):
+        return format_error(PARSE_ERROR, "session_id must be a non-empty string.")
+
+    timeout = _clamp_positive(timeout, 30)
+    max_depth = int(_clamp_positive(max_depth, 10))
+    max_breadth = int(_clamp_positive(max_breadth, 20))
+
+    try:
+        result = await search_engine.proof_search(
+            session_id, timeout, max_depth, max_breadth,
+        )
+    except SessionError as exc:
+        return _session_error_response(exc)
+
+    return _format_success(result)
+
+
+async def handle_fill_admits(
+    *,
+    orchestrator: Any,
+    file_path: str,
+    timeout_per_admit: float | None = 30,
+    max_depth: int | None = 10,
+    max_breadth: int | None = 20,
+) -> dict:
+    """Handle fill_admits MCP tool call (spec §4.5)."""
+    try:
+        file_path = validate_string(file_path)
+    except (ValueError, Exception):
+        return format_error(PARSE_ERROR, "file_path must be a non-empty string.")
+
+    timeout_per_admit = _clamp_positive(timeout_per_admit, 30)
+    max_depth = int(_clamp_positive(max_depth, 10))
+    max_breadth = int(_clamp_positive(max_breadth, 20))
+
+    try:
+        result = await orchestrator.fill_admits(
+            file_path, timeout_per_admit, max_depth, max_breadth,
+        )
+    except SessionError as exc:
+        return _session_error_response(exc)
+
+    return _format_success(result)
