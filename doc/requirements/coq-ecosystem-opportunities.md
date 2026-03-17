@@ -80,14 +80,3 @@ These workflows are implemented as **Claude Code slash commands** (custom skills
 ### Why this category matters
 
 Traditional PL tooling is built around point interactions: the user positions a cursor, invokes a command, reads a result. Agentic workflows dissolve this constraint. The user states an intent ("fix the broken proofs after upgrading to Rocq 9.1") and Claude orchestrates dozens of tool invocations across files, sessions, and search queries. This is not an incremental improvement over IDE tooling — it is a different category of capability. The Lean ecosystem, for all its tooling investment, has no equivalent because the interaction model does not exist in their IDE-centric paradigm.
-
----
-
-## 5. Prioritization Considerations
-
-When evaluating opportunities across all three categories:
-
-- **Low-cost MCP wrappers** (§3) should be prioritized aggressively. They deliver immediate value with minimal risk and expand the surface area of what Claude can do in a proof session. Each wrapper makes every agentic workflow (§4) more capable.
-- **Agentic workflows** (§4) are the primary differentiator and should be the long-term focus. They are what makes Poule more than a Lean-tool clone for Coq.
-- **Lean-parity gaps** (§2) remain important for community credibility and adoption — users expect semantic search and proof interaction as table stakes.
-- The **tool count budget** (research suggests accuracy degrades past 20–30 MCP tools) means some capabilities should be exposed as sub-modes of existing tools or via dynamic tool loading rather than as new top-level tools. Agentic workflows (§4) avoid this budget entirely — they are slash commands that orchestrate existing MCP tools, not new tools themselves.
