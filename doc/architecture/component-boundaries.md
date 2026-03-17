@@ -16,6 +16,8 @@ System-level view of all components, their boundaries, and the dependency graph.
 | Proof Session Manager | Session lifecycle, Coq backend process management, tactic dispatch, state caching, premise extraction | [proof-session.md](proof-session.md) |
 | Extraction Campaign Orchestrator | Project/file enumeration, per-proof extraction loop, failure isolation, streaming output, summary statistics | [extraction-campaign.md](extraction-campaign.md) |
 | Mermaid Renderer | Proof state, proof tree, dependency, and sequence diagram generation as Mermaid syntax | [mermaid-renderer.md](mermaid-renderer.md) |
+| Proof Search Engine | Best-first tree search over tactic candidates, candidate generation (LLM + solver + few-shot), state caching, diversity filtering | [proof-search-engine.md](proof-search-engine.md) |
+| Fill Admits Orchestrator | Admit location in .v files, per-admit session lifecycle, proof search invocation, script assembly | [fill-admits-orchestrator.md](fill-admits-orchestrator.md) |
 | Claude Code / LLM | Intent interpretation, query formulation, result filtering, explanation | External (not owned by this project) |
 
 ### Cross-Cutting Concerns
@@ -43,32 +45,39 @@ Claude Code / LLM          Terminal user
   │ MCP tool calls (stdio)    │ CLI subcommands    │ CLI (Phase 3)
   ▼                           ▼                    ▼
 MCP Server                  CLI                  CLI
-  │         │       │         │         │          │
-  │ search  │ proof │ viz     │ search  │ proof    │ batch
-  │ queries │ sess  │ tools   │ queries │ replay   │ extraction
-  ▼         ▼       ▼         ▼         ▼          ▼
-Retrieval   Proof  Mermaid  Retrieval  Proof    Extraction Campaign
-Pipeline    Sess.  Renderer Pipeline   Session  Orchestrator
-  │         Mgr      │        │        Manager     │
-  │ SQLite    │      │        │ SQLite   │        │ session ops
-  │ queries   │      │ pure   │ queries  │        │ (reuse)
-  ▼           ▼      │ fn     ▼          │        │
-Storage     Coq     (no     Storage     │        │
-(SQLite)    Backend  deps)  (SQLite)     │        │
-  ▲         Procs                        ▼        ▼
-  │         (per-                   Proof Session Manager
-  │          session)                 │
-  │ Writes during indexing            │ coq-lsp / SerAPI
-  │                                   ▼
-Coq Library Extraction             Coq Backend Processes
-  │                                (per-session)
-  │ coq-lsp / SerAPI
+  │     │       │     │       │         │          │
+  │ src │ proof │ viz │ prf   │ search  │ proof    │ batch
+  │ qry │ sess  │     │ srch  │ queries │ replay   │ extraction
+  ▼     ▼       ▼     ▼       ▼         ▼          ▼
+Retr.  Proof  Merm. Proof   Retr.     Proof    Extraction Campaign
+Pipe.  Sess.  Rend. Search  Pipe.     Session  Orchestrator
+  │    Mgr     │    Engine    │       Manager     │
+  │ SQL  │     │ pure │       │ SQL     │        │ session ops
+  │ qry  │     │ fn   │       │ qry     │        │ (reuse)
+  ▼      ▼     │      │       ▼         │        │
+Stor.  Coq   (no     │      Stor.      │        │
+(SQL)  Back.  deps)   │     (SQL)       │        │
+  ▲    Procs          │                 ▼        ▼
+  │    (per-          │            Proof Session Manager
+  │     ses.)         │                  │
+  │                   │                  │ coq-lsp / SerAPI
+  │                   │                  ▼
+  │ Writes during     │            Coq Backend Processes
+  │ indexing          │            (per-session)
+  │                   │
+Coq Library Extr.     ├─ tactic verify → Proof Session Manager
+  │                   ├─ premises (opt) → Retrieval Pipeline
+  │ coq-lsp/SerAPI    └─ few-shot (opt) → Training Data (Phase 3)
   ▼
-Compiled .vo files (external)      JSON Lines output
-                                   (Phase 3 batch output)
+Compiled .vo files           Fill Admits Orchestrator
+(external)                     ├─ search → Proof Search Engine
+                               └─ sessions → Proof Session Manager
+
+                             JSON Lines output
+                             (Phase 3 batch output)
 ```
 
-Note: All three subsystems are independent at runtime. The Proof Session Manager and the Search Backend (Retrieval Pipeline + Storage) are independent. The Extraction Campaign Orchestrator depends on the Proof Session Manager but not on the Search Backend or MCP Server. Proof interaction does not require a search index, and search does not require proof sessions. Extraction does not require a search index or the MCP Server. The Mermaid Renderer is a pure function component with no runtime dependencies — it receives structured data from the MCP Server and returns Mermaid text.
+Note: The four subsystems — search, proof interaction, extraction, and proof search — have distinct dependency patterns. Search and proof interaction are independent of each other. Extraction depends on the Proof Session Manager but not search. Proof search is the first component that bridges search and proof interaction at runtime: it uses the Proof Session Manager for tactic verification and optionally uses the Retrieval Pipeline for premise retrieval. The Fill Admits Orchestrator depends on both the Proof Search Engine and the Proof Session Manager. The Mermaid Renderer is a pure function component with no runtime dependencies.
 
 ## Boundary Contracts
 
@@ -86,7 +95,66 @@ Note: All three subsystems are independent at runtime. The Proof Session Manager
 | Search response types | `SearchResult`, `LemmaDetail`, `Module`, structured errors |
 | Proof response types | `ProofState`, `ProofTrace`, `PremiseAnnotation`, `Session`, structured errors (see [data-models/proof-types.md](data-models/proof-types.md)) |
 | Visualization response types | Mermaid syntax strings, node counts, truncation flags, structured errors |
+| Proof search tools | `proof_search`, `fill_admits` |
+| Proof search response types | `SearchResult` (success/failure with proof script or partial), `FillAdmitsResult` (per-admit outcomes with modified script) |
 | Error contract | See [mcp-server.md](mcp-server.md) § Error Contract |
+
+### MCP Server → Proof Search Engine
+
+| Property | Value |
+|----------|-------|
+| Mechanism | Internal function calls (in-process) |
+| Direction | Request-response (may be long-running, up to timeout) |
+| Input | Session ID + search parameters (timeout, max_depth, max_breadth) |
+| Output | SearchResult (success with proof script or failure with partial progress and stats) |
+| Dependencies | Proof Session Manager (for tactic verification), Retrieval Pipeline (optional, for premise retrieval), Training Data (optional, for few-shot context) |
+
+### MCP Server → Fill Admits Orchestrator
+
+| Property | Value |
+|----------|-------|
+| Mechanism | Internal function calls (in-process) |
+| Direction | Request-response (long-running: timeout_per_admit × number of admits) |
+| Input | File path + search parameters (timeout_per_admit, max_depth, max_breadth) |
+| Output | FillAdmitsResult (per-admit outcomes, modified script) |
+| Dependencies | Proof Search Engine, Proof Session Manager |
+
+### Proof Search Engine → Proof Session Manager
+
+| Property | Value |
+|----------|-------|
+| Mechanism | Internal function calls (in-process), reuses same `SessionManager` API as MCP Server |
+| Direction | Request-response |
+| Operations used | `observe_proof_state`, `submit_tactic`, `step_backward` (for backtracking during search) |
+| Statefulness | Search operates on an existing session; does not create or close sessions |
+| Concurrency | Search serializes tactic submissions — one at a time on the session |
+
+### Proof Search Engine → Retrieval Pipeline (optional)
+
+| Property | Value |
+|----------|-------|
+| Mechanism | Internal function calls (in-process) |
+| Direction | Request-response |
+| Operations used | `search_by_type`, `search_by_symbols` (for premise retrieval) |
+| Availability | Optional; search proceeds without premises when no index is available |
+
+### Fill Admits Orchestrator → Proof Session Manager
+
+| Property | Value |
+|----------|-------|
+| Mechanism | Internal function calls (in-process) |
+| Direction | Request-response |
+| Operations used | `open_proof_session`, `step_forward`, `close_proof_session` |
+| Lifecycle | One session per admit; created and closed within per-admit loop iteration |
+
+### Fill Admits Orchestrator → Proof Search Engine
+
+| Property | Value |
+|----------|-------|
+| Mechanism | Internal function calls (in-process) |
+| Direction | Request-response |
+| Input | Session ID (positioned at admit) + search parameters |
+| Output | SearchResult |
 
 ### CLI → Proof Session Manager (proof replay)
 
@@ -220,3 +288,5 @@ Note: All three subsystems are independent at runtime. The Proof Session Manager
 | [extraction-reporting.md](extraction-reporting.md) | [specification/extraction-reporting.md](../../specification/extraction-reporting.md) |
 | [mermaid-renderer.md](mermaid-renderer.md) | specification/mermaid-renderer.md (pending) |
 | [data-models/extraction-types.md](data-models/extraction-types.md) | [specification/data-structures.md](../../specification/data-structures.md) §4.8 |
+| [proof-search-engine.md](proof-search-engine.md) | specification/proof-search-engine.md (pending) |
+| [fill-admits-orchestrator.md](fill-admits-orchestrator.md) | specification/fill-admits-orchestrator.md (pending) |

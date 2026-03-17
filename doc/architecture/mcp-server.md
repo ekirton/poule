@@ -2,8 +2,8 @@
 
 The thin adapter layer between Claude Code, the search backend, the proof session manager, and the Mermaid renderer. The [CLI](cli.md) is a peer adapter that provides the same search capabilities for terminal users.
 
-**Feature**: [MCP Tool Surface](../features/mcp-tool-surface.md), [Proof Interaction MCP Tools](../features/proof-mcp-tools.md), [Visualization MCP Tools](../features/visualization-mcp-tools.md)
-**Stories**: [Epic 2: MCP Server and Tool Surface](../requirements/stories/tree-search-mcp.md#epic-2-mcp-server-and-tool-surface), [Epic 6: MCP Tool Surface](../requirements/stories/proof-interaction-protocol.md#epic-6-mcp-tool-surface), [Epics 1–4](../requirements/stories/proof-visualization-widgets.md)
+**Feature**: [MCP Tool Surface](../features/mcp-tool-surface.md), [Proof Interaction MCP Tools](../features/proof-mcp-tools.md), [Visualization MCP Tools](../features/visualization-mcp-tools.md), [Proof Search MCP Tools](../features/proof-search-mcp-tools.md)
+**Stories**: [Epic 2: MCP Server and Tool Surface](../requirements/stories/tree-search-mcp.md#epic-2-mcp-server-and-tool-surface), [Epic 6: MCP Tool Surface](../requirements/stories/proof-interaction-protocol.md#epic-6-mcp-tool-surface), [Epics 1–4](../requirements/stories/proof-visualization-widgets.md), [Epics 1, 3](../requirements/stories/proof-search-automation.md)
 
 ---
 
@@ -176,6 +176,28 @@ Visualization tools delegate to the [Mermaid Renderer](mermaid-renderer.md) for 
 
 Visualization tools do **not** render images — they return Mermaid syntax text. Rendering to a visual image is the client's responsibility (e.g., via the Mermaid Chart MCP service).
 
+## Proof Search Tool Signatures
+
+```typescript
+// Run best-first proof search on the current goal
+proof_search(
+  session_id: string,            // active proof session
+  timeout?: number,              // wall-clock limit in seconds (default: 30)
+  max_depth?: number,            // max tactic sequence length (default: 10)
+  max_breadth?: number           // max candidates per node (default: 20)
+) → SearchResult                 // see proof-search-engine.md for SearchResult type
+
+// Scan a file for admits and attempt to fill each via proof search
+fill_admits(
+  file_path: string,             // absolute path to .v file
+  timeout_per_admit?: number,    // wall-clock limit per admit in seconds (default: 30)
+  max_depth?: number,            // max tactic sequence length per admit (default: 10)
+  max_breadth?: number           // max candidates per node per admit (default: 20)
+) → FillAdmitsResult             // see fill-admits-orchestrator.md for FillAdmitsResult type
+```
+
+Proof search tool response types are defined in [proof-search-engine.md](proof-search-engine.md) (SearchResult, ProofStep) and [fill-admits-orchestrator.md](fill-admits-orchestrator.md) (FillAdmitsResult, AdmitResult).
+
 ## Server Responsibilities
 
 The MCP server is a thin adapter. It:
@@ -183,12 +205,13 @@ The MCP server is a thin adapter. It:
 - Delegates Coq expression parsing to the retrieval pipeline — pipeline parse errors are translated to `PARSE_ERROR` responses
 - Translates MCP tool calls to search backend queries
 - Delegates proof interaction tool calls to the [Proof Session Manager](proof-session.md)
+- Delegates proof search tool calls to the [Proof Search Engine](proof-search-engine.md) and [Fill Admits Orchestrator](fill-admits-orchestrator.md)
 - Delegates visualization tool calls to the [Mermaid Renderer](mermaid-renderer.md)
 - Formats search backend, session manager, and renderer results into MCP response objects
 - Serializes proof interaction types using the [proof serialization](proof-serialization.md) conventions
 - Handles errors (unknown declarations, parse failures, session errors, visualization errors) with structured error responses
 
-It does **not** implement search logic, manage storage, parse Coq expressions, manage proof session state, or generate Mermaid syntax directly.
+It does **not** implement search logic, manage storage, parse Coq expressions, manage proof session state, execute proof search algorithms, or generate Mermaid syntax directly.
 
 ### `find_related` query strategies
 
@@ -229,6 +252,10 @@ All error responses use MCP's standard error format:
 | Proof not complete (visualize_proof_tree, visualize_proof_sequence) | `PROOF_INCOMPLETE` | Cannot visualize proof tree: proof in session `{session_id}` is not yet complete. |
 | Declaration not found (visualize_dependencies) | `NOT_FOUND` | Declaration `{name}` not found in the index. |
 | Diagram too large (renderer hit max_nodes) | `DIAGRAM_TRUNCATED` | Diagram truncated at `{max_nodes}` nodes. Reduce max_depth or max_nodes for a smaller diagram. (Warning, not error — included alongside a valid diagram.) |
+| Proof search timeout (not an error) | (normal response) | Proof search returns a failure result with partial progress; no error code — the timeout is an expected outcome. |
+| No admits found in file (fill_admits) | (normal response) | Success response with `total_admits: 0` and unmodified script; no error code. |
+| File not found (fill_admits) | `FILE_NOT_FOUND` | File not found: `{file_path}` |
+| LLM API unavailable during search | (normal response) | Search continues with solver candidates only; failure result includes `llm_unavailable: true` flag. |
 
 On startup, the server checks the index in this order:
 1. Does the database file exist? If not → `INDEX_MISSING`.
