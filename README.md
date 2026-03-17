@@ -82,6 +82,23 @@ For example, you can ask Claude things like:
 
 Claude will search the index, manage proof sessions, and generate diagrams on your behalf.
 
+**Skills (slash commands):**
+
+Poule also provides compound workflows that orchestrate multiple tools in a single command:
+
+- *`/formalize For all natural numbers, addition is commutative`* — Claude searches for existing lemmas, proposes a formal Coq statement, type-checks it, and helps build the proof interactively
+- *`/explain-proof Nat.add_comm`* — step through a proof with plain-language explanations of each tactic, including mathematical intuition
+- *`/compress-proof rev_involutive in src/Lists.v`* — find shorter proof alternatives, verify each one, present ranked options
+- *`/proof-obligations`* — scan your project for `admit`/`Admitted`/`Axiom`, classify intent, rank by severity
+- *`/proof-repair`* — after a Coq version upgrade, systematically fix broken proofs through a build→fix→rebuild loop
+- *`/proof-lint src/Core.v`* — detect deprecated tactics, inconsistent bullets, and complex tactic chains; optionally auto-fix
+- *`/explain-error`* — parse a Coq type error, fetch relevant definitions, explain the root cause in plain language with fix suggestions
+- *`/migrate-rocq`* — bulk-rename deprecated `Coq.*` namespaces to `Rocq.*` with build verification
+- *`/check-compat`* — check dependency compatibility before you hit opaque build failures
+- *`/scaffold`* — generate a complete project skeleton (Dune, opam, CI, boilerplate)
+
+For the full list of skills and their details, see [Skills Reference](doc/SKILLS.md).
+
 **Capabilities provided to Claude:**
 
 | Category | What Claude can do |
@@ -89,6 +106,7 @@ Claude will search the index, manage proof sessions, and generate diagrams on yo
 | **Search** | Find lemmas by name, type signature, structural similarity, or symbol usage; navigate dependencies; browse modules |
 | **Proof interaction** | Open interactive proof sessions, observe goal states, submit tactics, step through proofs, extract traces with premise annotations |
 | **Visualization** | Render proof states, proof trees, dependency graphs, and step-by-step proof evolution as Mermaid diagrams |
+| **Skills** | Compound agentic workflows: formalization, proof compression, explanation, linting, repair, migration, compatibility analysis, error diagnosis, scaffolding |
 
 For the full list of MCP tools and their parameters, see [MCP Tools Reference](doc/MCP_TOOLS.md).
 

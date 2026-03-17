@@ -24,3 +24,4 @@ Each layer answers "what" for the layer below and "how" for the layer above. A s
 
 * src/
 * test/
+* commands/ : slash command prompt files (agentic workflows)
