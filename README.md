@@ -116,6 +116,8 @@ Claude will search the index, manage proof sessions, and generate diagrams on yo
 | **Proof interaction** | Open interactive proof sessions, observe goal states, submit tactics, step through proofs, extract traces with premise annotations |
 | **Visualization** | Render proof states, proof trees, dependency graphs, and step-by-step proof evolution as Mermaid diagrams |
 
+For the full list of MCP tools and their parameters, see [MCP Tools Reference](doc/MCP_TOOLS.md).
+
 ### CLI
 
 All search and proof replay features are also available as standalone commands for scripting or quick lookups:
