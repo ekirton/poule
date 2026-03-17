@@ -67,6 +67,73 @@ cd poule
 uv sync
 ```
 
+### Docker
+
+The Docker image bundles Coq, Python, Claude Code, and all dependencies — no local Coq or opam installation required.
+
+```bash
+git clone https://github.com/ekirton/poule.git
+cd poule
+docker build -t poule .
+```
+
+Download the prebuilt index into a local data directory:
+
+```bash
+mkdir -p data
+docker run --rm -v ./data:/data --entrypoint uv poule \
+  run python -m poule.cli download-index --output /data/index.db
+```
+
+The image supports two usage modes:
+
+**MCP server only** — run Claude Code on the host and connect to the containerized server. Add to `~/.claude/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "coq-search": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "-v", "/path/to/data:/data", "poule"]
+    }
+  }
+}
+```
+
+**Fully containerized** — run Claude Code inside the container alongside the MCP server:
+
+```bash
+docker run --rm -it \
+  -e ANTHROPIC_API_KEY \
+  -v ./data:/data \
+  --entrypoint claude \
+  poule
+```
+
+This starts Claude Code with the Coq toolchain, MCP server, and index all available inside the container. Configure the MCP server in the container's Claude Code settings (`/claude mcp add`) or mount a config file:
+
+```bash
+docker run --rm -it \
+  -e ANTHROPIC_API_KEY \
+  -v ./data:/data \
+  -v ./mcp.json:/root/.claude/mcp.json:ro \
+  --entrypoint claude \
+  poule
+```
+
+Where `mcp.json` points to the in-container paths:
+
+```json
+{
+  "mcpServers": {
+    "coq-search": {
+      "command": "uv",
+      "args": ["run", "--project", "/app", "python", "-m", "poule.server", "--db", "/data/index.db"]
+    }
+  }
+}
+```
+
 ## Quick Start
 
 ### 1. Get the Search Index
