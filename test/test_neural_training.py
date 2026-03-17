@@ -297,10 +297,10 @@ class TestFileLevelSplit:
 
 
 class TestHardNegativeSampling:
-    """spec §4.2: sample_hard_negatives from accessible \ positive premises."""
+    r"""spec §4.2: sample_hard_negatives from accessible \ positive premises."""
 
     def test_returns_k_negatives_from_accessible(self):
-        """spec §4.2: Returns k premises from accessible \ positive."""
+        r"""spec §4.2: Returns k premises from accessible \ positive."""
         positive = {"A", "B"}
         accessible = {"A", "B", "C", "D", "E", "F"}
         result = sample_hard_negatives("state", positive, accessible, k=3)
@@ -309,7 +309,7 @@ class TestHardNegativeSampling:
         assert all(r in accessible for r in result)
 
     def test_returns_all_when_fewer_than_k(self):
-        """spec §4.2: If |accessible \ positive| < k, returns all available."""
+        r"""spec §4.2: If |accessible \ positive| < k, returns all available."""
         positive = {"A", "B"}
         accessible = {"A", "B", "C"}
         result = sample_hard_negatives("state", positive, accessible, k=5)
@@ -327,7 +327,7 @@ class TestHardNegativeSampling:
         assert all(r not in positive for r in result)
 
     def test_excludes_positive_premises(self):
-        """spec §4.2: Negatives come from accessible \ positive."""
+        r"""spec §4.2: Negatives come from accessible \ positive."""
         positive = {"A", "B", "C"}
         accessible = {"A", "B", "C", "D", "E"}
         result = sample_hard_negatives("state", positive, accessible, k=2)
