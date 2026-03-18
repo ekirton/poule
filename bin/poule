@@ -50,7 +50,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "ENVIRONMENT:"
             echo "  POULE_PROJECT_DIR   Directory to mount (default: current directory)"
-            echo "  ANTHROPIC_API_KEY   Required — your Anthropic API key"
+            echo "  ANTHROPIC_API_KEY   Optional — API key (Claude Max subscribers use OAuth login)"
             echo ""
             echo "EXAMPLES:"
             echo "  poule                  Start interactive shell in POULE_PROJECT_DIR"
@@ -70,13 +70,6 @@ done
 # ── Preflight checks ──────────────────────────────────────────────────────────
 if ! command -v docker >/dev/null 2>&1; then
     echo "Error: Docker is not installed. See https://docs.docker.com/get-docker/"
-    exit 1
-fi
-
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    echo "Error: ANTHROPIC_API_KEY is not set."
-    echo "Add it to your ~/.zshrc:"
-    echo "  export ANTHROPIC_API_KEY=sk-ant-..."
     exit 1
 fi
 
@@ -100,7 +93,7 @@ fi
 
 # ── Pull latest image ─────────────────────────────────────────────────────────
 if [ "$NO_PULL" = false ] && [ "$REBUILD" = false ]; then
-    docker pull "$IMAGE"
+    docker pull --platform linux/amd64 "$IMAGE"
 fi
 
 # ── Version check and deferred update detection ──────────────────────────────
@@ -119,7 +112,7 @@ if [ "$REBUILD" = true ]; then
         HOST_GID_VAL=$(id -g)
         TMPDIR_BUILD=$(mktemp -d)
         cat > "$TMPDIR_BUILD/Dockerfile" << DOCKERFILE
-FROM ${IMAGE}
+FROM --platform=linux/amd64 ${IMAGE}
 USER root
 RUN rm -rf /opt/claude /usr/local/bin/claude
 ARG HOST_USER
@@ -134,7 +127,7 @@ RUN mv /home/\${HOST_USER}/.local/share/claude /opt/claude \
 LABEL claude.code.version=${CLAUDE_LATEST}
 USER \${HOST_USER}
 DOCKERFILE
-        if docker build -t "$IMAGE" \
+        if docker build --platform linux/amd64 -t "$IMAGE" \
             --build-arg HOST_USER="$HOST_USER" \
             --build-arg HOST_UID="$HOST_UID_VAL" \
             --build-arg HOST_GID="$HOST_GID_VAL" \
@@ -190,23 +183,34 @@ if [ ! -f "$CLAUDE_DIR/settings.json" ]; then
     cat > "$CLAUDE_DIR/settings.json" << 'EOF'
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "skipDangerousModePermissionPrompt": true
-}
-EOF
-fi
-
-# ── First-run: MCP server configuration ───────────────────────────────────────
-# (upgrade from stdio to SSE if an old config exists)
-if [ ! -f "$CLAUDE_DIR/mcp.json" ] || grep -q '"command"' "$CLAUDE_DIR/mcp.json" 2>/dev/null; then
-    cat > "$CLAUDE_DIR/mcp.json" << 'EOF'
-{
+  "skipDangerousModePermissionPrompt": true,
   "mcpServers": {
     "coq-search": {
       "url": "http://127.0.0.1:3000/sse"
+    },
+    "mcp-mermaid": {
+      "command": "npx",
+      "args": ["-y", "mcp-mermaid"]
     }
   }
 }
 EOF
+fi
+
+if ! grep -q '"mcpServers"' "$CLAUDE_DIR/settings.json" 2>/dev/null; then
+    python3 - "$CLAUDE_DIR/settings.json" << 'PYEOF'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    s = json.load(f)
+s["mcpServers"] = {
+    "coq-search": {"url": "http://127.0.0.1:3000/sse"},
+    "mcp-mermaid": {"command": "npx", "args": ["-y", "mcp-mermaid"]}
+}
+with open(path, "w") as f:
+    json.dump(s, f, indent=2)
+    f.write("\n")
+PYEOF
 fi
 
 # ── First-run: zsh configuration ──────────────────────────────────────────────
@@ -242,6 +246,7 @@ if [ ! -f "$DATA_DIR/index.db" ]; then
     echo ""
     echo "Downloading Coq search index (first run only)..."
     if docker run --rm \
+        --platform linux/amd64 \
         -v "$DATA_DIR:/data" \
         --entrypoint sh \
         "$IMAGE" \
@@ -264,6 +269,7 @@ echo "Starting Poule in: $PROJECT_DIR"
 if [ ${#ARGS[@]} -eq 0 ]; then
     # No command: entrypoint starts MCP server, syncs commands, launches Claude.
     docker run -it --rm \
+        --platform linux/amd64 \
         -v "$PROJECT_DIR:$PROJECT_DIR" \
         -v "$CONTAINER_HOME:/home/$HOST_USER" \
         -v "$DATA_DIR:/data" \
@@ -275,6 +281,7 @@ else
     # With command: entrypoint starts MCP server, syncs commands, then execs
     # the provided command.  MCP server stops on exit via entrypoint trap.
     docker run --rm \
+        --platform linux/amd64 \
         -v "$PROJECT_DIR:$PROJECT_DIR" \
         -v "$CONTAINER_HOME:/home/$HOST_USER" \
         -v "$DATA_DIR:/data" \
@@ -321,7 +328,7 @@ if [ "$DEFERRED_UPDATE" = true ]; then
             HOST_GID_VAL=$(id -g)
             TMPDIR_BUILD=$(mktemp -d)
             cat > "$TMPDIR_BUILD/Dockerfile" << DOCKERFILE
-FROM ${IMAGE}
+FROM --platform=linux/amd64 ${IMAGE}
 USER root
 RUN rm -rf /opt/claude /usr/local/bin/claude
 ARG HOST_USER
@@ -336,7 +343,7 @@ RUN mv /home/\${HOST_USER}/.local/share/claude /opt/claude \
 LABEL claude.code.version=${CLAUDE_LATEST}
 USER \${HOST_USER}
 DOCKERFILE
-            if docker build -t "$IMAGE" \
+            if docker build --platform linux/amd64 -t "$IMAGE" \
                 --build-arg HOST_USER="$HOST_USER" \
                 --build-arg HOST_UID="$HOST_UID_VAL" \
                 --build-arg HOST_GID="$HOST_GID_VAL" \
