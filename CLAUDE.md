@@ -35,3 +35,9 @@ Do not push to a remote branch after every commit. Push only when the branch is 
 3. Enable auto-merge so it merges once CI passes: `gh pr merge <number> --auto --squash`
 
 If the branch is out of date with `main`, rebase before pushing: `git rebase origin/main`.
+
+# Diagram Visualization
+
+When a user asks to visualize proofs, dependencies, or proof states, use the `visualize_*` MCP tools (`visualize_proof_state`, `visualize_proof_tree`, `visualize_dependencies`, `visualize_proof_sequence`). These tools write a `proof-diagram.html` file to the project directory as a side effect. After calling a visualization tool, tell the user to open `proof-diagram.html` in their browser.
+
+Do not use external Mermaid rendering services (mermaid.ai, mermaid.ink, Mermaid Chart MCP). All diagram rendering is local via the HTML file.

@@ -150,10 +150,6 @@ if [ ! -f "$CLAUDE_DIR/settings.json" ]; then
     "poule-mcp": {
       "type": "http",
       "url": "http://127.0.0.1:3000/mcp"
-    },
-    "mcp-mermaid": {
-      "command": "npx",
-      "args": ["-y", "mcp-mermaid"]
     }
   }
 }
@@ -170,7 +166,7 @@ servers = s.setdefault("mcpServers", {})
 if "poule" in servers and "poule-mcp" not in servers:
     servers["poule-mcp"] = servers.pop("poule")
 servers.setdefault("poule-mcp", {"type": "http", "url": "http://127.0.0.1:3000/mcp"})
-servers.setdefault("mcp-mermaid", {"command": "npx", "args": ["-y", "mcp-mermaid"]})
+servers.pop("mcp-mermaid", None)
 with open(path, "w") as f:
     json.dump(s, f, indent=2)
     f.write("\n")
@@ -294,8 +290,6 @@ INIT_CMD='mkdir -p ~/.local/bin ~/.local/share ~/.claude/commands && ln -sf "$(l
 if [ ${#ARGS[@]} -eq 0 ]; then
     echo "Starting Poule dev environment (project root mount)"
     echo ""
-    echo "  Diagram viewer: http://localhost:$HOST_PORT/viewer"
-    echo "  Open this URL in your browser to see visualizations live."
     echo ""
     docker run -it --rm \
         --user "$HOST_UID:$HOST_GID" \

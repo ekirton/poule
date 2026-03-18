@@ -192,10 +192,6 @@ if [ ! -f "$CLAUDE_DIR/settings.json" ]; then
     "poule-mcp": {
       "type": "http",
       "url": "http://127.0.0.1:3000/mcp"
-    },
-    "mcp-mermaid": {
-      "command": "npx",
-      "args": ["-y", "mcp-mermaid"]
     }
   }
 }
@@ -209,8 +205,7 @@ path = sys.argv[1]
 with open(path) as f:
     s = json.load(f)
 s["mcpServers"] = {
-    "poule-mcp": {"type": "http", "url": "http://127.0.0.1:3000/mcp"},
-    "mcp-mermaid": {"command": "npx", "args": ["-y", "mcp-mermaid"]}
+    "poule-mcp": {"type": "http", "url": "http://127.0.0.1:3000/mcp"}
 }
 with open(path, "w") as f:
     json.dump(s, f, indent=2)
@@ -323,8 +318,6 @@ HOST_USER=$(id -un)
 
 echo "Starting Poule in: $PROJECT_DIR"
 echo ""
-echo "  Diagram viewer: http://localhost:$HOST_PORT/viewer"
-echo "  Open this URL in your browser to see visualizations live."
 echo ""
 
 if [ ${#ARGS[@]} -eq 0 ]; then

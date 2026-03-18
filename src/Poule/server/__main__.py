@@ -1307,9 +1307,10 @@ def _build_server(ctx: _ServerContext) -> Server:
     return server
 
 
-async def run_server(db_path: Path, log_level: str = "INFO"):
+async def run_server(db_path: Path, log_level: str = "INFO", diagram_dir: Path | None = None):
     """Start the MCP server with stdio transport."""
     ctx = await _init_context(db_path, log_level)
+    ctx.diagram_dir = diagram_dir
     server = _build_server(ctx)
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
@@ -1320,6 +1321,7 @@ async def run_server_http(
     host: str = "127.0.0.1",
     port: int = 3000,
     log_level: str = "INFO",
+    diagram_dir: Path | None = None,
 ):
     """Start the MCP server with streamable-HTTP transport.
 
@@ -1335,6 +1337,7 @@ async def run_server_http(
     from starlette.applications import Starlette
 
     ctx = await _init_context(db_path, log_level)
+    ctx.diagram_dir = diagram_dir
     server = _build_server(ctx)
 
     session_manager = StreamableHTTPSessionManager(app=server)
@@ -1398,11 +1401,23 @@ def main():
         default=3000,
         help="SSE server port (default: 3000)",
     )
+    parser.add_argument(
+        "--diagram-dir",
+        type=Path,
+        default=None,
+        help="Directory for proof-diagram.html output (env: POULE_MCP_DIAGRAM_DIR)",
+    )
     args = parser.parse_args()
+    diagram_dir = args.diagram_dir
+    if diagram_dir is None:
+        import os
+        env_val = os.environ.get("POULE_MCP_DIAGRAM_DIR")
+        if env_val:
+            diagram_dir = Path(env_val)
     if args.transport in ("sse", "streamable-http"):
-        asyncio.run(run_server_http(args.db, args.host, args.port, args.log_level))
+        asyncio.run(run_server_http(args.db, args.host, args.port, args.log_level, diagram_dir=diagram_dir))
     else:
-        asyncio.run(run_server(args.db, args.log_level))
+        asyncio.run(run_server(args.db, args.log_level, diagram_dir=diagram_dir))
 
 
 if __name__ == "__main__":

@@ -136,7 +136,6 @@ ARG CACHEBUST_CLAUDE=0
 USER ${HOST_USER}
 RUN curl -fsSL https://claude.ai/install.sh | bash -s ${CLAUDE_CODE_VERSION}
 USER root
-RUN npm install -g mcp-mermaid
 RUN mv /home/${HOST_USER}/.local/share/claude /opt/claude \
     && ln -sf "$(ls -d /opt/claude/versions/* | head -1)" /usr/local/bin/claude \
     && chown -R ${HOST_USER}:${HOST_GROUP} /opt/claude

@@ -14,6 +14,7 @@ PIDFILE="/tmp/poule-mcp.pid"
 LOGFILE="/tmp/poule-mcp.log"
 DB="${POULE_MCP_DB:-/data/index.db}"
 PORT="${POULE_MCP_PORT:-3000}"
+DIAGRAM_DIR="${POULE_MCP_DIAGRAM_DIR:-/poule}"
 HOST="127.0.0.1"
 
 _is_running() {
@@ -39,6 +40,7 @@ case "${1:-}" in
         echo "Starting Poule MCP server on $HOST:$PORT..."
         nohup uv run --project /poule python -m Poule.server \
             --db "$DB" --transport streamable-http --host "$HOST" --port "$PORT" \
+            --diagram-dir "$DIAGRAM_DIR" \
             >> "$LOGFILE" 2>&1 &
         echo $! > "$PIDFILE"
         if _wait_ready; then
@@ -87,8 +89,9 @@ case "${1:-}" in
         echo "Usage: poule-mcp {start|stop|restart|status|logs}"
         echo ""
         echo "Environment:"
-        echo "  POULE_MCP_DB    Path to search index (default: /data/index.db)"
-        echo "  POULE_MCP_PORT  Server port (default: 3000)"
+        echo "  POULE_MCP_DB          Path to search index (default: /data/index.db)"
+        echo "  POULE_MCP_PORT        Server port (default: 3000)"
+        echo "  POULE_MCP_DIAGRAM_DIR Diagram HTML output directory (default: /poule)"
         exit 1
         ;;
 esac

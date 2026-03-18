@@ -39,8 +39,8 @@ Six Coq libraries are available as prebuilt indexes: **stdlib**, **MathComp**, *
 ### Visualization
 
 - Proof state, proof tree, dependency subgraph, and step-by-step sequence diagrams
-- Generated as Mermaid syntax, rendered automatically in your browser via the built-in diagram viewer
-- Open `http://localhost:3000/viewer` — diagrams appear live as you work with Claude
+- Generated as Mermaid syntax; each visualization tool call writes a self-contained `proof-diagram.html` to your project directory
+- Open `proof-diagram.html` in your browser and bookmark it — refresh after each visualization to see the latest diagram
 
 ## Quick Start
 
@@ -178,7 +178,7 @@ For example, you can ask Claude things like:
 - *"Show me the dependency graph around `Nat.add_comm`"*
 - *"Render the step-by-step proof evolution of `modus_ponens` in `examples/logic.v`"*
 
-Claude will search the index, manage proof sessions, and generate diagrams on your behalf. Diagrams render automatically in the browser at `http://localhost:3000/viewer`.
+Claude will search the index, manage proof sessions, and generate diagrams on your behalf. When Claude calls a visualization tool, it writes `proof-diagram.html` to your project directory — open it in your browser to see the rendered diagram. Bookmark the file and refresh after each visualization call.
 
 **Skills (slash commands):**
 
@@ -203,7 +203,7 @@ For the full list of skills and their details, see [Skills Reference](doc/SKILLS
 |----------|--------------------|
 | **Search** | Find lemmas by name, type signature, structural similarity, or symbol usage; navigate dependencies; browse modules |
 | **Proof interaction** | Open interactive proof sessions, observe goal states, submit tactics, step through proofs, extract traces with premise annotations |
-| **Visualization** | Render proof states, proof trees, dependency graphs, and step-by-step proof evolution as Mermaid diagrams — auto-rendered in your browser at `localhost:3000/viewer` |
+| **Visualization** | Render proof states, proof trees, dependency graphs, and step-by-step proof evolution as Mermaid diagrams — written to `proof-diagram.html` in your project directory for browser viewing |
 | **Skills** | Compound agentic workflows: formalization, proof compression, explanation, linting, repair, migration, compatibility analysis, error diagnosis, scaffolding |
 
 For the full list of MCP tools and their parameters, see [MCP Tools Reference](doc/MCP_TOOLS.md).
