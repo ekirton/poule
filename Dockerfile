@@ -89,6 +89,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
         fd-find \
         bat \
         glow \
+        sqlite3 \
         locales \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
