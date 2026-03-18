@@ -176,6 +176,19 @@ with open(path, "w") as f:
     f.write("\n")
 PYEOF
 
+if ! grep -q '"statusLine"' "$CLAUDE_DIR/settings.json" 2>/dev/null; then
+    python3 - "$CLAUDE_DIR/settings.json" << 'PYEOF'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    s = json.load(f)
+s.setdefault("statusLine", {"type": "command", "command": "~/.claude/statusline.sh"})
+with open(path, "w") as f:
+    json.dump(s, f, indent=2)
+    f.write("\n")
+PYEOF
+fi
+
 if [ ! -f "$CLAUDE_DIR/statusline.sh" ] || [ "$PROJECT_DIR/docker/statusline.sh" -nt "$CLAUDE_DIR/statusline.sh" ]; then
     cp "$PROJECT_DIR/docker/statusline.sh" "$CLAUDE_DIR/statusline.sh"
     chmod +x "$CLAUDE_DIR/statusline.sh"

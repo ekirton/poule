@@ -37,7 +37,7 @@ case "${1:-}" in
             exit 0
         fi
         echo "Starting Poule MCP server on $HOST:$PORT..."
-        nohup uv run --project /poule python -m poule.server \
+        nohup uv run --project /poule python -m Poule.server \
             --db "$DB" --transport streamable-http --host "$HOST" --port "$PORT" \
             >> "$LOGFILE" 2>&1 &
         echo $! > "$PIDFILE"

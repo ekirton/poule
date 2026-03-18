@@ -948,6 +948,8 @@ class _ServerContext:
     """Context object passed to handler functions."""
 
     def __init__(self):
+        from Poule.server.viewer import DiagramBroadcaster
+
         self.index_ready: bool = False
         self.index_version_mismatch: bool = False
         self.found_version: str | None = None
@@ -955,6 +957,7 @@ class _ServerContext:
         self.pipeline: _PipelineFacade | None = None
         self.session_manager: Any = None
         self.renderer: _MermaidFacade = _MermaidFacade()
+        self.broadcaster: DiagramBroadcaster = DiagramBroadcaster()
 
 
 def _dispatch_tool(ctx: _ServerContext, name: str, arguments: dict):
@@ -1343,11 +1346,23 @@ async def run_server_http(
         async with session_manager.run():
             yield
 
-    # Starlette handles lifespan only; /mcp is routed at the ASGI level
-    # because session_manager.handle_request sends responses directly via
-    # the ASGI send callable, which is incompatible with Starlette's Route
-    # endpoint pattern (expects a Response return value).
-    starlette_app = Starlette(lifespan=lifespan)
+    from starlette.responses import RedirectResponse
+    from starlette.routing import Route
+
+    from Poule.server.viewer import viewer_page_handler, viewer_sse_handler
+
+    # Starlette handles lifespan and viewer routes; /mcp is routed at the
+    # ASGI level because session_manager.handle_request sends responses
+    # directly via the ASGI send callable, which is incompatible with
+    # Starlette's Route endpoint pattern (expects a Response return value).
+    starlette_app = Starlette(
+        lifespan=lifespan,
+        routes=[
+            Route("/", lambda req: RedirectResponse("/viewer")),
+            Route("/viewer", viewer_page_handler),
+            Route("/viewer/events", lambda req: viewer_sse_handler(req, ctx.broadcaster)),
+        ],
+    )
 
     async def app(scope, receive, send):
         if scope["type"] == "http" and scope.get("path") == "/mcp":
