@@ -235,6 +235,32 @@ poule-dev
 uv run pytest
 ```
 
+## Pull Request Process
+
+Work on a feature branch and open a PR against `main`:
+
+```bash
+git checkout -b my-feature
+# make changes, commit
+git push origin my-feature
+gh pr create
+```
+
+Two CI checks must pass before merging:
+
+| Check | Trigger | Command |
+|-------|---------|---------|
+| CI – Unit Tests | Automatic on push | — |
+| CI – Build & Integration Tests | **Manual** | `gh workflow run build-and-test.yml --ref my-feature` |
+
+The build & integration workflow builds the Docker image and runs the Coq integration tests (`pytest -m requires_coq`). It is triggered manually to avoid burning CI minutes on every push — run it once the branch is ready for review.
+
+Once both checks are green, merge and delete the branch:
+
+```bash
+gh pr merge <number> --merge --delete-branch
+```
+
 ## Publishing Releases
 
 Prebuilt search indexes and neural model checkpoints are distributed via [GitHub Releases](https://github.com/ekirton/poule/releases). Users can download them with `uv run python -m poule.cli download-index` instead of building from source.
