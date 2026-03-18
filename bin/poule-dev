@@ -9,7 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/.."
-DEV_IMAGE="Poule:dev"
+DEV_IMAGE="poule:dev"
 
 # Parse arguments
 REBUILD=false
@@ -71,7 +71,7 @@ if [ "$NO_AUTO_UPDATE" != true ]; then
 fi
 
 # ── Build dev image if missing or --rebuild requested ─────────────────────────
-DEV_IMAGE_EXISTS=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -c "^Poule:dev$" || echo "0")
+DEV_IMAGE_EXISTS=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -c "^poule:dev$" || echo "0")
 NEED_BUILD=false
 BUILD_REASON=""
 DEFERRED_UPDATE=false
