@@ -1,0 +1,95 @@
+name: CI – Build & Integration Tests
+
+on:
+  # Automatic on main
+  push:
+    branches: [main]
+  # Manual trigger on PR branches (via Actions tab or `gh workflow run`)
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/poule
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: sha-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.ref == 'refs/heads/main' }}
+          load: true
+          tags: |
+            ${{ env.IMAGE }}:sha-${{ github.sha }}
+            ${{ github.ref == 'refs/heads/main' && format('{0}:latest', env.IMAGE) || '' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save image for integration tests
+        run: docker save ${{ env.IMAGE }}:sha-${{ github.sha }} -o /tmp/poule-image.tar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: poule-image
+          path: /tmp/poule-image.tar
+          retention-days: 1
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: build-image
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: poule-image
+          path: /tmp
+
+      - name: Load image
+        run: docker load -i /tmp/poule-image.tar
+
+      - name: Run integration tests
+        run: |
+          docker run --rm --entrypoint uv \
+            ${{ env.IMAGE }}:sha-${{ github.sha }} \
+            run pytest -m requires_coq -v
+
+  # Report commit status so branch protection can require this workflow
+  report-status:
+    runs-on: ubuntu-latest
+    needs: [build-image, integration-tests]
+    if: always() && github.event_name == 'workflow_dispatch'
+    permissions:
+      statuses: write
+    steps:
+      - name: Report status
+        run: |
+          if [ "${{ needs.integration-tests.result }}" = "success" ] && \
+             [ "${{ needs.build-image.result }}" = "success" ]; then
+            STATE=success
+            DESC="Build and integration tests passed"
+          else
+            STATE=failure
+            DESC="Build or integration tests failed"
+          fi
+          gh api repos/${{ github.repository }}/statuses/${{ github.sha }} \
+            -f state="$STATE" \
+            -f context="CI – Build & Integration Tests" \
+            -f description="$DESC" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
