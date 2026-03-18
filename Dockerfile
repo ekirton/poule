@@ -102,7 +102,7 @@ RUN (getent group ${HOST_GID} >/dev/null 2>&1 || groupadd -g ${HOST_GID} ${HOST_
 # Install uv (fast Python package manager)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-WORKDIR /app
+WORKDIR /poule
 
 # Copy only dependency manifests to cache the deps layer
 COPY pyproject.toml uv.lock ./
@@ -118,7 +118,7 @@ RUN chmod +x /usr/local/bin/ensure-claude
 # Place the virtualenv outside /app so it survives a bind-mount of the
 # project root in dev containers.
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
-RUN mkdir -p /opt/venv && chown -R ${HOST_UID}:${HOST_GID} /opt/venv /app
+RUN mkdir -p /opt/venv && chown -R ${HOST_UID}:${HOST_GID} /opt/venv /poule
 
 # Create venv as the app user so it's writable when source is installed later
 USER ${HOST_USER}

@@ -170,15 +170,15 @@ if [ ! -f "$DATA_DIR/index.db" ]; then
     else
         echo "No local index.db found — downloading from latest GitHub release..."
         if docker run --rm \
-            -v "$PROJECT_DIR:/app" \
+            -v "$PROJECT_DIR:/poule" \
             -v "$DATA_DIR:/data" \
             --entrypoint sh \
             "$DEV_IMAGE" \
-            -c 'uv run --project /app python -m poule.cli download-index --output /data/index.db'; then
+            -c 'uv run --project /poule python -m poule.cli download-index --output /data/index.db'; then
             echo "Index downloaded successfully."
         else
             echo "Warning: Index download failed. You can retry later from inside the container:"
-            echo "  uv run --project /app python -m poule.cli download-index --output ~/data/index.db"
+            echo "  uv run --project /poule python -m poule.cli download-index --output ~/data/index.db"
         fi
     fi
     echo ""
@@ -218,10 +218,10 @@ if [ ${#ARGS[@]} -eq 0 ]; then
     echo "Starting Poule dev environment (project root mount)"
     docker run -it --rm \
         --user "$HOST_UID:$HOST_GID" \
-        -v "$PROJECT_DIR:/app" \
+        -v "$PROJECT_DIR:/poule" \
         -v "$CONTAINER_HOME:/home/$HOST_USER" \
         -v "$DATA_DIR:/data" \
-        -w /app \
+        -w /poule \
         -e HOME="/home/$HOST_USER" \
         -e ANTHROPIC_API_KEY \
         -e TZ="${TZ:-UTC}" \
@@ -230,10 +230,10 @@ if [ ${#ARGS[@]} -eq 0 ]; then
 else
     docker run --rm \
         --user "$HOST_UID:$HOST_GID" \
-        -v "$PROJECT_DIR:/app" \
+        -v "$PROJECT_DIR:/poule" \
         -v "$CONTAINER_HOME:/home/$HOST_USER" \
         -v "$DATA_DIR:/data" \
-        -w /app \
+        -w /poule \
         -e HOME="/home/$HOST_USER" \
         -e ANTHROPIC_API_KEY \
         -e TZ="${TZ:-UTC}" \
