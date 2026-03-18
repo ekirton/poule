@@ -69,11 +69,16 @@ Make sure `~/bin` is on your `PATH` (add `export PATH="$HOME/bin:$PATH"` if need
 **3. Run**
 
 ```bash
-poule          # drops you into a shell inside the container
-claude         # then start Claude Code
+poule          # launches Claude Code with your project mounted
 ```
 
 Everything runs inside the container — no local Coq, Python, or opam installation required. Claude Code is baked into the image for instant startup. On first run, the launcher pulls the image, initializes a persistent home directory at `~/poule-home`, and downloads the Coq search index automatically.
+
+To run a one-off command instead:
+
+```bash
+poule coqc --version   # run a command in the container
+```
 
 If you want to use a different project for a one-off session, just `cd` into it and run `poule` — the launcher falls back to `$PWD` when `POULE_PROJECT_DIR` is not set.
 

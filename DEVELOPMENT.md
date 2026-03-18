@@ -17,7 +17,7 @@ git clone https://github.com/ekirton/poule.git
 cd poule
 ```
 
-### Using the launcher
+### Using the launchers
 
 Add the `bin/` directory to your PATH:
 
@@ -26,27 +26,33 @@ Add the `bin/` directory to your PATH:
 export PATH="/path/to/poule/bin:$PATH"
 ```
 
-The first time you run `poule`, it pulls the Docker image from the registry automatically.
+There are two launchers:
+
+| Script | Image | Mount | Purpose |
+|--------|-------|-------|---------|
+| `poule-dev` | `poule:dev` (local build) | Project root at `/poule` | Development — live source edits |
+| `poule` | `ghcr.io/ekirton/poule` (registry) | Project dir at host path | End-user — baked-in source |
 
 ### Developer workflow
 
 All development is done inside the container. From the project root:
 
 ```bash
-poule                           # Start interactive shell (your primary dev environment)
+poule-dev                       # Start interactive dev shell (your primary dev environment)
 ```
 
-Inside the container shell, the project source is mounted at its host path and a pre-built Python environment is available at `/app`. The full Coq toolchain, coq-lsp, and all Python dependencies are available without any local installation.
+Inside the container shell, the project source is live-mounted at `/poule`. The full Coq toolchain, coq-lsp, and all Python dependencies are available without any local installation. Edits on the host are immediately visible.
 
 ```bash
-poule --dev uv run pytest                   # Run tests with live source (recommended)
-poule --dev uv run pytest -v                # Verbose test output
-poule uv run --project /app pytest          # Run tests (baked-in source)
-poule coqc --version                        # Run a Coq command in the container
+poule-dev uv run pytest                     # Run tests with live source (recommended)
+poule-dev uv run pytest -v                  # Verbose test output
+poule-dev coqc --version                    # Run a Coq command in the container
 ```
 
-The launcher manages:
-- Image pulls with proper host user mapping
+On first run, `poule-dev` builds the dev image automatically from the `app-deps` stage of the Dockerfile.
+
+The launchers manage:
+- Image builds/pulls with proper host user mapping
 - Persistent home directory at `~/poule-home/`
 - Claude Code MCP server auto-configuration
 - Search index download on first run
@@ -67,12 +73,12 @@ poule-mcp logs       # Tail the server log
 
 `poule-mcp` is available inside both the production image (`poule:latest`) and the dev image (`poule:dev`).
 
-**Typical MCP development loop (inside the container shell):**
+**Typical MCP development loop (inside the `poule-dev` container shell):**
 
 ```bash
 poule-mcp start         # start the server
 claude                  # open Claude — it connects to the running server
-# edit src/poule/server/ on the host (live-mounted in --dev mode)
+# edit src/poule/server/ on the host (live-mounted via poule-dev)
 # ask Claude to restart the server:
 #   "restart the MCP server"  →  Claude runs: poule-mcp restart
 claude                  # open Claude again — picks up new code immediately
@@ -87,11 +93,12 @@ Environment variables to override defaults:
 
 ### Updating
 
-```bash
-poule --pull                 # Force pull latest base image from registry
-```
+The launchers pull the latest image (or rebuild the dev image) automatically. Claude Code is baked into the image at build time. On launch, the launcher checks npm for newer versions; if found, it defers the rebuild to exit time so your session isn't interrupted.
 
-Claude Code is baked into the image at build time. On launch, the launcher checks npm for newer versions; if found, it defers the rebuild to exit time so your session isn't interrupted. The `--pull` flag updates the base image (Coq toolchain, Python deps, Poule application code). Use `--no-auto-update` to skip the version check.
+```bash
+poule-dev --rebuild          # Force rebuild the dev image
+poule-dev --no-auto-update   # Skip Claude Code version check
+```
 
 To download a newer search index:
 
@@ -103,7 +110,7 @@ poule   # Triggers automatic re-download
 To also download the neural premise selection model:
 
 ```bash
-poule uv run --project /app python -m poule.cli download-index --output ~/data/index.db --include-model
+poule-dev uv run python -m poule.cli download-index --output ~/data/index.db --include-model
 ```
 
 ## Architecture
@@ -210,24 +217,21 @@ Tests run inside the container, which provides the full Coq toolchain — all te
 
 ```bash
 # Dev mode: live source, no rebuild needed after editing
-poule --dev uv run pytest
-
-# Normal mode (source is baked in — rebuild to pick up changes)
-poule uv run --project /app pytest
+poule-dev uv run pytest
 
 # Run tests for a specific module
-poule --dev uv run pytest test/test_data_structures.py -v
+poule-dev uv run pytest test/test_data_structures.py -v
 
 # Run with coverage
-poule --dev uv run pytest --cov=poule
+poule-dev uv run pytest --cov=poule
 ```
 
-`--dev` mounts `src/` and `test/` directly into the container, so edits on the host are immediately visible without rebuilding. It must be run from the poule project root (the directory containing `src/` and `test/`).
+`poule-dev` mounts the project root at `/poule` inside the container, so edits on the host are immediately visible without rebuilding. It must be run from the poule project root (the directory containing `src/` and `test/`).
 
 Or enter the container shell first and run directly:
 
 ```bash
-poule --dev
+poule-dev
 uv run pytest
 ```
 
