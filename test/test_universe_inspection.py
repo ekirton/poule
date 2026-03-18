@@ -513,14 +513,14 @@ class TestFullGraphRetrieval:
 
     @pytest.mark.requires_coq
     @pytest.mark.asyncio
-    async def test_contract_retrieve_full_graph(self):
+    async def test_contract_retrieve_full_graph(self, coq_test_file):
         """Contract test: real coq_query returns text that parses into a ConstraintGraph."""
         retrieve_full_graph, _ = _import_retrieval()
         # This test exercises the real Coq backend.
         # Skipped when Coq is not available.
         from poule.session.manager import SessionManager
         manager = SessionManager()
-        session_id = await manager.create_session("test.v", "test_proof")
+        session_id = await manager.create_session(str(coq_test_file), "test_proof")
         try:
             result = await retrieve_full_graph(manager, session_id)
             assert hasattr(result, "variables")
@@ -609,12 +609,12 @@ class TestDefinitionConstraintRetrieval:
 
     @pytest.mark.requires_coq
     @pytest.mark.asyncio
-    async def test_contract_retrieve_definition_constraints(self):
+    async def test_contract_retrieve_definition_constraints(self, coq_test_file):
         """Contract test: real per-definition retrieval returns a ConstraintGraph."""
         _, retrieve_definition_constraints = _import_retrieval()
         from poule.session.manager import SessionManager
         manager = SessionManager()
-        session_id = await manager.create_session("test.v", "test_proof")
+        session_id = await manager.create_session(str(coq_test_file), "test_proof")
         try:
             result = await retrieve_definition_constraints(
                 manager, session_id, "nat",
@@ -742,12 +742,12 @@ class TestInconsistencyDiagnosis:
 
     @pytest.mark.requires_coq
     @pytest.mark.asyncio
-    async def test_contract_diagnose_universe_error(self):
+    async def test_contract_diagnose_universe_error(self, coq_test_file):
         """Contract test: real diagnosis against a Coq backend."""
         diagnose = _import_diagnosis()
         from poule.session.manager import SessionManager
         manager = SessionManager()
-        session_id = await manager.create_session("test.v", "test_proof")
+        session_id = await manager.create_session(str(coq_test_file), "test_proof")
         try:
             error_msg = (
                 "Universe inconsistency: cannot enforce u.1 < u.2 "
@@ -873,12 +873,12 @@ class TestSourceAttribution:
 
     @pytest.mark.requires_coq
     @pytest.mark.asyncio
-    async def test_contract_attribution_uses_about_command(self):
+    async def test_contract_attribution_uses_about_command(self, coq_test_file):
         """Contract test: real attribution queries About for definitions."""
         diagnose = _import_diagnosis()
         from poule.session.manager import SessionManager
         manager = SessionManager()
-        session_id = await manager.create_session("test.v", "test_proof")
+        session_id = await manager.create_session(str(coq_test_file), "test_proof")
         try:
             error_msg = (
                 "Universe inconsistency: cannot enforce u.1 < u.2 "
@@ -992,12 +992,12 @@ class TestPolymorphicInstantiationRetrieval:
 
     @pytest.mark.requires_coq
     @pytest.mark.asyncio
-    async def test_contract_retrieve_instantiations(self):
+    async def test_contract_retrieve_instantiations(self, coq_test_file):
         """Contract test: real instantiation retrieval returns structured data."""
         retrieve_instantiations, _ = _import_polymorphic()
         from poule.session.manager import SessionManager
         manager = SessionManager()
-        session_id = await manager.create_session("test.v", "test_proof")
+        session_id = await manager.create_session(str(coq_test_file), "test_proof")
         try:
             result = await retrieve_instantiations(manager, session_id, "list")
             assert isinstance(result, list)
@@ -1068,12 +1068,12 @@ class TestPolymorphicCompatibilityComparison:
 
     @pytest.mark.requires_coq
     @pytest.mark.asyncio
-    async def test_contract_compare_definitions(self):
+    async def test_contract_compare_definitions(self, coq_test_file):
         """Contract test: real comparison against a Coq backend."""
         _, compare_definitions = _import_polymorphic()
         from poule.session.manager import SessionManager
         manager = SessionManager()
-        session_id = await manager.create_session("test.v", "test_proof")
+        session_id = await manager.create_session(str(coq_test_file), "test_proof")
         try:
             result = await compare_definitions(manager, session_id, "nat", "bool")
             assert result is not None
@@ -1240,11 +1240,11 @@ class TestInterfaceContracts:
 
     @pytest.mark.requires_coq
     @pytest.mark.asyncio
-    async def test_contract_coq_query_returns_text(self):
+    async def test_contract_coq_query_returns_text(self, coq_test_file):
         """Contract test: coq_query returns raw text for Print Universes."""
         from poule.session.manager import SessionManager
         manager = SessionManager()
-        session_id = await manager.create_session("test.v", "test_proof")
+        session_id = await manager.create_session(str(coq_test_file), "test_proof")
         try:
             raw = await manager.coq_query(session_id, "Print Universes.")
             assert isinstance(raw, str)

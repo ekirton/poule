@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
+# Strip the coqtop welcome banner that -quiet does not always suppress.
+_BANNER_RE = re.compile(r"^Welcome to Coq [\d.]+\s*\n?")
 
 # Default prelude to load the standard library into session-free processes.
 # Spec 4.3.2: "execute against the default global environment (standard library
@@ -58,4 +61,9 @@ class ProcessPool:
             msg = stderr.decode().strip() if stderr else "unknown error"
             raise RuntimeError(f"coqtop exited with code {proc.returncode}: {msg}")
 
-        return stdout.decode()
+        output = stdout.decode()
+        # coqtop -quiet does not reliably suppress the welcome banner
+        # across all Coq versions.  Strip it here since the banner is a
+        # process-lifecycle artifact, not part of the command output.
+        output = _BANNER_RE.sub("", output)
+        return output

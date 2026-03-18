@@ -1,0 +1,7 @@
+digraph dependencies {
+  "Coq.Arith.Plus.add_comm" -> "Coq.Init.Nat.add";
+  "Coq.Arith.Plus.add_assoc" -> "Coq.Init.Nat.add";
+  "Coq.Init.Nat.add" -> "Coq.Init.Nat.nat";
+  "Coq.Init.Nat.nat" -> "Coq.Init.Datatypes.O";
+  "Coq.Init.Nat.nat" -> "Coq.Init.Datatypes.S";
+}
