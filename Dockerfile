@@ -157,7 +157,7 @@ COPY --chown=${HOST_UID}:${HOST_GID} src/ src/
 COPY --chown=${HOST_UID}:${HOST_GID} test/ test/
 COPY --chown=${HOST_UID}:${HOST_GID} examples/ examples/
 COPY --chown=${HOST_UID}:${HOST_GID} commands/ commands/
-COPY --chown=${HOST_UID}:${HOST_GID} CLAUDE.md README.md ./
+COPY --chown=${HOST_UID}:${HOST_GID} .mcp.json CLAUDE.md README.md ./
 
 USER ${HOST_USER}
 

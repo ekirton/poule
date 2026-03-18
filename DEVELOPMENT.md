@@ -59,7 +59,7 @@ The launchers manage:
 
 ### MCP server lifecycle
 
-The Poule MCP server runs in **SSE mode** as a background daemon inside the container, so Claude Code connects to it over HTTP rather than via a spawned subprocess. This lets the developer (or Claude itself) restart the server after editing code without exiting Claude.
+The Poule MCP server runs in **streamable-HTTP mode** as a background daemon inside the container, so Claude Code connects to it over HTTP rather than via a spawned subprocess. This lets the developer (or Claude itself) restart the server after editing code without exiting Claude.
 
 The `poule-mcp` script manages the server:
 
@@ -89,7 +89,7 @@ Environment variables to override defaults:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `POULE_MCP_DB` | `/data/index.db` | Path to the search index |
-| `POULE_MCP_PORT` | `3000` | SSE listen port |
+| `POULE_MCP_PORT` | `3000` | HTTP listen port |
 
 ### Updating
 

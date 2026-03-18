@@ -1327,38 +1327,35 @@ async def run_server_http(
     to it via the ``url`` field in settings.json rather than spawning a
     subprocess.
     """
+    import contextlib
+
     import uvicorn
-    from mcp.server.streamable_http import StreamableHTTPServerTransport
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
-    from starlette.requests import Request
-    from starlette.routing import Route
 
     ctx = await _init_context(db_path, log_level)
     server = _build_server(ctx)
 
-    async def handle_mcp(request: Request):
-        transport = StreamableHTTPServerTransport(mcp_session_id=None)
-        async with transport.connect() as (read_stream, write_stream):
-            async with anyio.create_task_group() as tg:
-                async def run_transport():
-                    await transport.handle_request(
-                        request.scope, request.receive, request._send,
-                    )
+    session_manager = StreamableHTTPSessionManager(app=server)
 
-                async def run_mcp():
-                    await server.run(
-                        read_stream, write_stream,
-                        server.create_initialization_options(),
-                    )
+    @contextlib.asynccontextmanager
+    async def lifespan(app):
+        async with session_manager.run():
+            yield
 
-                tg.start_soon(run_transport)
-                tg.start_soon(run_mcp)
+    # Starlette handles lifespan only; /mcp is routed at the ASGI level
+    # because session_manager.handle_request sends responses directly via
+    # the ASGI send callable, which is incompatible with Starlette's Route
+    # endpoint pattern (expects a Response return value).
+    starlette_app = Starlette(lifespan=lifespan)
 
-    starlette_app = Starlette(routes=[
-        Route("/mcp", endpoint=handle_mcp, methods=["GET", "POST", "DELETE"]),
-    ])
+    async def app(scope, receive, send):
+        if scope["type"] == "http" and scope.get("path") == "/mcp":
+            await session_manager.handle_request(scope, receive, send)
+        else:
+            await starlette_app(scope, receive, send)
 
-    config = uvicorn.Config(starlette_app, host=host, port=port, log_level=log_level.lower())
+    config = uvicorn.Config(app, host=host, port=port, log_level=log_level.lower())
     uv_server = uvicorn.Server(config)
     logger.info("Poule MCP server (streamable-http) listening on %s:%d", host, port)
     await uv_server.serve()
