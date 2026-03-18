@@ -122,7 +122,7 @@ async def execute_hammer(
     # Interpret the result
     interpreted = interpret_result(coq_output, result_state)
 
-    if interpreted.status == "success":
+    if interpreted.classification == "success":
         return HammerResult(
             status="success",
             proof_script=f"{tactic}.",
@@ -142,7 +142,7 @@ async def execute_hammer(
             diagnostics=[
                 StrategyDiagnostic(
                     strategy=strategy,
-                    failure_reason=interpreted.failure_reason,
+                    failure_reason=interpreted.classification,
                     detail=interpreted.detail or coq_output,
                     partial_progress=interpreted.partial_progress,
                     wall_time_ms=elapsed_ms,
