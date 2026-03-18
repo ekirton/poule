@@ -208,8 +208,9 @@ The suffix reverse lookup table shall be built once per `resolve_and_insert_depe
 After both passes:
 
 1. Compute global symbol frequencies across all declarations → `insert_symbol_freq`
-2. Write index metadata: `schema_version`, `coq_version`, `mathcomp_version`, `created_at`
-3. Call `writer.finalize()` — FTS5 rebuild + integrity check
+2. Write index metadata: `schema_version`, `coq_version`, `created_at`. When extracting a single library target (per-library index), also write `library` (the library identifier) and `library_version` (from `detect_library_version`). When extracting multiple targets, write `mathcomp_version` for backward compatibility.
+3. Write `declarations` metadata key with the count of indexed declarations.
+4. Call `writer.finalize()` — FTS5 rebuild + integrity check
 
 ### 4.7 Existing Database Replacement
 
@@ -230,14 +231,63 @@ When `run_extraction` is called and a file exists at `db_path`:
 
 #### discover_libraries(target)
 
-- REQUIRES: `target` specifies which libraries to index (stdlib, MathComp, or user project path).
-- ENSURES: Returns a list of `.vo` file paths for the target libraries.
+- REQUIRES: `target` is one of the 6 supported library identifiers or a filesystem path to a user project.
+- ENSURES: Returns a list of `.vo` file paths for the target library. If `target` is not a recognized library identifier and is not a valid filesystem path, raises `ExtractionError` listing valid identifiers.
 
-Phase 1 targets:
-- **Coq standard library**: All `.vo` files from the installed Coq/Rocq stdlib.
-- **MathComp**: All `.vo` files from the installed MathComp package.
+Supported library targets:
 
-### 4.9 Progress Reporting
+| Target identifier | Discovery path | Notes |
+|------------------|---------------|-------|
+| `stdlib` | `user-contrib/Stdlib/` (Rocq 9.x) or `theories/` (Coq 8.x) | Uses whichever location has more `.vo` files |
+| `mathcomp` | `user-contrib/mathcomp/` | All `.vo` files recursively |
+| `stdpp` | `user-contrib/stdpp/` | All `.vo` files recursively |
+| `flocq` | `user-contrib/Flocq/` | All `.vo` files recursively |
+| `coquelicot` | `user-contrib/Coquelicot/` | All `.vo` files recursively |
+| `coqinterval` | `user-contrib/Interval/` | All `.vo` files recursively |
+
+All paths are relative to the Coq base directory returned by `coqc -where`. Filesystem paths are also accepted for user projects.
+
+> **Given** stdpp is installed and `user-contrib/stdpp/` contains `.vo` files
+> **When** `discover_libraries("stdpp")` is called
+> **Then** returns all `.vo` files from `user-contrib/stdpp/`
+
+> **Given** CoqInterval is installed
+> **When** `discover_libraries("coqinterval")` is called
+> **Then** returns all `.vo` files from `user-contrib/Interval/` (note: directory name differs from identifier)
+
+> **Given** an unrecognized target `"unknown"` that is not a filesystem path
+> **When** `discover_libraries("unknown")` is called
+> **Then** raises `ExtractionError` listing valid identifiers: stdlib, mathcomp, stdpp, flocq, coquelicot, coqinterval
+
+### 4.9 Library Version Detection
+
+#### detect_library_version(library)
+
+- REQUIRES: `library` is one of the 6 supported library identifiers.
+- ENSURES: Returns the version string for the installed library. If the library is not installed, returns `"none"`.
+
+| Library | Detection method | opam package |
+|---------|-----------------|-------------|
+| `stdlib` | Parse version from `coqc --version` output | `coq` |
+| `mathcomp` | `opam show coq-mathcomp-ssreflect --field=version` | `coq-mathcomp-ssreflect` |
+| `stdpp` | `opam show coq-stdpp --field=version` | `coq-stdpp` |
+| `flocq` | `opam show coq-flocq --field=version` | `coq-flocq` |
+| `coquelicot` | `opam show coq-coquelicot --field=version` | `coq-coquelicot` |
+| `coqinterval` | `opam show coq-interval --field=version` | `coq-interval` |
+
+> **Given** MathComp 2.2.0 is installed via opam
+> **When** `detect_library_version("mathcomp")` is called
+> **Then** returns `"2.2.0"`
+
+> **Given** stdpp is not installed
+> **When** `detect_library_version("stdpp")` is called
+> **Then** returns `"none"`
+
+> **Given** Coq 8.19.2 is installed
+> **When** `detect_library_version("stdlib")` is called
+> **Then** returns `"8.19.2"`
+
+### 4.10 Progress Reporting
 
 - REQUIRES: The caller has enabled the progress flag.
 - ENSURES: When enabled, the extraction pipeline writes progress messages to stderr for each processing stage. When disabled (the default), no progress messages are emitted.
@@ -248,7 +298,7 @@ Per-stage message format (per-declaration granularity):
 
 Each message identifies the current stage name. Messages are written to stderr so they do not interfere with structured output on stdout.
 
-### 4.10 Backend Process Lifecycle
+### 4.11 Backend Process Lifecycle
 
 When the extraction backend (coq-lsp or SerAPI) crashes or becomes unresponsive:
 - Abort the indexing run
@@ -283,13 +333,13 @@ Error hierarchy:
 
 ## 7. Examples
 
-### Full indexing run
+### Full indexing run (single library)
 
 ```
-libraries = discover_libraries("stdlib+mathcomp")
+libraries = discover_libraries("stdlib")
 version = backend.detect_version()
-delete_if_exists("/path/to/index.db")
-writer = IndexWriter.create("/path/to/index.db")
+delete_if_exists("/path/to/index-stdlib.db")
+writer = IndexWriter.create("/path/to/index-stdlib.db")
 
 # Pass 1
 for vo_path in libraries:
@@ -304,8 +354,21 @@ for decl in all_declarations:
 
 # Post-processing
 compute_and_insert_symbol_freq(writer)
-write_metadata(writer, version)
+write_metadata(writer, version,
+    library="stdlib",
+    library_version=detect_library_version("stdlib"))
 writer.finalize()
+```
+
+### Per-library build (all 6 libraries)
+
+```
+for lib in ["stdlib", "mathcomp", "stdpp", "flocq", "coquelicot", "coqinterval"]:
+    run_extraction(
+        targets=[lib],
+        db_path=f"index-{lib}.db",
+        progress_callback=print,
+    )
 ```
 
 ## 8. Language-Specific Notes (Python)

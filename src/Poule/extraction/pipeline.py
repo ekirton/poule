@@ -15,7 +15,7 @@ from typing import Any, Callable
 from .backends.coqlsp_backend import CoqLspBackend
 from .errors import ExtractionError
 from .kind_mapping import map_kind
-from .version_detection import detect_mathcomp_version
+from .version_detection import detect_library_version, detect_mathcomp_version
 
 logger = logging.getLogger(__name__)
 
@@ -345,13 +345,24 @@ def process_declaration(
 # Library discovery
 # ---------------------------------------------------------------------------
 
+_KNOWN_TARGETS = {"stdlib", "mathcomp", "stdpp", "flocq", "coquelicot", "coqinterval"}
+
+_LIBRARY_CONTRIB_DIRS = {
+    "stdpp": "stdpp",
+    "flocq": "Flocq",
+    "coquelicot": "Coquelicot",
+    "coqinterval": "Interval",
+}
+
+
 def discover_libraries(target: str) -> list[Path]:
     """Find ``.vo`` files for the requested target libraries.
 
     Parameters
     ----------
     target:
-        One of ``"stdlib"``, ``"mathcomp"``, or a filesystem path to a
+        One of ``"stdlib"``, ``"mathcomp"``, ``"stdpp"``, ``"flocq"``,
+        ``"coquelicot"``, ``"coqinterval"``, or a filesystem path to a
         user project.
 
     Returns
@@ -362,8 +373,9 @@ def discover_libraries(target: str) -> list[Path]:
     Raises
     ------
     ExtractionError
-        If the Coq toolchain is not installed or no ``.vo`` files are
-        found for the target.
+        If the Coq toolchain is not installed, no ``.vo`` files are
+        found for the target, or the target is not a recognised library
+        identifier and does not exist as a filesystem path.
     """
     try:
         result = subprocess.run(
@@ -390,8 +402,19 @@ def discover_libraries(target: str) -> list[Path]:
     elif target == "mathcomp":
         search_dir = base_dir / "user-contrib" / "mathcomp"
         vo_files = sorted(search_dir.rglob("*.vo"))
+    elif target in _LIBRARY_CONTRIB_DIRS:
+        contrib_name = _LIBRARY_CONTRIB_DIRS[target]
+        search_dir = base_dir / "user-contrib" / contrib_name
+        vo_files = sorted(search_dir.rglob("*.vo"))
     else:
+        # Treat as a filesystem path; reject if it doesn't exist.
         search_dir = Path(target)
+        if not search_dir.is_dir():
+            valid = ", ".join(sorted(_KNOWN_TARGETS))
+            raise ExtractionError(
+                f"Unknown target '{target}'. "
+                f"Valid library identifiers: {valid}"
+            )
         vo_files = sorted(search_dir.rglob("*.vo"))
 
     if not vo_files:
@@ -582,12 +605,21 @@ def run_extraction(
         if progress_callback is not None:
             progress_callback("Finalizing index...")
         # Write metadata
-        writer.write_metadata(
-            schema_version="1",
-            coq_version=coq_version,
-            mathcomp_version=detect_mathcomp_version(),
-            created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        )
+        metadata: dict[str, Any] = {
+            "schema_version": "1",
+            "coq_version": coq_version,
+            "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "declarations": str(len(all_results)),
+        }
+
+        if len(targets) == 1 and targets[0] in _KNOWN_TARGETS:
+            metadata["library"] = targets[0]
+            metadata["library_version"] = detect_library_version(targets[0])
+        else:
+            # Multiple targets — write mathcomp_version for backward compat
+            metadata["mathcomp_version"] = detect_mathcomp_version()
+
+        writer.write_metadata(**metadata)
 
         # Finalize
         writer.finalize()

@@ -223,9 +223,9 @@ The publish script (`scripts/publish-release.sh`) is a shell script for the proj
 ### Behavior
 
 1. Validate prerequisites (all tools present, `gh` authenticated, files exist).
-2. For each per-library DB: read `schema_version`, `coq_version`, library-specific version from `index_meta`. Verify all share the same `schema_version` and `coq_version`.
+2. For each per-library DB: read `schema_version`, `coq_version`, `library`, `library_version`, and `declarations` from `index_meta`. Verify all databases share the same `schema_version` and `coq_version`.
 3. Compute SHA-256 checksums of all assets.
-4. Generate `manifest.json` with per-library entries.
+4. Generate `manifest.json` with per-library entries. Each library entry contains `version` (from `library_version`), `sha256`, `asset_name` (`index-{library}.db`), and `declarations` (from `declarations` metadata key).
 5. Construct release tag: `index-v{schema_version}-coq{coq_version}`.
 6. If tag already exists: abort with error.
 7. Create GitHub Release via `gh release create` with all per-library assets + manifest + optional model.
@@ -257,7 +257,9 @@ The publish script (`scripts/publish-release.sh`) is a shell script for the proj
 | `sqlite3` not found | 1 | `Error: sqlite3 not found.` |
 | DB file not found | 1 | `Error: {path} does not exist.` |
 | Model file not found | 1 | `Error: {path} does not exist.` |
-| Missing metadata in `index_meta` | 1 | `Error: could not read version metadata from index_meta table.` |
+| Missing metadata in `index_meta` | 1 | `Error: could not read version metadata from index_meta table in {path}.` |
+| Schema version mismatch across DBs | 1 | `Error: schema version mismatch: {path1} has {v1}, {path2} has {v2}.` |
+| Coq version mismatch across DBs | 1 | `Error: Coq version mismatch: {path1} has {v1}, {path2} has {v2}.` |
 | Release tag already exists | 1 | `Error: Release {tag} already exists. Delete it first or use a different version.` |
 
 ## 7. Non-Functional Requirements
@@ -332,13 +334,17 @@ Done. Indexed: stdlib 8.19.2
 ### Publish a release
 
 ```
-$ ./scripts/publish-release.sh index-stdlib.db index-mathcomp.db --model models/neural-premise-selector.onnx
+$ ./scripts/publish-release.sh index-stdlib.db index-mathcomp.db index-stdpp.db index-flocq.db index-coquelicot.db index-coqinterval.db --model models/neural-premise-selector.onnx
 Index metadata:
   schema_version:  1
   coq_version:     8.19
 Libraries:
-  stdlib:          8.19.2  (SHA-256: a1b2c3...)
-  mathcomp:        2.2.0   (SHA-256: d4e5f6...)
+  stdlib:          8.19.2  (12450 declarations, SHA-256: a1b2c3...)
+  mathcomp:        2.2.0   (8320 declarations, SHA-256: d4e5f6...)
+  stdpp:           1.12.0  (5200 declarations, SHA-256: 112233...)
+  flocq:           4.2.1   (3100 declarations, SHA-256: 445566...)
+  coquelicot:      3.4.3   (2800 declarations, SHA-256: 778899...)
+  coqinterval:     4.11.4  (1500 declarations, SHA-256: aabbcc...)
   ONNX model:              (SHA-256: 789abc...)
 
 Generated manifest.json:

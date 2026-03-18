@@ -101,7 +101,7 @@ The `IndexReader` manages the read path during online queries.
 #### open(path)
 
 - REQUIRES: `path` points to an existing SQLite database.
-- ENSURES: Connection is opened in read-only mode. `schema_version` from `index_meta` is validated against the expected version. On mismatch: raise `IndexVersionError`. Library versions (`coq_version`, `mathcomp_version`) are exposed as properties for the caller to check.
+- ENSURES: Connection is opened in read-only mode. `schema_version` from `index_meta` is validated against the expected version. On mismatch: raise `IndexVersionError`. Library metadata (`coq_version`, `library`, `library_version`, `mathcomp_version`) are exposed via the `get_meta(key)` method for the caller to check.
 
 #### load_wl_histograms()
 
@@ -209,7 +209,9 @@ writer.insert_dependencies(all_dependency_edges)
 writer.insert_symbol_freq(symbol_frequencies)
 writer.write_meta("schema_version", "1")
 writer.write_meta("coq_version", "8.19")
-writer.write_meta("mathcomp_version", "2.2.0")
+writer.write_meta("library", "stdlib")
+writer.write_meta("library_version", "8.19.2")
+writer.write_meta("declarations", "12450")
 writer.write_meta("created_at", "2026-03-16T12:00:00Z")
 writer.finalize()
 ```

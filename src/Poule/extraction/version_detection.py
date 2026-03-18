@@ -1,4 +1,4 @@
-"""Version detection utilities for Coq and MathComp."""
+"""Version detection utilities for Coq and installed libraries."""
 
 from __future__ import annotations
 
@@ -58,6 +58,54 @@ def detect_mathcomp_version() -> str:
     try:
         result = subprocess.run(
             ["opam", "show", "coq-mathcomp-ssreflect", "--field=version"],
+            capture_output=True,
+            text=True,
+        )
+        version = result.stdout.strip().strip('"')
+        if result.returncode == 0 and version:
+            return version
+    except FileNotFoundError:
+        pass
+
+    return "none"
+
+
+_OPAM_PACKAGES = {
+    "mathcomp": "coq-mathcomp-ssreflect",
+    "stdpp": "coq-stdpp",
+    "flocq": "coq-flocq",
+    "coquelicot": "coq-coquelicot",
+    "coqinterval": "coq-interval",
+}
+
+
+def detect_library_version(library: str) -> str:
+    """Detect the installed version of a Coq library.
+
+    Parameters
+    ----------
+    library
+        Library identifier: ``"stdlib"``, ``"mathcomp"``, ``"stdpp"``,
+        ``"flocq"``, ``"coquelicot"``, or ``"coqinterval"``.
+
+    Returns
+    -------
+    str
+        The version string, or ``"none"`` if the library is not installed.
+    """
+    if library == "stdlib":
+        try:
+            return detect_coq_version()
+        except CoqNotInstalledError:
+            return "none"
+
+    package = _OPAM_PACKAGES.get(library)
+    if package is None:
+        return "none"
+
+    try:
+        result = subprocess.run(
+            ["opam", "show", package, "--field=version"],
             capture_output=True,
             text=True,
         )
