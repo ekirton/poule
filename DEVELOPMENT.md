@@ -237,13 +237,20 @@ uv run pytest
 
 ## Pull Request Process
 
-Work on a feature branch and open a PR against `main`:
+Work on a feature branch and open a PR against `main`. The branch name is for your own reference; the **PR title** is what matters — it becomes the commit message on `main` when the branch is squash-merged.
 
 ```bash
 git checkout -b my-feature
 # make changes, commit
 git push origin my-feature
-gh pr create
+gh pr create --title "Clear description of the change"
+```
+
+If you omit `--title`, `gh` will prompt you interactively. Before merging, review the commit log and make sure the title accurately reflects the work — it becomes the squash commit message on `main`:
+
+```bash
+git log --oneline origin/main..HEAD
+gh pr edit <number> --title "Better description"
 ```
 
 Two CI checks must pass before merging:
@@ -255,10 +262,22 @@ Two CI checks must pass before merging:
 
 The build & integration workflow builds the Docker image and runs the Coq integration tests (`pytest -m requires_coq`).
 
-Once both checks are green, merge and delete the branch:
+Once both checks are green, merge and delete the branch. PRs are merged as a single squash commit using the PR title as the commit message:
 
 ```bash
-gh pr merge <number> --merge --delete-branch
+gh pr merge <number> --squash --delete-branch
+```
+
+To have GitHub merge automatically once checks pass, use the `--auto` flag:
+
+```bash
+gh pr merge <number> --auto --squash
+```
+
+To override the commit message at merge time:
+
+```bash
+gh pr merge <number> --squash --subject "Custom commit message"
 ```
 
 ## Publishing Releases
