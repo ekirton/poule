@@ -183,23 +183,34 @@ if [ ! -f "$CLAUDE_DIR/settings.json" ]; then
     cat > "$CLAUDE_DIR/settings.json" << 'EOF'
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "skipDangerousModePermissionPrompt": true
-}
-EOF
-fi
-
-# ── First-run: MCP server configuration ───────────────────────────────────────
-# (upgrade from stdio to SSE if an old config exists)
-if [ ! -f "$CLAUDE_DIR/mcp.json" ] || grep -q '"command"' "$CLAUDE_DIR/mcp.json" 2>/dev/null; then
-    cat > "$CLAUDE_DIR/mcp.json" << 'EOF'
-{
+  "skipDangerousModePermissionPrompt": true,
   "mcpServers": {
     "coq-search": {
       "url": "http://127.0.0.1:3000/sse"
+    },
+    "mcp-mermaid": {
+      "command": "npx",
+      "args": ["-y", "mcp-mermaid"]
     }
   }
 }
 EOF
+fi
+
+if ! grep -q '"mcpServers"' "$CLAUDE_DIR/settings.json" 2>/dev/null; then
+    python3 - "$CLAUDE_DIR/settings.json" << 'PYEOF'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    s = json.load(f)
+s["mcpServers"] = {
+    "coq-search": {"url": "http://127.0.0.1:3000/sse"},
+    "mcp-mermaid": {"command": "npx", "args": ["-y", "mcp-mermaid"]}
+}
+with open(path, "w") as f:
+    json.dump(s, f, indent=2)
+    f.write("\n")
+PYEOF
 fi
 
 # ── First-run: zsh configuration ──────────────────────────────────────────────
