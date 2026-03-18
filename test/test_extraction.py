@@ -699,6 +699,66 @@ class TestPostProcessingMetadata:
     """Metadata is written: schema_version, coq_version, etc."""
 
     def test_metadata_written_with_required_keys(self):
+        """Single-target extraction writes library, library_version, declarations
+        instead of mathcomp_version (spec: extraction.md §4.6)."""
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend(
+            declarations=[("A.decl1", "Lemma", {"mock": "constr"})]
+        )
+        backend.detect_version.return_value = "8.19.0"
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"A.decl1": 1}
+
+        mock_result = Mock()
+        mock_result.name = "A.decl1"
+        mock_result.dependency_names = []
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=[Path("/fake/A.vo")],
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                return_value=mock_result,
+            ),
+            patch(
+                "Poule.extraction.pipeline.detect_library_version",
+                return_value="8.19.2",
+            ),
+        ):
+            run_extraction(targets=["stdlib"], db_path=Path("/tmp/test.db"))
+
+        # write_metadata should be called with version info
+        writer.write_metadata.assert_called()
+        metadata_call = writer.write_metadata.call_args
+        # Single-target: metadata must include schema_version, coq_version,
+        # library, library_version, declarations, created_at — all non-None
+        # (spec: extraction.md §4.6).
+        kwargs = metadata_call[1] if metadata_call[1] else {}
+        for key in (
+            "schema_version",
+            "coq_version",
+            "library",
+            "library_version",
+            "declarations",
+            "created_at",
+        ):
+            assert key in kwargs, f"missing metadata key: {key}"
+            assert kwargs[key] is not None, f"metadata key {key} must not be None"
+
+    def test_metadata_multi_target_writes_mathcomp_version(self):
+        """Multi-target extraction writes mathcomp_version for backward
+        compatibility (spec: extraction.md §4.6)."""
         from Poule.extraction.pipeline import run_extraction
 
         backend = _make_mock_backend(
@@ -734,16 +794,23 @@ class TestPostProcessingMetadata:
                 return_value="2.2.0",
             ),
         ):
-            run_extraction(targets=["stdlib"], db_path=Path("/tmp/test.db"))
+            run_extraction(
+                targets=["stdlib", "mathcomp"], db_path=Path("/tmp/test.db")
+            )
 
         # write_metadata should be called with version info
         writer.write_metadata.assert_called()
         metadata_call = writer.write_metadata.call_args
-        # The metadata must include schema_version, coq_version,
-        # mathcomp_version, created_at — all with non-None values
-        # (spec: extraction.md §4.6 step 2).
+        # Multi-target: metadata must include mathcomp_version for backward
+        # compatibility, plus declarations (spec: extraction.md §4.6).
         kwargs = metadata_call[1] if metadata_call[1] else {}
-        for key in ("schema_version", "coq_version", "mathcomp_version", "created_at"):
+        for key in (
+            "schema_version",
+            "coq_version",
+            "mathcomp_version",
+            "declarations",
+            "created_at",
+        ):
             assert key in kwargs, f"missing metadata key: {key}"
             assert kwargs[key] is not None, f"metadata key {key} must not be None"
 
