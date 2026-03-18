@@ -275,7 +275,7 @@ class TestCorruptedCheckpoint:
 
         import logging
 
-        with patch.object(logging.getLogger("poule.extraction.checkpoint"), "warning") as mock_warn:
+        with patch.object(logging.getLogger("Poule.extraction.checkpoint"), "warning") as mock_warn:
             result = try_load_checkpoint(ckpt_path)
 
         assert result is None

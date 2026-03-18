@@ -27,7 +27,7 @@ from Poule.session.types import (
 
 # All tests in this file require both the backend module (not yet implemented)
 # and a real Coq installation. Skip the entire module if the backend is absent.
-pytest.importorskip("poule.session.backend", reason="backend module not yet implemented")
+pytest.importorskip("Poule.session.backend", reason="backend module not yet implemented")
 
 # Mark all tests in this module as requires_coq
 pytestmark = pytest.mark.requires_coq

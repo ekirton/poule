@@ -930,7 +930,7 @@ class TestSigintHandling:
         original_run = run_campaign
 
         with patch(
-            "poule.extraction.campaign.extract_single_proof",
+            "Poule.extraction.campaign.extract_single_proof",
         ) as mock_extract:
             # First call succeeds, second raises KeyboardInterrupt
             mock_extract.side_effect = [
@@ -961,7 +961,7 @@ class TestSigintHandling:
         output = tmp_path / "out.jsonl"
 
         with patch(
-            "poule.extraction.campaign.extract_single_proof",
+            "Poule.extraction.campaign.extract_single_proof",
         ) as mock_extract:
             mock_extract.side_effect = [
                 _make_extraction_record(theorem_name="t1"),

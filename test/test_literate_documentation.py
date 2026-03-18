@@ -143,7 +143,7 @@ class TestAvailabilityDetection:
         mock_process.communicate.return_value = (b"1.4.0\n", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process) as mock_exec:
             # Reset cache for test isolation
             result = await check_availability(_bypass_cache=True)
@@ -155,7 +155,7 @@ class TestAvailabilityDetection:
         """Given Alectryon not on PATH, returns 'not_installed'."""
         check_availability, _, _, _ = _import_adapter()
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     side_effect=FileNotFoundError("alectryon not found")):
             result = await check_availability(_bypass_cache=True)
 
@@ -169,7 +169,7 @@ class TestAvailabilityDetection:
         mock_process.communicate.return_value = (b"0.1.0\n", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process):
             result = await check_availability(_bypass_cache=True)
 
@@ -183,7 +183,7 @@ class TestAvailabilityDetection:
         mock_process.communicate.return_value = (b"1.4.0\n", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process) as mock_exec:
             result1 = await check_availability(_bypass_cache=True)
             # Second call should use cache -- do NOT bypass
@@ -228,11 +228,11 @@ class TestSingleFileGeneration:
 
         html_content = "<html><body>proof docs</body></html>"
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text", return_value=html_content), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text", return_value=html_content), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_documentation(request)
 
@@ -258,11 +258,11 @@ class TestSingleFileGeneration:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.shutil.move") as mock_move, \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.shutil.move") as mock_move, \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_documentation(request)
 
@@ -288,11 +288,11 @@ class TestSingleFileGeneration:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process) as mock_exec, \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.shutil.move"), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.shutil.move"), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             await generate_documentation(request)
 
@@ -325,11 +325,11 @@ class TestSingleFileGeneration:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process) as mock_exec, \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text", return_value="<div>...</div>"), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text", return_value="<div>...</div>"), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_documentation(request)
 
@@ -353,12 +353,12 @@ class TestSingleFileGeneration:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process) as mock_exec, \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text",
                     return_value="\\documentclass{article}..."), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_documentation(request)
 
@@ -383,11 +383,11 @@ class TestSingleFileGeneration:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process) as mock_exec, \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text", return_value="<html>...</html>"), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text", return_value="<html>...</html>"), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             await generate_documentation(request)
 
@@ -414,10 +414,10 @@ class TestSingleFileGeneration:
         mock_process.communicate.return_value = (b"", stderr_msg)
         mock_process.returncode = 1
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_documentation(request)
 
@@ -443,10 +443,10 @@ class TestSingleFileGeneration:
         mock_process.kill = MagicMock()
         mock_process.wait = AsyncMock()
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_documentation(request)
 
@@ -469,12 +469,12 @@ class TestSingleFileGeneration:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
-             patch("poule.documentation.adapter.Path.write_text") as mock_write, \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
+             patch("Poule.documentation.adapter.Path.write_text") as mock_write, \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             await generate_documentation(request)
 
@@ -498,11 +498,11 @@ class TestSingleFileGeneration:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process) as mock_exec, \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             await generate_documentation(request)
 
@@ -566,14 +566,14 @@ class TestProofScopedGeneration:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text",
                     side_effect=[coq_source, "<html>proof docs</html>"]), \
-             patch("poule.documentation.adapter.Path.write_text") as mock_write, \
-             patch("poule.documentation.adapter.Path.unlink") as mock_unlink, \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.write_text") as mock_write, \
+             patch("Poule.documentation.adapter.Path.unlink") as mock_unlink, \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_proof_documentation(request)
 
@@ -606,14 +606,14 @@ class TestProofScopedGeneration:
         def capture_write_text(content, *args, **kwargs):
             pass
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process) as mock_exec, \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text",
                     side_effect=[coq_source, "<html/>"]), \
-             patch("poule.documentation.adapter.Path.write_text") as mock_write, \
-             patch("poule.documentation.adapter.Path.unlink"), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.write_text") as mock_write, \
+             patch("Poule.documentation.adapter.Path.unlink"), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             await generate_proof_documentation(request)
 
@@ -640,14 +640,14 @@ class TestProofScopedGeneration:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process) as mock_exec, \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text",
                     side_effect=[coq_source, "<html/>"]), \
-             patch("poule.documentation.adapter.Path.write_text"), \
-             patch("poule.documentation.adapter.Path.unlink"), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.write_text"), \
+             patch("Poule.documentation.adapter.Path.unlink"), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             await generate_proof_documentation(request)
 
@@ -673,14 +673,14 @@ class TestProofScopedGeneration:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text",
                     side_effect=[coq_source, "<html/>"]), \
-             patch("poule.documentation.adapter.Path.write_text"), \
-             patch("poule.documentation.adapter.Path.unlink") as mock_unlink, \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.write_text"), \
+             patch("Poule.documentation.adapter.Path.unlink") as mock_unlink, \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             await generate_proof_documentation(request)
 
@@ -705,13 +705,13 @@ class TestProofScopedGeneration:
         mock_process.communicate.return_value = (b"", b"Coq error\n")
         mock_process.returncode = 1
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text", return_value=coq_source), \
-             patch("poule.documentation.adapter.Path.write_text"), \
-             patch("poule.documentation.adapter.Path.unlink") as mock_unlink, \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text", return_value=coq_source), \
+             patch("Poule.documentation.adapter.Path.write_text"), \
+             patch("Poule.documentation.adapter.Path.unlink") as mock_unlink, \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_proof_documentation(request)
 
@@ -737,9 +737,9 @@ class TestProofScopedGeneration:
             format="html",
         )
 
-        with patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text", return_value=coq_source), \
-             patch("poule.documentation.adapter.check_availability",
+        with patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text", return_value=coq_source), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_proof_documentation(request)
 
@@ -779,14 +779,14 @@ class TestProofScopedGeneration:
         def capture_write(content, *args, **kwargs):
             written_content.append(content)
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text",
                     side_effect=[coq_source, "<html/>"]), \
-             patch("poule.documentation.adapter.Path.write_text", side_effect=capture_write), \
-             patch("poule.documentation.adapter.Path.unlink"), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.write_text", side_effect=capture_write), \
+             patch("Poule.documentation.adapter.Path.unlink"), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             await generate_proof_documentation(request)
 
@@ -817,14 +817,14 @@ class TestProofScopedGeneration:
             mock_process.communicate.return_value = (b"", b"")
             mock_process.returncode = 0
 
-            with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+            with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                         return_value=mock_process), \
-                 patch("poule.documentation.adapter.Path.exists", return_value=True), \
-                 patch("poule.documentation.adapter.Path.read_text",
+                 patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+                 patch("Poule.documentation.adapter.Path.read_text",
                         side_effect=[coq_source, "<html/>"]), \
-                 patch("poule.documentation.adapter.Path.write_text"), \
-                 patch("poule.documentation.adapter.Path.unlink"), \
-                 patch("poule.documentation.adapter.check_availability",
+                 patch("Poule.documentation.adapter.Path.write_text"), \
+                 patch("Poule.documentation.adapter.Path.unlink"), \
+                 patch("Poule.documentation.adapter.check_availability",
                         return_value="available"):
                 result = await generate_proof_documentation(request)
 
@@ -884,16 +884,16 @@ class TestBatchGeneration:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.Path.rglob", return_value=v_files), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.is_dir", return_value=True), \
-             patch("poule.documentation.adapter.Path.mkdir"), \
-             patch("poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
-             patch("poule.documentation.adapter.Path.write_text"), \
-             patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.Path.rglob", return_value=v_files), \
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.is_dir", return_value=True), \
+             patch("Poule.documentation.adapter.Path.mkdir"), \
+             patch("Poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
+             patch("Poule.documentation.adapter.Path.write_text"), \
+             patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.shutil.move"), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.shutil.move"), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_batch_documentation(request)
 
@@ -934,16 +934,16 @@ class TestBatchGeneration:
                 mock_proc.returncode = 0
             return mock_proc
 
-        with patch("poule.documentation.adapter.Path.rglob", return_value=v_files), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.is_dir", return_value=True), \
-             patch("poule.documentation.adapter.Path.mkdir"), \
-             patch("poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
-             patch("poule.documentation.adapter.Path.write_text"), \
-             patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.Path.rglob", return_value=v_files), \
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.is_dir", return_value=True), \
+             patch("Poule.documentation.adapter.Path.mkdir"), \
+             patch("Poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
+             patch("Poule.documentation.adapter.Path.write_text"), \
+             patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     side_effect=subprocess_side_effect), \
-             patch("poule.documentation.adapter.shutil.move"), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.shutil.move"), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_batch_documentation(request)
 
@@ -972,16 +972,16 @@ class TestBatchGeneration:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.Path.rglob", return_value=v_files), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.is_dir", return_value=True), \
-             patch("poule.documentation.adapter.Path.mkdir"), \
-             patch("poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
-             patch("poule.documentation.adapter.Path.write_text") as mock_write, \
-             patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.Path.rglob", return_value=v_files), \
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.is_dir", return_value=True), \
+             patch("Poule.documentation.adapter.Path.mkdir"), \
+             patch("Poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
+             patch("Poule.documentation.adapter.Path.write_text") as mock_write, \
+             patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.shutil.move"), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.shutil.move"), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_batch_documentation(request)
 
@@ -998,10 +998,10 @@ class TestBatchGeneration:
             output_directory="/docs/",
         )
 
-        with patch("poule.documentation.adapter.Path.rglob", return_value=[]), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.is_dir", return_value=True), \
-             patch("poule.documentation.adapter.check_availability",
+        with patch("Poule.documentation.adapter.Path.rglob", return_value=[]), \
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.is_dir", return_value=True), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_batch_documentation(request)
 
@@ -1038,16 +1038,16 @@ class TestBatchGeneration:
             mock_proc.returncode = 0
             return mock_proc
 
-        with patch("poule.documentation.adapter.Path.rglob", return_value=v_files), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.is_dir", return_value=True), \
-             patch("poule.documentation.adapter.Path.mkdir"), \
-             patch("poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
-             patch("poule.documentation.adapter.Path.write_text"), \
-             patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.Path.rglob", return_value=v_files), \
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.is_dir", return_value=True), \
+             patch("Poule.documentation.adapter.Path.mkdir"), \
+             patch("Poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
+             patch("Poule.documentation.adapter.Path.write_text"), \
+             patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     side_effect=track_subprocess), \
-             patch("poule.documentation.adapter.shutil.move"), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.shutil.move"), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_batch_documentation(request)
 
@@ -1071,16 +1071,16 @@ class TestBatchGeneration:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.Path.rglob", return_value=v_files), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.is_dir", return_value=True), \
-             patch("poule.documentation.adapter.Path.mkdir"), \
-             patch("poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
-             patch("poule.documentation.adapter.Path.write_text"), \
-             patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.Path.rglob", return_value=v_files), \
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.is_dir", return_value=True), \
+             patch("Poule.documentation.adapter.Path.mkdir"), \
+             patch("Poule.documentation.adapter.Path.read_text", return_value="<html/>"), \
+             patch("Poule.documentation.adapter.Path.write_text"), \
+             patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.shutil.move"), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.shutil.move"), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_batch_documentation(request)
 
@@ -1129,8 +1129,8 @@ class TestInputValidationErrors:
             input_file="/project/src/Nonexistent.v",
         )
 
-        with patch("poule.documentation.adapter.Path.exists", return_value=False), \
-             patch("poule.documentation.adapter.check_availability",
+        with patch("Poule.documentation.adapter.Path.exists", return_value=False), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_documentation(request)
 
@@ -1149,7 +1149,7 @@ class TestInputValidationErrors:
             input_file="/project/src/README.md",
         )
 
-        with patch("poule.documentation.adapter.check_availability",
+        with patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_documentation(request)
 
@@ -1173,9 +1173,9 @@ class TestInputValidationErrors:
             path_str = str(self_path) if self_path else ""
             return path_str.endswith(".v")
 
-        with patch("poule.documentation.adapter.Path.exists",
+        with patch("Poule.documentation.adapter.Path.exists",
                     side_effect=lambda: False), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_documentation(request)
 
@@ -1192,9 +1192,9 @@ class TestInputValidationErrors:
             output_directory="/docs/",
         )
 
-        with patch("poule.documentation.adapter.Path.exists", return_value=False), \
-             patch("poule.documentation.adapter.Path.is_dir", return_value=False), \
-             patch("poule.documentation.adapter.check_availability",
+        with patch("Poule.documentation.adapter.Path.exists", return_value=False), \
+             patch("Poule.documentation.adapter.Path.is_dir", return_value=False), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_batch_documentation(request)
 
@@ -1222,8 +1222,8 @@ class TestDependencyErrors:
             input_file="/project/src/Nat.v",
         )
 
-        with patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.check_availability",
+        with patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="not_installed"):
             result = await generate_documentation(request)
 
@@ -1242,8 +1242,8 @@ class TestDependencyErrors:
             input_file="/project/src/Nat.v",
         )
 
-        with patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.check_availability",
+        with patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="version_too_old"):
             result = await generate_documentation(request)
 
@@ -1265,10 +1265,10 @@ class TestDependencyErrors:
         mock_process.communicate.return_value = (b"", b"Segmentation fault\n")
         mock_process.returncode = 139
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_documentation(request)
 
@@ -1292,10 +1292,10 @@ class TestDependencyErrors:
         mock_process.kill = MagicMock()
         mock_process.wait = AsyncMock()
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process), \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_documentation(request)
 
@@ -1465,7 +1465,7 @@ class TestNonFunctionalRequirements:
             input_file="relative/path/Lemmas.v",
         )
 
-        with patch("poule.documentation.adapter.check_availability",
+        with patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             result = await generate_documentation(request)
 
@@ -1524,11 +1524,11 @@ class TestFormatMapping:
         mock_process.communicate.return_value = (b"", b"")
         mock_process.returncode = 0
 
-        with patch("poule.documentation.adapter.asyncio.create_subprocess_exec",
+        with patch("Poule.documentation.adapter.asyncio.create_subprocess_exec",
                     return_value=mock_process) as mock_exec, \
-             patch("poule.documentation.adapter.Path.exists", return_value=True), \
-             patch("poule.documentation.adapter.Path.read_text", return_value="content"), \
-             patch("poule.documentation.adapter.check_availability",
+             patch("Poule.documentation.adapter.Path.exists", return_value=True), \
+             patch("Poule.documentation.adapter.Path.read_text", return_value="content"), \
+             patch("Poule.documentation.adapter.check_availability",
                     return_value="available"):
             await generate_documentation(request)
 

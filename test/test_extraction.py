@@ -146,7 +146,7 @@ class TestDiscoverLibraries:
         # Also create a non-.vo file that should be ignored
         (theories / "Init" / "Datatypes.glob").touch()
 
-        with patch("poule.extraction.pipeline.subprocess") as mock_sub:
+        with patch("Poule.extraction.pipeline.subprocess") as mock_sub:
             mock_sub.run.return_value = Mock(
                 returncode=0, stdout=str(tmp_path) + "\n"
             )
@@ -163,7 +163,7 @@ class TestDiscoverLibraries:
         empty = tmp_path / "empty"
         empty.mkdir()
 
-        with patch("poule.extraction.pipeline.subprocess") as mock_sub:
+        with patch("Poule.extraction.pipeline.subprocess") as mock_sub:
             mock_sub.run.return_value = Mock(
                 returncode=0, stdout=str(empty) + "\n"
             )
@@ -174,7 +174,7 @@ class TestDiscoverLibraries:
         from Poule.extraction.errors import ExtractionError
         from Poule.extraction.pipeline import discover_libraries
 
-        with patch("poule.extraction.pipeline.subprocess") as mock_sub:
+        with patch("Poule.extraction.pipeline.subprocess") as mock_sub:
             mock_sub.run.side_effect = FileNotFoundError("coqc not found")
             with pytest.raises(ExtractionError):
                 discover_libraries("stdlib")
@@ -209,7 +209,7 @@ class TestDiscoverLibraries:
         (user_contrib / "Arith" / "PeanoNat.vo").touch()
         (user_contrib / "Lists" / "List.vo").touch()
 
-        with patch("poule.extraction.pipeline.subprocess") as mock_sub:
+        with patch("Poule.extraction.pipeline.subprocess") as mock_sub:
             mock_sub.run.return_value = Mock(
                 returncode=0, stdout=str(tmp_path) + "\n"
             )
@@ -267,15 +267,15 @@ class TestPass1SingleDeclaration:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/Init/Nat.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
         ):
@@ -312,19 +312,19 @@ class TestPass1DeclarationFailure:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/Init.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 side_effect=[
                     Mock(name="Good.Decl.one"),  # success
                     None,  # failure returns None
@@ -360,19 +360,19 @@ class TestPass1BatchSize:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/Lib.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 return_value=mock_result,
             ),
         ):
@@ -420,19 +420,19 @@ class TestPass2DependencyResolution:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/A.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 side_effect=[mock_result1, mock_result2],
             ),
         ):
@@ -463,19 +463,19 @@ class TestPass2UnresolvedTargets:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/A.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 return_value=mock_result,
             ),
         ):
@@ -592,10 +592,10 @@ class TestPass2NameResolution:
 
         # Patch extract_dependencies to return an additional edge
         with patch(
-            "poule.extraction.pipeline.extract_dependencies",
+            "Poule.extraction.pipeline.extract_dependencies",
             create=True,
         ) as mock_extract, patch(
-            "poule.extraction.dependency_extraction.extract_dependencies",
+            "Poule.extraction.dependency_extraction.extract_dependencies",
             create=True,
         ):
             mock_extract.return_value = [("C.def1", "uses")]
@@ -604,7 +604,7 @@ class TestPass2NameResolution:
             # The function is imported lazily inside resolve_and_insert_dependencies
             with patch.dict(
                 "sys.modules",
-                {"poule.extraction.dependency_extraction": Mock(
+                {"Poule.extraction.dependency_extraction": Mock(
                     extract_dependencies=Mock(return_value=[("C.def1", "uses")])
                 )},
             ):
@@ -630,7 +630,7 @@ class TestPass2NameResolution:
 
         with patch.dict(
             "sys.modules",
-            {"poule.extraction.dependency_extraction": Mock(
+            {"Poule.extraction.dependency_extraction": Mock(
                 extract_dependencies=Mock(return_value=[("B.lemma2", "uses")])
             )},
         ):
@@ -674,19 +674,19 @@ class TestPostProcessingSymbolFreq:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/A.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 side_effect=[mock_r1, mock_r2],
             ),
         ):
@@ -714,23 +714,23 @@ class TestPostProcessingMetadata:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/A.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 return_value=mock_result,
             ),
             patch(
-                "poule.extraction.pipeline.detect_mathcomp_version",
+                "Poule.extraction.pipeline.detect_mathcomp_version",
                 return_value="2.2.0",
             ),
         ):
@@ -766,19 +766,19 @@ class TestPostProcessingFinalize:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/A.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 return_value=mock_result,
             ),
         ):
@@ -818,22 +818,22 @@ class TestBackendCrash:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[
                     Path("/fake/A.vo"),
                     Path("/fake/B.vo"),
                 ],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 return_value=mock_result,
             ),
         ):
@@ -858,15 +858,15 @@ class TestBackendCrash:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/A.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=_make_mock_writer(),
             ),
         ):
@@ -885,11 +885,11 @@ class TestBackendNotFound:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/A.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 side_effect=ExtractionError(
                     "Neither coq-lsp nor sertop found"
                 ),
@@ -929,19 +929,19 @@ class TestProgressReporting:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/A.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 return_value=mock_result,
             ),
         ):
@@ -987,19 +987,19 @@ class TestProgressReporting:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/A.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 return_value=mock_result,
             ),
         ):
@@ -1071,19 +1071,19 @@ class TestFullRunIntegration:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/Nat.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 side_effect=[result_comm, result_assoc, None],
             ),
         ):
@@ -1133,19 +1133,19 @@ class TestFullRunIntegration:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/A.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 side_effect=[None, None, None, real_result],
             ),
         ):
@@ -1196,19 +1196,19 @@ class TestFullRunIntegration:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/A.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 return_value=mock_result,
             ),
         ):
@@ -1268,19 +1268,19 @@ class TestIdempotentReIndexing:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/A.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 side_effect=mock_create_writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 return_value=mock_result,
             ),
         ):
@@ -1313,19 +1313,19 @@ class TestIdempotentReIndexing:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/A.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 return_value=mock_result,
             ),
         ):
@@ -1593,19 +1593,19 @@ class TestDeclarationDeduplication:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/Nat.vo"), Path("/fake/Nat2.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 return_value=result_mock,
             ) as mock_process,
         ):
@@ -1645,19 +1645,19 @@ class TestDeclarationDeduplication:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/fake/Nat.vo"), Path("/fake/Nat2.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 side_effect=[result_add, result_mul],
             ) as mock_process,
         ):
@@ -1805,19 +1805,19 @@ class TestModulePathIsLogicalInPipeline:
 
         with (
             patch(
-                "poule.extraction.pipeline.discover_libraries",
+                "Poule.extraction.pipeline.discover_libraries",
                 return_value=[Path("/opt/coq/user-contrib/Stdlib/Init/Nat.vo")],
             ),
             patch(
-                "poule.extraction.pipeline.create_backend",
+                "Poule.extraction.pipeline.create_backend",
                 return_value=backend,
             ),
             patch(
-                "poule.extraction.pipeline.create_writer",
+                "Poule.extraction.pipeline.create_writer",
                 return_value=writer,
             ),
             patch(
-                "poule.extraction.pipeline.process_declaration",
+                "Poule.extraction.pipeline.process_declaration",
                 return_value=result_mock,
             ) as mock_process,
         ):

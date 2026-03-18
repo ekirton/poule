@@ -61,7 +61,7 @@ async def _run_with_session(tmp_path, callback):
     """
     server_params = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "poule.server", "--db", str(tmp_path / "nonexistent.db")],
+        args=["-m", "Poule.server", "--db", str(tmp_path / "nonexistent.db")],
     )
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:

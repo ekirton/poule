@@ -24,19 +24,19 @@ class TestGetDataDir:
     """get_data_dir returns platform-specific data directory."""
 
     def test_macos_returns_library_application_support(self):
-        with patch("poule.paths.sys") as mock_sys:
+        with patch("Poule.paths.sys") as mock_sys:
             mock_sys.platform = "darwin"
             result = get_data_dir()
         assert result == Path.home() / "Library" / "Application Support" / "poule"
 
     def test_linux_returns_local_share(self):
-        with patch("poule.paths.sys") as mock_sys:
+        with patch("Poule.paths.sys") as mock_sys:
             mock_sys.platform = "linux"
             result = get_data_dir()
         assert result == Path.home() / ".local" / "share" / "poule"
 
     def test_unknown_platform_falls_back_to_linux_convention(self):
-        with patch("poule.paths.sys") as mock_sys:
+        with patch("Poule.paths.sys") as mock_sys:
             mock_sys.platform = "freebsd"
             result = get_data_dir()
         assert result == Path.home() / ".local" / "share" / "poule"
@@ -47,8 +47,8 @@ class TestGetDataDir:
 
     def test_does_not_create_directory(self, tmp_path):
         """get_data_dir must NOT create directories — that's the caller's job."""
-        with patch("poule.paths.sys") as mock_sys, \
-             patch("poule.paths.Path.home", return_value=tmp_path):
+        with patch("Poule.paths.sys") as mock_sys, \
+             patch("Poule.paths.Path.home", return_value=tmp_path):
             mock_sys.platform = "linux"
             result = get_data_dir()
         # The directory should not have been created
@@ -68,13 +68,13 @@ class TestGetModelDir:
         assert result == get_data_dir() / "models"
 
     def test_macos_model_dir(self):
-        with patch("poule.paths.sys") as mock_sys:
+        with patch("Poule.paths.sys") as mock_sys:
             mock_sys.platform = "darwin"
             result = get_model_dir()
         assert result == Path.home() / "Library" / "Application Support" / "poule" / "models"
 
     def test_linux_model_dir(self):
-        with patch("poule.paths.sys") as mock_sys:
+        with patch("Poule.paths.sys") as mock_sys:
             mock_sys.platform = "linux"
             result = get_model_dir()
         assert result == Path.home() / ".local" / "share" / "poule" / "models"
@@ -85,8 +85,8 @@ class TestGetModelDir:
 
     def test_does_not_create_directory(self, tmp_path):
         """get_model_dir must NOT create directories — that's the caller's job."""
-        with patch("poule.paths.sys") as mock_sys, \
-             patch("poule.paths.Path.home", return_value=tmp_path):
+        with patch("Poule.paths.sys") as mock_sys, \
+             patch("Poule.paths.Path.home", return_value=tmp_path):
             mock_sys.platform = "linux"
             result = get_model_dir()
         assert not result.exists()

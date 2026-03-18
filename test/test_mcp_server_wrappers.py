@@ -209,7 +209,7 @@ class TestCoqQuery:
             output="forall n m : nat, n + m = m + n",
             warnings=[],
         )
-        with patch("poule.query.handler.coq_query", new_callable=AsyncMock, return_value=mock_result):
+        with patch("Poule.query.handler.coq_query", new_callable=AsyncMock, return_value=mock_result):
             result = _dispatch_and_await(
                 ctx, "coq_query", {"command": "Check", "argument": "Nat.add_comm"}
             )
@@ -239,7 +239,7 @@ class TestCoqQuery:
                 self.message = message
 
         with patch(
-            "poule.query.handler.coq_query",
+            "Poule.query.handler.coq_query",
             new_callable=AsyncMock,
             side_effect=_QueryError("NOT_FOUND", "not found"),
         ):
@@ -265,7 +265,7 @@ class TestNotationQuery:
     def test_valid_print_notation(self, ctx):
         mock_result = {"notation": "+", "output": "some notation info"}
         with patch(
-            "poule.notation.dispatcher.dispatch_notation_query",
+            "Poule.notation.dispatcher.dispatch_notation_query",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -308,7 +308,7 @@ class TestNotationQuery:
     def test_print_visibility_subcommand(self, ctx):
         mock_result = {"visibilities": []}
         with patch(
-            "poule.notation.dispatcher.dispatch_notation_query",
+            "Poule.notation.dispatcher.dispatch_notation_query",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -328,7 +328,7 @@ class TestAuditAssumptions:
     def test_valid_call_returns_success(self, ctx):
         mock_result = {"theorem": "Nat.add_comm", "axioms": []}
         with patch(
-            "poule.auditing.engine.audit_assumptions",
+            "Poule.auditing.engine.audit_assumptions",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -360,7 +360,7 @@ class TestAuditAssumptions:
                 self.message = message
 
         with patch(
-            "poule.auditing.engine.audit_assumptions",
+            "Poule.auditing.engine.audit_assumptions",
             new_callable=AsyncMock,
             side_effect=_AuditError("AUDIT_FAILED", "audit failed"),
         ):
@@ -382,7 +382,7 @@ class TestAuditModule:
     def test_valid_call_returns_success(self, ctx):
         mock_result = {"module": "Coq.Arith", "results": []}
         with patch(
-            "poule.auditing.engine.audit_module",
+            "Poule.auditing.engine.audit_module",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -414,7 +414,7 @@ class TestAuditModule:
     def test_with_flag_categories(self, ctx):
         mock_result = {"module": "Coq.Arith", "results": []}
         with patch(
-            "poule.auditing.engine.audit_module",
+            "Poule.auditing.engine.audit_module",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -438,7 +438,7 @@ class TestCompareAssumptions:
     def test_two_names_succeeds(self, ctx):
         mock_result = {"comparison": []}
         with patch(
-            "poule.auditing.engine.compare_assumptions",
+            "Poule.auditing.engine.compare_assumptions",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -484,7 +484,7 @@ class TestInspectUniverses:
     def test_valid_call_returns_success(self, ctx):
         mock_result = {"constraints": [], "universes": []}
         with patch(
-            "poule.universe.retrieval.retrieve_full_graph",
+            "Poule.universe.retrieval.retrieve_full_graph",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -502,7 +502,7 @@ class TestInspectUniverses:
     def test_session_error_translates(self, ctx):
         from Poule.session.errors import SessionError
         with patch(
-            "poule.universe.retrieval.retrieve_full_graph",
+            "Poule.universe.retrieval.retrieve_full_graph",
             new_callable=AsyncMock,
             side_effect=SessionError("SESSION_NOT_FOUND", "session not found"),
         ):
@@ -522,7 +522,7 @@ class TestInspectDefinitionConstraints:
     def test_valid_call_returns_success(self, ctx):
         mock_result = {"name": "MyDef", "constraints": []}
         with patch(
-            "poule.universe.retrieval.retrieve_definition_constraints",
+            "Poule.universe.retrieval.retrieve_definition_constraints",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -560,7 +560,7 @@ class TestDiagnoseUniverseError:
     def test_valid_call_returns_success(self, ctx):
         mock_result = {"diagnosis": "universe inconsistency", "suggestions": []}
         with patch(
-            "poule.universe.diagnosis.diagnose_universe_error",
+            "Poule.universe.diagnosis.diagnose_universe_error",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -594,7 +594,7 @@ class TestDiagnoseUniverseError:
 
     def test_value_error_translates_to_parse_error(self, ctx):
         with patch(
-            "poule.universe.diagnosis.diagnose_universe_error",
+            "Poule.universe.diagnosis.diagnose_universe_error",
             new_callable=AsyncMock,
             side_effect=ValueError("bad format"),
         ):
@@ -616,7 +616,7 @@ class TestListInstances:
     def test_valid_call_returns_success(self, ctx):
         mock_result = {"typeclass": "Eq", "instances": []}
         with patch(
-            "poule.typeclass.debugging.list_instances",
+            "Poule.typeclass.debugging.list_instances",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -652,7 +652,7 @@ class TestListInstances:
                 self.message = message
 
         with patch(
-            "poule.typeclass.debugging.list_instances",
+            "Poule.typeclass.debugging.list_instances",
             new_callable=AsyncMock,
             side_effect=_TypeclassError("TC_NOT_FOUND", "typeclass not found"),
         ):
@@ -674,7 +674,7 @@ class TestListTypeclasses:
     def test_valid_call_returns_success(self, ctx):
         mock_result = {"typeclasses": ["Eq", "Ord"]}
         with patch(
-            "poule.typeclass.debugging.list_typeclasses",
+            "Poule.typeclass.debugging.list_typeclasses",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -692,7 +692,7 @@ class TestListTypeclasses:
     def test_session_error_translates(self, ctx):
         from Poule.session.errors import SessionError
         with patch(
-            "poule.typeclass.debugging.list_typeclasses",
+            "Poule.typeclass.debugging.list_typeclasses",
             new_callable=AsyncMock,
             side_effect=SessionError("SESSION_NOT_FOUND", "session not found"),
         ):
@@ -712,7 +712,7 @@ class TestTraceResolution:
     def test_valid_call_returns_success(self, ctx):
         mock_result = {"resolution_trace": []}
         with patch(
-            "poule.typeclass.debugging.trace_resolution",
+            "Poule.typeclass.debugging.trace_resolution",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -728,7 +728,7 @@ class TestTraceResolution:
     def test_session_error_translates(self, ctx):
         from Poule.session.errors import SessionError
         with patch(
-            "poule.typeclass.debugging.trace_resolution",
+            "Poule.typeclass.debugging.trace_resolution",
             new_callable=AsyncMock,
             side_effect=SessionError("SESSION_NOT_FOUND", "session not found"),
         ):
@@ -746,7 +746,7 @@ class TestTransitiveClosure:
     def test_valid_call_with_mock_graph(self, ctx):
         mock_result = {"root": "Nat.add_comm", "nodes": [], "edges": []}
         with patch(
-            "poule.analysis.closure.transitive_closure",
+            "Poule.analysis.closure.transitive_closure",
             return_value=mock_result,
         ):
             result = _dispatch_and_await(
@@ -778,7 +778,7 @@ class TestTransitiveClosure:
                 self.message = message
 
         with patch(
-            "poule.analysis.closure.transitive_closure",
+            "Poule.analysis.closure.transitive_closure",
             side_effect=_AnalysisError("NOT_FOUND", "declaration not found"),
         ):
             result = _dispatch_and_await(
@@ -807,7 +807,7 @@ class TestImpactAnalysis:
     def test_valid_call_with_mock_graph(self, ctx):
         mock_result = {"root": "Nat.add_comm", "impact_set": []}
         with patch(
-            "poule.analysis.impact.impact_analysis",
+            "Poule.analysis.impact.impact_analysis",
             return_value=mock_result,
         ):
             result = _dispatch_and_await(
@@ -835,7 +835,7 @@ class TestImpactAnalysis:
                 self.message = message
 
         with patch(
-            "poule.analysis.impact.impact_analysis",
+            "Poule.analysis.impact.impact_analysis",
             side_effect=_AnalysisError("NOT_FOUND", "not found"),
         ):
             result = _dispatch_and_await(
@@ -852,7 +852,7 @@ class TestDetectCycles:
     def test_valid_call_returns_success(self, ctx):
         mock_result = {"cycles": []}
         with patch(
-            "poule.analysis.cycles.detect_cycles",
+            "Poule.analysis.cycles.detect_cycles",
             return_value=mock_result,
         ):
             result = _dispatch_and_await(ctx, "detect_cycles", {})
@@ -876,7 +876,7 @@ class TestModuleSummary:
     def test_valid_call_returns_success(self, ctx):
         mock_result = {"modules": []}
         with patch(
-            "poule.analysis.modules.module_summary",
+            "Poule.analysis.modules.module_summary",
             return_value=mock_result,
         ):
             result = _dispatch_and_await(ctx, "module_summary", {})
@@ -908,7 +908,7 @@ class TestGenerateDocumentation:
             status="success", output_path="/out/file.html", format="html"
         )
         with patch(
-            "poule.documentation.adapter.generate_documentation",
+            "Poule.documentation.adapter.generate_documentation",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -929,7 +929,7 @@ class TestGenerateDocumentation:
 
     def test_value_error_translates_to_parse_error(self, ctx):
         with patch(
-            "poule.documentation.adapter.generate_documentation",
+            "Poule.documentation.adapter.generate_documentation",
             new_callable=AsyncMock,
             side_effect=ValueError("unsupported format"),
         ):
@@ -955,7 +955,7 @@ class TestExtractCode:
             "code": "let myFn = ...",
         }
         with patch(
-            "poule.extraction.handler.extract_code",
+            "Poule.extraction.handler.extract_code",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -999,7 +999,7 @@ class TestExtractCode:
     def test_session_error_translates(self, ctx):
         from Poule.session.errors import SessionError
         with patch(
-            "poule.extraction.handler.extract_code",
+            "Poule.extraction.handler.extract_code",
             new_callable=AsyncMock,
             side_effect=SessionError("SESSION_NOT_FOUND", "session not found"),
         ):
@@ -1019,7 +1019,7 @@ class TestCheckProof:
     def test_valid_call_returns_result(self, ctx):
         mock_result = {"status": "ok", "file": "/path/to/file.vo"}
         with patch(
-            "poule.checker.adapter.check_proof",
+            "Poule.checker.adapter.check_proof",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -1037,7 +1037,7 @@ class TestCheckProof:
     def test_with_include_paths_and_timeout(self, ctx):
         mock_result = {"status": "ok", "file": "/path/to/file.vo"}
         with patch(
-            "poule.checker.adapter.check_proof",
+            "Poule.checker.adapter.check_proof",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -1061,7 +1061,7 @@ class TestBuildProject:
     def test_valid_call_returns_result(self, ctx):
         mock_result = {"status": "success", "output": ""}
         with patch(
-            "poule.build.adapter.execute_build",
+            "Poule.build.adapter.execute_build",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -1083,7 +1083,7 @@ class TestBuildProject:
                 self.message = message
 
         with patch(
-            "poule.build.adapter.execute_build",
+            "Poule.build.adapter.execute_build",
             new_callable=AsyncMock,
             side_effect=_BuildSystemError("BUILD_FAILED", "make failed"),
         ):
@@ -1102,7 +1102,7 @@ class TestBuildProject:
 class TestQueryPackages:
     def test_valid_call_returns_list(self, ctx):
         with patch(
-            "poule.build.adapter.query_installed_packages",
+            "Poule.build.adapter.query_installed_packages",
             new_callable=AsyncMock,
             return_value=[("coq", "8.18.0"), ("coq-stdlib", "8.18.0")],
         ):
@@ -1120,7 +1120,7 @@ class TestQueryPackages:
                 self.message = message
 
         with patch(
-            "poule.build.adapter.query_installed_packages",
+            "Poule.build.adapter.query_installed_packages",
             new_callable=AsyncMock,
             side_effect=_BuildSystemError("OPAM_ERROR", "opam not found"),
         ):
@@ -1136,7 +1136,7 @@ class TestQueryPackages:
 
 class TestAddDependency:
     def test_valid_call_returns_added_true(self, ctx):
-        with patch("poule.build.adapter.add_dependency", return_value=None):
+        with patch("Poule.build.adapter.add_dependency", return_value=None):
             result = _dispatch_and_await(
                 ctx,
                 "add_dependency",
@@ -1170,7 +1170,7 @@ class TestAddDependency:
                 self.message = message
 
         with patch(
-            "poule.build.adapter.add_dependency",
+            "Poule.build.adapter.add_dependency",
             side_effect=_BuildSystemError("OPAM_ERROR", "opam failed"),
         ):
             result = _dispatch_and_await(
@@ -1189,7 +1189,7 @@ class TestTacticLookup:
     def test_valid_call_returns_tactic_info(self, ctx):
         mock_result = {"name": "omega", "description": "Solves linear arithmetic."}
         with patch(
-            "poule.tactics.lookup.tactic_lookup",
+            "Poule.tactics.lookup.tactic_lookup",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -1211,7 +1211,7 @@ class TestTacticLookup:
                 self.message = message
 
         with patch(
-            "poule.tactics.lookup.tactic_lookup",
+            "Poule.tactics.lookup.tactic_lookup",
             new_callable=AsyncMock,
             side_effect=_TacticDocError("TACTIC_NOT_FOUND", "tactic not found"),
         ):
@@ -1225,7 +1225,7 @@ class TestTacticLookup:
     def test_session_id_is_optional(self, ctx):
         mock_result = {"name": "ring", "description": "Ring tactic."}
         with patch(
-            "poule.tactics.lookup.tactic_lookup",
+            "Poule.tactics.lookup.tactic_lookup",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -1243,7 +1243,7 @@ class TestSuggestTactics:
     def test_valid_call_returns_list(self, ctx):
         mock_result = [{"name": "omega", "confidence": 0.9}]
         with patch(
-            "poule.tactics.suggest.tactic_suggest",
+            "Poule.tactics.suggest.tactic_suggest",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -1262,7 +1262,7 @@ class TestSuggestTactics:
     def test_session_error_translates(self, ctx):
         from Poule.session.errors import SessionError
         with patch(
-            "poule.tactics.suggest.tactic_suggest",
+            "Poule.tactics.suggest.tactic_suggest",
             new_callable=AsyncMock,
             side_effect=SessionError("SESSION_NOT_FOUND", "session not found"),
         ):
@@ -1276,7 +1276,7 @@ class TestSuggestTactics:
     def test_custom_limit(self, ctx):
         mock_result = []
         with patch(
-            "poule.tactics.suggest.tactic_suggest",
+            "Poule.tactics.suggest.tactic_suggest",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -1294,7 +1294,7 @@ class TestInspectHintDb:
     def test_valid_call_returns_hint_database(self, ctx):
         mock_result = {"db_name": "core", "hints": []}
         with patch(
-            "poule.tactics.hints.hint_inspect",
+            "Poule.tactics.hints.hint_inspect",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -1316,7 +1316,7 @@ class TestInspectHintDb:
                 self.message = message
 
         with patch(
-            "poule.tactics.hints.hint_inspect",
+            "Poule.tactics.hints.hint_inspect",
             new_callable=AsyncMock,
             side_effect=_TacticDocError("DB_NOT_FOUND", "hint db not found"),
         ):
@@ -1330,7 +1330,7 @@ class TestInspectHintDb:
     def test_session_id_is_optional(self, ctx):
         mock_result = {"db_name": "rewrite_db", "hints": []}
         with patch(
-            "poule.tactics.hints.hint_inspect",
+            "Poule.tactics.hints.hint_inspect",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -1348,7 +1348,7 @@ class TestCompareTactics:
     def test_two_names_succeeds(self, ctx):
         mock_result = {"tactics": ["omega", "lia"], "comparison": {}}
         with patch(
-            "poule.tactics.compare.tactic_compare",
+            "Poule.tactics.compare.tactic_compare",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -1378,7 +1378,7 @@ class TestCompareTactics:
                 self.message = message
 
         with patch(
-            "poule.tactics.compare.tactic_compare",
+            "Poule.tactics.compare.tactic_compare",
             new_callable=AsyncMock,
             side_effect=_TacticDocError("TACTIC_NOT_FOUND", "tactic not found"),
         ):
@@ -1390,7 +1390,7 @@ class TestCompareTactics:
     def test_session_id_is_optional(self, ctx):
         mock_result = {"tactics": ["omega", "lia"], "comparison": {}}
         with patch(
-            "poule.tactics.compare.tactic_compare",
+            "Poule.tactics.compare.tactic_compare",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
