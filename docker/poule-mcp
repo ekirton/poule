@@ -3,7 +3,7 @@
 #
 # Usage: poule-mcp {start|stop|restart|status|logs}
 #
-# Runs the Poule MCP server in SSE mode as a background daemon so that
+# Runs the Poule MCP server in streamable-HTTP mode as a background daemon so that
 # Claude Code can connect to it independently of its own process lifetime.
 # This allows the developer (or Claude itself) to restart the server after
 # editing source code without exiting Claude.
@@ -38,7 +38,7 @@ case "${1:-}" in
         fi
         echo "Starting Poule MCP server on $HOST:$PORT..."
         nohup uv run --project /poule python -m poule.server \
-            --db "$DB" --transport sse --host "$HOST" --port "$PORT" \
+            --db "$DB" --transport streamable-http --host "$HOST" --port "$PORT" \
             >> "$LOGFILE" 2>&1 &
         echo $! > "$PIDFILE"
         if _wait_ready; then
@@ -88,7 +88,7 @@ case "${1:-}" in
         echo ""
         echo "Environment:"
         echo "  POULE_MCP_DB    Path to search index (default: /data/index.db)"
-        echo "  POULE_MCP_PORT  SSE port (default: 3000)"
+        echo "  POULE_MCP_PORT  Server port (default: 3000)"
         exit 1
         ;;
 esac
