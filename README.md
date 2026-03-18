@@ -178,7 +178,7 @@ For example, you can ask Claude things like:
 - *"Show me the dependency graph around `Nat.add_comm`"*
 - *"Render the step-by-step proof evolution of `modus_ponens` in `examples/logic.v`"*
 
-Claude will search the index, manage proof sessions, and generate diagrams on your behalf. When Claude calls a visualization tool, it writes `proof-diagram.html` to your project directory — open it in your browser to see the rendered diagram. Bookmark the file and refresh after each visualization call.
+Claude will search the index, manage proof sessions, and generate diagrams on your behalf. When Claude calls a visualization tool, it writes `proof-diagram.html` to your project directory (the folder you started `poule` from, or `POULE_PROJECT_DIR` if set) — open it in your browser to see the rendered diagram. Bookmark the file and refresh after each visualization call.
 
 **Skills (slash commands):**
 

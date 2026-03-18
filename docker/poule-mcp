@@ -14,7 +14,7 @@ PIDFILE="/tmp/poule-mcp.pid"
 LOGFILE="/tmp/poule-mcp.log"
 DB="${POULE_MCP_DB:-/data/index.db}"
 PORT="${POULE_MCP_PORT:-3000}"
-DIAGRAM_DIR="${POULE_MCP_DIAGRAM_DIR:-/poule}"
+DIAGRAM_DIR="${POULE_MCP_DIAGRAM_DIR:-$PWD}"
 HOST="127.0.0.1"
 
 _is_running() {
@@ -91,7 +91,7 @@ case "${1:-}" in
         echo "Environment:"
         echo "  POULE_MCP_DB          Path to search index (default: /data/index.db)"
         echo "  POULE_MCP_PORT        Server port (default: 3000)"
-        echo "  POULE_MCP_DIAGRAM_DIR Diagram HTML output directory (default: /poule)"
+        echo "  POULE_MCP_DIAGRAM_DIR Diagram HTML output directory (default: \$PWD)"
         exit 1
         ;;
 esac
