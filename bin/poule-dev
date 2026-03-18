@@ -147,8 +147,9 @@ if [ ! -f "$CLAUDE_DIR/settings.json" ]; then
     "command": "~/.claude/statusline.sh"
   },
   "mcpServers": {
-    "coq-search": {
-      "url": "http://127.0.0.1:3000/sse"
+    "poule": {
+      "type": "http",
+      "url": "http://127.0.0.1:3000/mcp"
     },
     "mcp-mermaid": {
       "command": "npx",
@@ -166,7 +167,7 @@ path = sys.argv[1]
 with open(path) as f:
     s = json.load(f)
 s["mcpServers"] = {
-    "coq-search": {"url": "http://127.0.0.1:3000/sse"},
+    "poule": {"type": "http", "url": "http://127.0.0.1:3000/mcp"},
     "mcp-mermaid": {"command": "npx", "args": ["-y", "mcp-mermaid"]}
 }
 with open(path, "w") as f:
