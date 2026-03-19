@@ -29,7 +29,7 @@ For each declaration in a Coq library:
 
 ### Phase 3
 - Six supported libraries with per-library distribution (see [modular-index-distribution](modular-index-distribution.md))
-- User-configurable library selection via config file
+- All 6 libraries always included — no per-library selection needed
 - Download-and-merge assembly of per-library indexes
 
 ## Extraction Method

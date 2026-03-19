@@ -282,7 +282,7 @@ gh pr merge <number> --squash --subject "Custom commit message"
 
 ## Publishing Releases
 
-Prebuilt search indexes and neural model checkpoints are distributed via [GitHub Releases](https://github.com/ekirton/Poule/releases). Users can download them with `uv run python -m poule.cli download-index` instead of building from source.
+Prebuilt search indexes and neural model checkpoints are distributed via [GitHub Releases](https://github.com/ekirton/Poule/releases). All 6 per-library indexes are published in a single release. Users download them with `uv run python -m poule.cli download-index` instead of building from source.
 
 ### When to publish
 
@@ -300,30 +300,30 @@ Publish a new release when any of these change:
 
 ### Publishing
 
-1. Build the index:
+1. Build per-library indexes:
 
 ```bash
-uv run python -m poule.extraction --target stdlib --db index-stdlib.db --progress
+./scripts/build-indexes.sh
 ```
 
-2. Publish with the index only:
+2. Publish all 6 per-library indexes:
 
 ```bash
-./scripts/publish-release.sh index.db
+./scripts/publish-release.sh index-stdlib.db index-mathcomp.db index-stdpp.db index-flocq.db index-coquelicot.db index-coqinterval.db
 ```
 
 3. Or include the neural model:
 
 ```bash
-./scripts/publish-release.sh index.db --model path/to/neural-premise-selector.onnx
+./scripts/publish-release.sh index-stdlib.db index-mathcomp.db index-stdpp.db index-flocq.db index-coquelicot.db index-coqinterval.db --model models/neural-premise-selector.onnx
 ```
 
 The script reads version metadata from each database, computes SHA-256 checksums, generates a `manifest.json`, and creates a tagged release. The tag format is `index-v{schema}-coq{coq_version}` (e.g., `index-v1-coq8.19`).
 
-To replace an existing release (e.g., when updating a single library):
+To replace an existing release (e.g., during nightly re-index):
 
 ```bash
-./scripts/publish-release.sh --replace index-stdlib.db index-mathcomp.db ...
+./scripts/publish-release.sh --replace index-stdlib.db index-mathcomp.db index-stdpp.db index-flocq.db index-coquelicot.db index-coqinterval.db
 ```
 
 ### Release assets
@@ -339,7 +339,7 @@ To replace an existing release (e.g., when updating a single library):
 | `manifest.json` | Version metadata and SHA-256 checksums |
 | `neural-premise-selector.onnx` | INT8 ONNX model (optional) |
 
-The download client (`src/poule/cli/download.py`) fetches `manifest.json` first, then downloads assets and verifies checksums before placing files. See [`specification/prebuilt-distribution.md`](specification/prebuilt-distribution.md) for the full protocol.
+The download client (`src/poule/cli/download.py`) fetches `manifest.json` first, then downloads all 6 per-library indexes, verifies checksums, and merges them into a single `index.db`. See [`specification/prebuilt-distribution.md`](specification/prebuilt-distribution.md) for the full protocol.
 
 ### Automated nightly re-index
 

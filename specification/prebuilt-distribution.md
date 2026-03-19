@@ -8,11 +8,11 @@ Download and integrity verification of prebuilt search indexes and neural model 
 
 ## 1. Purpose
 
-Define the download client for prebuilt index databases and model checkpoints: release discovery, per-library asset download with progress reporting, integrity verification, index merging, and library configuration.
+Define the download client for prebuilt index databases and model checkpoints: release discovery, asset download with progress reporting, integrity verification, index merging, and publish script behavior.
 
 ## 2. Scope
 
-**In scope**: `download-index` CLI subcommand, GitHub Releases API integration, manifest parsing, SHA-256 checksum verification, atomic file placement, per-library index management, index merging, library configuration, publish script behavior.
+**In scope**: `download-index` CLI subcommand, GitHub Releases API integration, manifest parsing, SHA-256 checksum verification, atomic file placement, per-library index management, index merging, publish script behavior.
 
 **Out of scope**: Index creation (owned by extraction), storage schema (owned by storage), neural encoder interface (owned by neural-retrieval), MCP server configuration (owned by mcp-server).
 
@@ -23,10 +23,10 @@ Define the download client for prebuilt index databases and model checkpoints: r
 | Release | A GitHub Release tagged with the `index-v` prefix, containing index and manifest assets |
 | Manifest | A JSON file (`manifest.json`) in each release containing version metadata and SHA-256 checksums |
 | Data directory | The platform-specific directory for application data (`~/Library/Application Support/poule/` on macOS, `~/.local/share/poule/` on Linux) |
-| Libraries directory | The host directory storing per-library indexes, merged index, and configuration file (default `~/poule-libraries/`, overridable via `POULE_LIBRARIES_PATH`) |
-| Configuration file | A TOML file (`config.toml`) in the libraries directory specifying which libraries to include in the search index |
+| Libraries directory | The host directory storing per-library indexes and the merged index (default `~/poule-libraries/`, overridable via `POULE_LIBRARIES_PATH`) |
 | Per-library index | A SQLite database containing declarations from a single Coq library, named `index-{library}.db` |
-| Merged index | A single SQLite database combining declarations from all configured per-library indexes |
+| Merged index | A single SQLite database combining declarations from all 6 per-library indexes |
+| Supported libraries | The fixed set of 6 libraries: `stdlib`, `mathcomp`, `stdpp`, `flocq`, `coquelicot`, `coqinterval` |
 
 ## 4. Behavioral Requirements
 
@@ -42,29 +42,7 @@ Define the download client for prebuilt index databases and model checkpoints: r
 - REQUIRES: Nothing.
 - ENSURES: Returns `get_data_dir() / "models"`. Does not create the directory.
 
-### 4.2 Configuration
-
-#### load_config(libraries_dir)
-
-- REQUIRES: `libraries_dir` is a valid directory path (may not exist yet).
-- ENSURES: If `libraries_dir / "config.toml"` exists and contains a valid `[index]` section with a `libraries` list, returns the list of library identifiers. If the file does not exist, returns `["stdlib"]`. If the file exists but is malformed or contains unknown library identifiers, raises an error listing valid identifiers. If the `libraries` list is empty, raises an error indicating at least one library must be selected.
-- MAINTAINS: The set of valid library identifiers is: `stdlib`, `mathcomp`, `stdpp`, `flocq`, `coquelicot`, `coqinterval`.
-
-> **Given** `config.toml` contains `[index]\nlibraries = ["stdlib", "mathcomp"]`
-> **When** `load_config` is called
-> **Then** returns `["stdlib", "mathcomp"]`
-
-> **Given** no `config.toml` exists in the libraries directory
-> **When** `load_config` is called
-> **Then** returns `["stdlib"]`
-
-> **Given** `config.toml` contains `libraries = ["stdlib", "unknown"]`
-> **When** `load_config` is called
-> **Then** raises error: `"Unknown library 'unknown'. Valid libraries: stdlib, mathcomp, stdpp, flocq, coquelicot, coqinterval"`
-
-> **Given** `config.toml` contains `libraries = []`
-> **When** `load_config` is called
-> **Then** raises error: `"At least one library must be selected."`
+### 4.2 Libraries Directory
 
 #### get_libraries_dir()
 
@@ -124,7 +102,7 @@ Each entry in `libraries` is keyed by library identifier and contains:
 - REQUIRES: `url` is a valid HTTPS URL. `dest` is a writable path.
 - ENSURES: The file at `url` is downloaded to `{dest}.tmp`. Progress is printed to stderr during download: `Downloading {label} ... {downloaded_mb:.1f} / {total_mb:.1f} MB`. On success, returns the temporary file path. On network failure: deletes the temporary file and raises an error. On any other exception: deletes the temporary file and re-raises.
 
-Downloads use the asset's `browser_download_url` field (direct HTTPS, no redirect handling required). Data is read in 64 KB chunks. This function is called once per selected library.
+Downloads use the asset's `browser_download_url` field (direct HTTPS, no redirect handling required). Data is read in 64 KB chunks.
 
 ### 4.6 Checksum Verification
 
@@ -159,17 +137,13 @@ After checksum verification succeeds, the temporary file is moved to the final d
   - `index_meta` entries: `schema_version` and `coq_version` from sources, `libraries` as JSON array of library identifiers, `library_versions` as JSON object mapping identifier to version, `created_at` as current ISO 8601 timestamp
 - Returns a dict with keys: `total_declarations` (int), `total_dependencies` (int), `dropped_dependencies` (int), `libraries` (list of str).
 
-> **Given** `index-stdlib.db` with 100 declarations and `index-mathcomp.db` with 50 declarations
-> **When** `merge_indexes([("stdlib", stdlib_path), ("mathcomp", mc_path)], dest)` is called
-> **Then** `dest` contains 150 declarations, and the returned dict shows `total_declarations: 150`
+> **Given** all 6 per-library index databases
+> **When** `merge_indexes` is called with all 6
+> **Then** `dest` contains all declarations from all 6 libraries, and cross-library dependency edges are resolved
 
 > **Given** `index-mathcomp.db` has dependency edges referencing stdlib declarations
-> **When** merged with `index-stdlib.db`
+> **When** merged with `index-stdlib.db` and all other libraries
 > **Then** those dependency edges are resolved by name to the merged stdlib declaration IDs
-
-> **Given** `index-mathcomp.db` has dependency edges referencing stdlib declarations
-> **When** merged WITHOUT `index-stdlib.db`
-> **Then** those dependency edges are silently dropped and counted in `dropped_dependencies`
 
 > **Given** two source databases with different `schema_version` values
 > **When** `merge_indexes` is called
@@ -184,23 +158,22 @@ poule download-index [--output <path>] [--libraries-dir <path>] [--include-model
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `--output` | path | `libraries_dir / index.db` | Where to save the merged database file |
-| `--libraries-dir` | path | `get_libraries_dir()` | Libraries directory for config and per-library indexes |
+| `--libraries-dir` | path | `get_libraries_dir()` | Libraries directory for per-library indexes |
 | `--include-model` | flag | false | Also download the ONNX neural premise selection model |
 | `--model-dir` | path | `get_model_dir()` | Where to save the ONNX model |
 | `--force` | flag | false | Overwrite existing files without prompting |
 
 #### Behavior
 
-1. Read configuration via `load_config(libraries_dir)`.
-2. Call `find_latest_release()` to resolve the latest index release.
-3. Download `manifest.json` from the release (in memory).
-4. For each configured library:
+1. Call `find_latest_release()` to resolve the latest index release.
+2. Download `manifest.json` from the release (in memory).
+3. For each of the 6 supported libraries:
    a. Check if `index-{library}.db` exists in `libraries_dir` with checksum matching the manifest → skip if up to date.
    b. Otherwise: download, verify checksum, atomic rename to `libraries_dir / index-{library}.db`.
-5. If any library was downloaded or `index.db` does not exist in `libraries_dir`:
+4. If any library was downloaded or `index.db` does not exist in `libraries_dir`:
    a. Run `merge_indexes` to produce `libraries_dir / index.db`.
-6. If `--include-model` and `onnx_model_sha256` is not null: download ONNX model.
-7. Print summary.
+5. If `--include-model` and `onnx_model_sha256` is not null: download ONNX model.
+6. Print summary.
 
 ## 5. Publish Script
 
@@ -236,8 +209,6 @@ The publish script (`scripts/publish-release.sh`) is a shell script for the proj
 
 | Condition | Exit code | stderr message |
 |-----------|-----------|---------------|
-| Unknown library in config | 1 | `Unknown library '{name}'. Valid libraries: stdlib, mathcomp, stdpp, flocq, coquelicot, coqinterval` |
-| Empty library list | 1 | `At least one library must be selected.` |
 | Network failure / API unreachable | 1 | `Failed to reach GitHub API: {details}` |
 | No matching release | 1 | `No index release found on GitHub.` |
 | Library not in release manifest | 1 | `Library '{name}' not found in release manifest.` |
@@ -275,62 +246,54 @@ The publish script (`scripts/publish-release.sh`) is a shell script for the proj
 
 ## 8. Examples
 
-### Download with default config (stdlib only)
+### Download all libraries
 
 ```
 $ poule download-index
-Reading config from ~/poule-libraries/config.toml
-Libraries: stdlib
 Finding latest index release...
 Found release: index-v1-coq8.19
-  index-stdlib.db is up to date.
-  Merging 1 library into index.db...
-Done. Indexed: stdlib 8.19.2
-```
-
-### Download with multiple libraries
-
-```
-$ poule download-index
-Reading config from ~/poule-libraries/config.toml
-Libraries: stdlib, mathcomp, flocq
-Finding latest index release...
-Found release: index-v1-coq8.19
-  Downloading index-stdlib.db ... 25.3 / 25.3 MB
-  Downloading index-mathcomp.db ... 18.7 / 18.7 MB
-  Downloading index-flocq.db ... 8.2 / 8.2 MB
-  Merging 3 libraries into index.db...
-Done. Indexed: stdlib 8.19.2, mathcomp 2.2.0, flocq 4.2.1
+  Downloading index-stdlib.db ... 30.8 / 30.8 MB
+  Downloading index-mathcomp.db ... 3.7 / 3.7 MB
+  Downloading index-stdpp.db ... 0.8 / 0.8 MB
+  Downloading index-flocq.db ... 1.1 / 1.1 MB
+  Downloading index-coquelicot.db ... 1.4 / 1.4 MB
+  Downloading index-coqinterval.db ... 6.2 / 6.2 MB
+  Merging 6 libraries into index.db...
+Done. Indexed: stdlib 8.19.2, mathcomp 2.2.0, stdpp 1.12.0, flocq 4.2.1, coquelicot 3.4.3, coqinterval 4.11.4
 ```
 
 ### Skip up-to-date libraries
 
 ```
 $ poule download-index
-Reading config from ~/poule-libraries/config.toml
-Libraries: stdlib, mathcomp, flocq
 Finding latest index release...
 Found release: index-v1-coq8.19
   index-stdlib.db is up to date.
   index-mathcomp.db is up to date.
+  index-stdpp.db is up to date.
   index-flocq.db is up to date.
+  index-coquelicot.db is up to date.
+  index-coqinterval.db is up to date.
   index.db is up to date.
-Done. Indexed: stdlib 8.19.2, mathcomp 2.2.0, flocq 4.2.1
+Done. Indexed: stdlib 8.19.2, mathcomp 2.2.0, stdpp 1.12.0, flocq 4.2.1, coquelicot 3.4.3, coqinterval 4.11.4
 ```
 
 ### Download with neural model
 
 ```
 $ poule download-index --include-model
-Reading config from ~/poule-libraries/config.toml
-Libraries: stdlib
 Finding latest index release...
 Found release: index-v1-coq8.19
-  Downloading index-stdlib.db ... 25.3 / 25.3 MB
-  Merging 1 library into index.db...
+  Downloading index-stdlib.db ... 30.8 / 30.8 MB
+  Downloading index-mathcomp.db ... 3.7 / 3.7 MB
+  Downloading index-stdpp.db ... 0.8 / 0.8 MB
+  Downloading index-flocq.db ... 1.1 / 1.1 MB
+  Downloading index-coquelicot.db ... 1.4 / 1.4 MB
+  Downloading index-coqinterval.db ... 6.2 / 6.2 MB
+  Merging 6 libraries into index.db...
   Downloading neural-premise-selector.onnx ... 98.5 / 98.5 MB
   neural-premise-selector.onnx (98.5 MB) -> /home/user/.local/share/poule/models/neural-premise-selector.onnx
-Done. Indexed: stdlib 8.19.2
+Done. Indexed: stdlib 8.19.2, mathcomp 2.2.0, stdpp 1.12.0, flocq 4.2.1, coquelicot 3.4.3, coqinterval 4.11.4
 ```
 
 ### Publish a release
@@ -364,7 +327,5 @@ URL: https://github.com/ekirton/Poule/releases/tag/index-v1-coq8.19
 - Use `hashlib.sha256` for checksum computation.
 - Use `os.replace` for atomic file rename (POSIX atomic, Windows replaces atomically if same volume).
 - Use `click.echo(..., err=True)` for all progress and status output.
-- Use `tomllib` (Python 3.11+ stdlib) for TOML parsing — no external dependency.
 - Merge module location: `src/poule/cli/merge.py` or `src/poule/storage/merge.py`.
-- Configuration module location: `src/poule/config.py`.
 - Package location: download client in `src/poule/cli/download.py`, path helpers in `src/poule/paths.py`.

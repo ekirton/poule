@@ -12,25 +12,24 @@ Technical design for distributing prebuilt search indexes and neural model check
 ```
 Maintainer workflow (offline)          User workflow (online)
 
-Per-library extraction:                Config file (~/poule-libraries/config.toml)
-  stdlib → index-stdlib.db               │
-  mathcomp → index-mathcomp.db           │ read configured libraries
-  stdpp → index-stdpp.db                 │
-  flocq → index-flocq.db                ▼
-  coquelicot → index-coquelicot.db     Download client
-  coqinterval → index-coqinterval.db     │
-  │                                      │ fetch only selected per-library DBs
-  │ scripts/publish-release.sh           ▼
-  ▼                                    ~/poule-libraries/
-GitHub Releases API                      ├── config.toml
+Per-library extraction:
+  stdlib → index-stdlib.db             Download client
+  mathcomp → index-mathcomp.db           │
+  stdpp → index-stdpp.db                 │ fetch all 6 per-library DBs
+  flocq → index-flocq.db                │ + manifest
+  coquelicot → index-coquelicot.db      ▼
+  coqinterval → index-coqinterval.db  ~/poule-libraries/
   │                                      ├── index-stdlib.db
-  │ gh release create                    ├── index-mathcomp.db
-  │ uploads: index-{lib}.db (×6),        ├── ...
-  │   manifest.json,                     └── index.db (merged)
-  │   neural-premise-selector.onnx            │
-  ▼                                           │ merge pipeline
-Release: index-v1-coq8.19                    ▼
-                                         MCP server / CLI (reads index.db)
+  │ scripts/publish-release.sh           ├── index-mathcomp.db
+  ▼                                      ├── index-stdpp.db
+GitHub Releases API                      ├── index-flocq.db
+  │                                      ├── index-coquelicot.db
+  │ gh release create                    ├── index-coqinterval.db
+  │ uploads: index-{lib}.db (×6),        └── index.db (merged)
+  │   manifest.json,                          │
+  │   neural-premise-selector.onnx            │ merge pipeline
+  ▼                                           ▼
+Release: index-v1-coq8.19              MCP server / CLI (reads index.db)
 ```
 
 ## Distribution Vehicle: GitHub Releases
@@ -65,7 +64,7 @@ Multiple releases can coexist for different Coq versions. Per-library versions a
 
 ### Release Assets
 
-Each release contains per-library index databases, a manifest, and an optional model checkpoint:
+Each release contains all 6 per-library index databases, a manifest, and an optional model checkpoint:
 
 | Asset | Required | Description |
 |-------|----------|-------------|
@@ -80,7 +79,7 @@ Each release contains per-library index databases, a manifest, and an optional m
 
 ## Manifest Protocol
 
-Every release includes a `manifest.json` that the download client fetches first to obtain expected checksums before downloading large assets. The manifest lists all available per-library indexes with their checksums and version metadata. The download client reads the manifest first, then fetches only the per-library assets matching the user's configuration.
+Every release includes a `manifest.json` that the download client fetches first to obtain expected checksums before downloading large assets. The manifest lists all 6 per-library indexes with their checksums and version metadata. The download client reads the manifest, then fetches all 6 per-library assets.
 
 ```json
 {
@@ -129,30 +128,26 @@ Every release includes a `manifest.json` that the download client fetches first 
 }
 ```
 
-## Library Configuration
+## Libraries Directory
 
-The user's library selection is stored in a TOML configuration file in the libraries directory.
+Per-library indexes and the merged index are stored in a persistent directory on the host.
 
-### Configuration file location
+### Directory location
 
-The libraries directory defaults to `~/poule-libraries/` and is overridable via the `POULE_LIBRARIES_PATH` environment variable. The configuration file is `config.toml` within this directory.
+The libraries directory defaults to `~/poule-libraries/` and is overridable via the `POULE_LIBRARIES_PATH` environment variable.
 
-### Configuration format
+### Directory contents
 
-```toml
-[index]
-libraries = ["stdlib", "mathcomp", "flocq"]
 ```
-
-The `libraries` key is a list of library identifiers. Valid identifiers: `stdlib`, `mathcomp`, `stdpp`, `flocq`, `coquelicot`, `coqinterval`.
-
-### Default behavior
-
-When no configuration file exists, the system behaves as if `libraries = ["stdlib"]` were configured.
-
-### Validation
-
-The configuration reader rejects unknown library identifiers with an error listing valid options. An empty library list is rejected.
+~/poule-libraries/
+├── index-stdlib.db       # Per-library index
+├── index-mathcomp.db     # Per-library index
+├── index-stdpp.db        # Per-library index
+├── index-flocq.db        # Per-library index
+├── index-coquelicot.db   # Per-library index
+├── index-coqinterval.db  # Per-library index
+└── index.db              # Merged search index
+```
 
 ## Index Merge Pipeline
 
@@ -173,13 +168,13 @@ Per-library index databases are combined into a single `index.db` at install tim
 7. Write `index_meta` with:
    - `schema_version`: from source databases (must all match)
    - `coq_version`: from source databases (must all match)
-   - `libraries`: JSON array of included library identifiers
+   - `libraries`: JSON array of all 6 library identifiers
    - `library_versions`: JSON object mapping library identifier to version string
    - `created_at`: current timestamp
 
 ### Cross-library dependencies
 
-When library A references declarations from library B, the dependency edges are resolved by name during merge. If library B is not in the user's configuration, those edges are silently dropped. This means the dependency graph may be incomplete when the user has not selected all libraries, but search results are not affected — dependency data is informational, not used for ranking.
+Since all 6 libraries are always included, cross-library dependency edges are resolved by name during merge. All edges between the 6 supported libraries are preserved.
 
 ### Determinism
 
@@ -199,26 +194,22 @@ The atomic rename ensures the destination path always contains either the previo
 
 ## Container Startup
 
-On every container launch, the entrypoint performs a configuration check before starting the user's session.
+On every container launch, the entrypoint verifies the search index before starting the user's session.
 
 ### Startup sequence
 
-1. Read configuration from the libraries directory
-2. If `index.db` exists, read its `libraries` metadata key
-3. Compare the configured library set against the indexed library set
-4. If they match: proceed to session start
-5. If they differ or `index.db` is missing:
-   a. Download any per-library indexes not present in the libraries directory (with checksum verification)
-   b. Run the merge pipeline to produce a new `index.db`
-6. Display a status line listing the indexed libraries and their versions
-7. Start the MCP server and user session
+1. If `index.db` exists in the libraries directory and its metadata lists all 6 libraries: proceed to step 4
+2. Download any per-library indexes not present in the libraries directory (with checksum verification)
+3. Run the merge pipeline to produce a new `index.db`
+4. Display a status line listing the indexed libraries and their versions
+5. Start the MCP server and user session
 
 ### Status display
 
 The startup message lists each indexed library with its version:
 
 ```
-[poule] Indexed libraries: stdlib 8.19.2, mathcomp 2.2.0, flocq 4.2.1
+[poule] Indexed libraries: stdlib 8.19.2, mathcomp 2.2.0, stdpp 1.12.0, flocq 4.2.1, coquelicot 3.4.3, coqinterval 4.11.4
 ```
 
 ## Volume Mounts
@@ -227,10 +218,10 @@ The container mounts two host directories:
 
 | Mount | Host default | Container path | Purpose |
 |-------|-------------|----------------|---------|
-| Libraries | `~/poule-libraries/` (or `POULE_LIBRARIES_PATH`) | `/opt/poule-libraries` | Per-library indexes, merged index.db, config.toml |
+| Libraries | `~/poule-libraries/` (or `POULE_LIBRARIES_PATH`) | `/opt/poule-libraries` | Per-library indexes, merged index.db |
 | Project | Current working directory | Working directory | User's Coq project source |
 
-The libraries mount persists per-library index files, the merged index, and the user's configuration across container restarts.
+The libraries mount persists per-library index files and the merged index across container restarts.
 
 ## Developer Automation
 
@@ -268,5 +259,4 @@ The maintainer publishes releases via a shell script that:
 | Neural channel | The distributed ONNX model is the same checkpoint loaded by `NeuralEncoder.load()` — no changes to the encoder interface |
 | MCP server | Consumes `index.db` via `--db` option — unaware of how the database was obtained |
 | Extraction pipeline | Produces per-library `index-{library}.db` files — the publish script packages its output; the download command is an alternative to running extraction |
-| Config module | Reads `config.toml` from libraries directory; provides library list to download client and startup check |
-| Merge pipeline | Combines per-library databases into single `index.db`; transparent to downstream consumers |
+| Merge pipeline | Combines all 6 per-library databases into single `index.db`; transparent to downstream consumers |

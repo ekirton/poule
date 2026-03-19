@@ -65,7 +65,7 @@ The inner script shall map library identifiers to opam package names using this 
 
 - REQUIRES: `coqc` and `opam` are on `PATH`. The 5 opam packages are installed.
 - ENSURES: Each command returns a single version string. For `coqc --version`, the script extracts the numeric version (e.g., `8.19.2`) from the output line.
-- MAINTAINS: The set of 6 library identifiers matches `specification/prebuilt-distribution.md SS4.2`.
+- MAINTAINS: The set of 6 library identifiers matches the supported libraries defined in `specification/prebuilt-distribution.md SS3`.
 
 > **Given** `coqc --version` outputs `The Coq Proof Assistant, version 8.19.2`
 > **When** the inner script detects the stdlib version

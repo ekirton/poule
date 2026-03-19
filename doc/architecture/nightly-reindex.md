@@ -229,7 +229,7 @@ If extraction fails for one library but succeeds for others, the script still pu
 | `scripts/publish-release.sh` | Updated to accept `--replace` flag that deletes an existing release before creating a new one |
 | Download client (`download_index`) | Not used by this script — download client is the user-facing counterpart |
 | Merge pipeline (`merge_indexes`) | Not used by this script — merging happens on the user side after download |
-| Config module (`load_config`) | Not used — the nightly script always processes all 6 libraries, not a user-selected subset |
+| Config module | Not used — the nightly script always processes all 6 libraries |
 
 ## Design Rationale
 
