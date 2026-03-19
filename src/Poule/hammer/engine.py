@@ -28,6 +28,7 @@ _VALID_STRATEGIES = {"hammer", "sauto", "qauto"}
 _STRATEGY_ORDER = ["hammer", "sauto", "qauto"]
 
 
+
 def _wrap_timeout(strategy: str, tactic: str, timeout: float) -> tuple[Optional[str], str]:
     """Wrap a tactic with appropriate Coq-level timeout directive.
 
@@ -83,39 +84,43 @@ async def execute_hammer(
 
     start = time.monotonic()
 
+    coq_output = ""
+    result_state = initial_state
+
     try:
         # Issue pre-command if needed (e.g., "Set Hammer Timeout 30.")
         if pre_command is not None:
-            await session_manager.submit_tactic(session_id, pre_command)
+            try:
+                raw_pre = await session_manager.submit_tactic(
+                    session_id, pre_command,
+                )
+            except SessionError as exc:
+                if exc.code in (SESSION_NOT_FOUND, BACKEND_CRASHED):
+                    raise
+                # Pre-command may fail (e.g., petanque doesn't support Set
+                # commands in proof mode); continue with the main tactic.
 
         # Submit the actual tactic
-        coq_output, result_state = await session_manager.submit_tactic(
-            session_id, wrapped_tactic
+        raw = await session_manager.submit_tactic(
+            session_id, wrapped_tactic,
         )
+
+        # Handle both (str, ProofState) tuple (mocks) and bare ProofState
+        # (real SessionManager).
+        if isinstance(raw, tuple):
+            coq_output, result_state = raw
+        else:
+            result_state = raw
+            coq_output = "No more subgoals." if result_state.is_complete else ""
+
     except SessionError as exc:
         # Propagate SESSION_NOT_FOUND and BACKEND_CRASHED immediately
         if exc.code in (SESSION_NOT_FOUND, BACKEND_CRASHED):
             raise
-        # Other session errors: treat as tactic failure
-        elapsed_ms = int((time.monotonic() - start) * 1000)
-        return HammerResult(
-            status="failure",
-            proof_script=None,
-            atp_proof=None,
-            strategy_used=None,
-            state=initial_state,
-            diagnostics=[
-                StrategyDiagnostic(
-                    strategy=strategy,
-                    failure_reason="tactic_error",
-                    detail=str(exc),
-                    partial_progress=None,
-                    wall_time_ms=elapsed_ms,
-                    timeout_used=timeout,
-                )
-            ],
-            wall_time_ms=elapsed_ms,
-        )
+        # TACTIC_ERROR or other: use the error message as coq_output
+        # so the Result Interpreter can classify it properly.
+        coq_output = exc.message
+        result_state = initial_state
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
 

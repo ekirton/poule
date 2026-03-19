@@ -256,8 +256,12 @@ class SessionManager:
     async def submit_tactic(self, session_id: str, tactic: str) -> ProofState:
         ss = await self.lookup_session(session_id)
         async with ss.lock:
+            # Petanque/run requires tactic sentences to end with a period.
+            tac = tactic.rstrip()
+            if not tac.endswith("."):
+                tac += "."
             try:
-                new_state = await ss.coq_backend.execute_tactic(tactic)
+                new_state = await ss.coq_backend.execute_tactic(tac)
             except Exception as e:
                 raise SessionError(TACTIC_ERROR, str(e))
 
