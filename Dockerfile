@@ -184,41 +184,14 @@ RUN set -e && \
     echo "Downloading manifest from ${TAG} release..." && \
     curl -fsSL -H "Accept: application/vnd.github+json" "$RELEASE_URL" > /tmp/release.json && \
     # Extract manifest download URL
-    python3 -c "
-import json, sys
-release = json.load(open('/tmp/release.json'))
-for asset in release.get('assets', []):
-    if asset['name'] == 'manifest.json':
-        print(asset['browser_download_url'])
-        sys.exit(0)
-print('ERROR: manifest.json not found in release', file=sys.stderr)
-sys.exit(1)
-" > /tmp/manifest_url.txt && \
+    python3 -c "import json, sys; release = json.load(open('/tmp/release.json')); urls = [a['browser_download_url'] for a in release.get('assets', []) if a['name'] == 'manifest.json']; sys.exit(print('ERROR: manifest.json not found in release', file=sys.stderr) or 1) if not urls else print(urls[0])" > /tmp/manifest_url.txt && \
     curl -fsSL -L "$(cat /tmp/manifest_url.txt)" -o /tmp/manifest.json && \
     # Extract index.db download URL
-    python3 -c "
-import json, sys
-release = json.load(open('/tmp/release.json'))
-for asset in release.get('assets', []):
-    if asset['name'] == 'index.db':
-        print(asset['browser_download_url'])
-        sys.exit(0)
-print('ERROR: index.db not found in release', file=sys.stderr)
-sys.exit(1)
-" > /tmp/index_url.txt && \
+    python3 -c "import json, sys; release = json.load(open('/tmp/release.json')); urls = [a['browser_download_url'] for a in release.get('assets', []) if a['name'] == 'index.db']; sys.exit(print('ERROR: index.db not found in release', file=sys.stderr) or 1) if not urls else print(urls[0])" > /tmp/index_url.txt && \
     echo "Downloading index.db..." && \
     curl -fsSL -L "$(cat /tmp/index_url.txt)" -o /data/index.db && \
     # Verify SHA-256
-    python3 -c "
-import hashlib, json, sys
-manifest = json.load(open('/tmp/manifest.json'))
-expected = manifest['index']['sha256']
-sha = hashlib.sha256(open('/data/index.db', 'rb').read()).hexdigest()
-if sha != expected:
-    print(f'SHA-256 mismatch: expected {expected}, got {sha}', file=sys.stderr)
-    sys.exit(1)
-print(f'SHA-256 verified: {sha}')
-" && \
+    python3 -c "import hashlib, json, sys; manifest = json.load(open('/tmp/manifest.json')); expected = manifest['index']['sha256']; sha = hashlib.sha256(open('/data/index.db', 'rb').read()).hexdigest(); sys.exit(print(f'SHA-256 mismatch: expected {expected}, got {sha}', file=sys.stderr) or 1) if sha != expected else print(f'SHA-256 verified: {sha}')" && \
     # Validate versions match installed opam packages
     python3 - <<'PYEOF'
 import json, subprocess, sys
