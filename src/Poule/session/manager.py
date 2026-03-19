@@ -452,7 +452,7 @@ class SessionManager:
             "coqtop", "-quiet",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
 
         # Read any initial output from coqtop (it may print a welcome line
@@ -512,17 +512,18 @@ class SessionManager:
     async def send_command(self, session_id: str, command: str) -> str:
         """Send a vernacular command to a coqtop session and return the output."""
         ss = await self.lookup_session(session_id)
-        proc = ss.coqtop_proc
-        if proc is None:
-            # Fall back to coq_backend if available
-            if ss.coq_backend is not None:
-                return await ss.coq_backend.execute_vernacular(command)
-            raise SessionError(
-                BACKEND_CRASHED,
-                "Session has no interactive backend",
-            )
 
         async with ss.lock:
+            proc = ss.coqtop_proc
+            if proc is None:
+                # Fall back to coq_backend if available
+                if ss.coq_backend is not None:
+                    return await ss.coq_backend.execute_vernacular(command)
+                raise SessionError(
+                    BACKEND_CRASHED,
+                    "Session has no interactive backend",
+                )
+
             # Send the user command followed by a sentinel
             cmd_text = command.rstrip()
             if not cmd_text.endswith("."):

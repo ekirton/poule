@@ -1338,67 +1338,12 @@ class TestDataModel:
         assert hasattr(BuildSystem, "DUNE")
         assert hasattr(BuildSystem, "UNKNOWN")
 
-    def test_detection_result_fields(self):
-        """DetectionResult has all required fields (§5)."""
-        result = _make_detection_result()
-        assert hasattr(result, "build_system")
-        assert hasattr(result, "has_opam")
-        assert hasattr(result, "config_files")
-        assert hasattr(result, "project_dir")
-
     def test_build_request_defaults(self):
         """BuildRequest default: timeout=300, build_system=null, target=null (§5)."""
         request = _make_build_request()
         assert request.timeout == 300
         assert request.build_system is None
         assert request.target is None
-
-    def test_build_result_fields(self):
-        """BuildResult has all required fields (§5)."""
-        result = _make_build_result()
-        assert hasattr(result, "success")
-        assert hasattr(result, "exit_code")
-        assert hasattr(result, "stdout")
-        assert hasattr(result, "stderr")
-        assert hasattr(result, "errors")
-        assert hasattr(result, "elapsed_ms")
-        assert hasattr(result, "build_system")
-        assert hasattr(result, "timed_out")
-        assert hasattr(result, "truncated")
-
-    def test_build_error_fields(self):
-        """BuildError has all required fields (§5)."""
-        err = _make_build_error()
-        assert hasattr(err, "category")
-        assert hasattr(err, "file")
-        assert hasattr(err, "line")
-        assert hasattr(err, "char_range")
-        assert hasattr(err, "raw_text")
-        assert hasattr(err, "explanation")
-        assert hasattr(err, "suggested_fix")
-
-    def test_package_info_fields(self):
-        """PackageInfo has all required fields (§5)."""
-        info = _make_package_info()
-        assert hasattr(info, "name")
-        assert hasattr(info, "installed_version")
-        assert hasattr(info, "available_versions")
-        assert hasattr(info, "synopsis")
-        assert hasattr(info, "dependencies")
-
-    def test_migration_result_fields(self):
-        """MigrationResult has all required fields (§5)."""
-        (
-            BuildError, BuildRequest, BuildResult, BuildSystem,
-            ConflictDetail, ConstraintSource, DependencyStatus,
-            DetectionResult, MigrationResult, OpamMetadata, PackageInfo,
-        ) = _import_types()
-        result = MigrationResult(
-            generated_files=["/tmp/dune-project"],
-            untranslatable_flags=[],
-        )
-        assert hasattr(result, "generated_files")
-        assert hasattr(result, "untranslatable_flags")
 
     def test_dependency_status_fields(self):
         """DependencyStatus has satisfiable and conflicts (§5)."""

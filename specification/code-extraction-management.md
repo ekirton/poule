@@ -79,17 +79,23 @@ The full command sequence is the language directive followed by the extraction c
 
 ### 4.3 Result Parsing
 
-The result parser shall inspect Coq's stdout and stderr after extraction command execution.
+The result parser shall inspect the command output after extraction command execution. The session manager returns command output as a single string (merged stdout and stderr from the Coq backend).
 
-- When stdout contains extracted code and stderr contains no errors: the parser shall return an ExtractionResult with the `code` field set to the extracted source code.
-- When stdout contains extracted code and stderr contains non-fatal warnings (e.g., axiom realizer warnings): the parser shall return an ExtractionResult with the `code` field populated and warnings captured in the `warnings` list.
-- When stderr contains an error: the parser shall classify the error (see section 4.5) and return a CodeExtractionError.
+The parser shall classify output lines by pattern:
+- **Error lines**: lines matching `Error:` at the start. Presence of any error line indicates extraction failure.
+- **Warning lines**: lines matching `Warning:` at the start. These are non-fatal diagnostics.
+- **Code lines**: all remaining non-empty lines. These constitute the extracted source code.
 
-> **Given** Coq stdout contains `let my_fn x = x + 1` and stderr is empty
+Parsing rules:
+- When the output contains code lines and no error lines: the parser shall return an ExtractionResult with the `code` field set to the extracted source code (the code lines joined).
+- When the output contains code lines, no error lines, and one or more warning lines: the parser shall return an ExtractionResult with the `code` field populated and warnings captured in the `warnings` list.
+- When the output contains one or more error lines: the parser shall classify the error (see section 4.5) and return a CodeExtractionError. Partial code in the output is discarded.
+
+> **Given** command output is `let my_fn x = x + 1` (no error or warning lines)
 > **When** the result is parsed
 > **Then** an ExtractionResult is returned with `code = "let my_fn x = x + 1"`
 
-> **Given** Coq stdout contains extracted code and stderr contains `Warning: axiom_name has no body`
+> **Given** command output contains extracted code followed by `Warning: axiom_name has no body`
 > **When** the result is parsed
 > **Then** an ExtractionResult is returned with `code` populated and `warnings` containing the axiom warning text
 
@@ -111,7 +117,7 @@ The result parser shall inspect Coq's stdout and stderr after extraction command
 
 ### 4.5 Error Classification
 
-When extraction fails, the result parser shall classify the Coq error by matching stderr patterns in order from most specific to least specific. The first matching category is selected.
+When extraction fails, the result parser shall classify the Coq error by matching patterns in the command output in order from most specific to least specific. The first matching category is selected.
 
 | Category | Coq Error Pattern | Explanation | Suggestions |
 |----------|------------------|-------------|-------------|
@@ -122,11 +128,11 @@ When extraction fails, the result parser shall classify the Coq error by matchin
 | `module_type_mismatch` | `Module type` or functor-related error | A module type mismatch prevents extraction due to misaligned module functors or signatures. | 1. Verify module signatures match expected types. 2. Simplify module structure to avoid functor application issues. |
 | `unknown` | Any unrecognized error | Extraction failed for a reason not in the known categories. The raw Coq error is included for manual diagnosis. | 1. Consult the Coq reference manual for the specific error. 2. Simplify the definition and retry extraction to isolate the cause. |
 
-> **Given** Coq stderr contains `Error: Universe inconsistency`
+> **Given** command output contains `Error: Universe inconsistency`
 > **When** the error is classified
 > **Then** category is `universe_inconsistency` with the corresponding explanation and suggestions
 
-> **Given** Coq stderr contains an unrecognized message `Error: something unexpected`
+> **Given** command output contains an unrecognized message `Error: something unexpected`
 > **When** the error is classified
 > **Then** category is `unknown` with the raw error preserved in `raw_error`
 
@@ -170,7 +176,7 @@ When extraction fails, the result parser shall classify the Coq error by matchin
 
 | Property | Value |
 |----------|-------|
-| Operations used | Command submission (language directive + extraction command as a sequence) |
+| Operations used | Command submission (language directive + extraction command as a sequence). `submit_command(session_id, command)` returns `str` — the merged Coq output as a single string. |
 | Concurrency | Serialized — one command sequence at a time per session |
 | Error strategy | `SESSION_NOT_FOUND` → return error immediately, no extraction attempted. `BACKEND_CRASHED` → return error advising session restart. Extraction-level Coq errors → parse into CodeExtractionError. |
 | Idempotency | Extraction commands are idempotent — re-executing the same extraction produces the same output. |
@@ -219,8 +225,8 @@ When extraction fails, the result parser shall classify the Coq error by matchin
 
 | Condition | Behavior |
 |-----------|----------|
-| Extraction produces empty stdout and no stderr error | Return ExtractionResult with empty `code` string and a warning indicating empty extraction output |
-| Extraction produces both code on stdout and an error on stderr | Treat as error — return CodeExtractionError. Partial extraction output is not returned. |
+| Extraction output is empty and matches no error pattern | Return ExtractionResult with empty `code` string and a warning indicating empty extraction output |
+| Extraction output contains both code lines and error lines | Treat as error — return CodeExtractionError. Partial extraction output is not returned. |
 | Definition name contains spaces or special characters | Pass verbatim to Coq; Coq's parser determines validity |
 | Same definition extracted twice in one session | Second extraction succeeds identically (idempotent) |
 | Write to a path that already exists | Overwrite the existing file |
@@ -243,8 +249,7 @@ All error responses use the MCP standard error format defined in [mcp-server spe
 extract_code(session_id="s1", definition_name="double", language="OCaml", recursive=false)
 
 Command submitted: "Extraction Language OCaml. Extraction double."
-Coq stdout: "let double n = n + n"
-Coq stderr: ""
+Coq output: "let double n = n + n"
 
 Result:
 {
@@ -263,8 +268,7 @@ Result:
 extract_code(session_id="s2", definition_name="serialize", language="Haskell", recursive=true)
 
 Command submitted: "Extraction Language Haskell. Recursive Extraction serialize."
-Coq stdout: "module Serialize where\n  serialize :: Tree -> String\n  serialize = ..."
-Coq stderr: ""
+Coq output: "module Serialize where\n  serialize :: Tree -> String\n  serialize = ..."
 
 Result:
 {
@@ -295,7 +299,7 @@ Result:
 extract_code(session_id="s3", definition_name="opaque_lemma", language="OCaml", recursive=false)
 
 Command submitted: "Extraction Language OCaml. Extraction opaque_lemma."
-Coq stderr: "Error: opaque_lemma is not a defined object."
+Coq output: "Error: opaque_lemma is not a defined object."
 
 Result:
 {
@@ -318,8 +322,7 @@ Result:
 extract_code(session_id="s4", definition_name="uses_axiom", language="OCaml", recursive=false)
 
 Command submitted: "Extraction Language OCaml. Extraction uses_axiom."
-Coq stdout: "let uses_axiom = ... (assert false (* AXIOM TO BE REALIZED *))"
-Coq stderr: "Warning: my_axiom has no body."
+Coq output: "let uses_axiom = ... (assert false (* AXIOM TO BE REALIZED *))\nWarning: my_axiom has no body."
 
 Result:
 {
@@ -337,7 +340,7 @@ Result:
 - Package location: `src/poule/extraction/`.
 - All public functions are module-level functions, not methods on a class.
 - Command construction is a pure function: `build_command(definition_name: str, language: str, recursive: bool) -> str`.
-- Error classification uses compiled regular expressions matched in priority order against stderr.
+- Error classification uses compiled regular expressions matched in priority order against the command output.
 - File writing uses `pathlib.Path` for path validation (`is_absolute()`, `parent.exists()`) and atomic write semantics where the platform supports it.
 - Entry point: `async def extract_code(session_manager, session_id: str, definition_name: str, language: str, recursive: bool = False, output_path: str | None = None) -> ExtractionResult | CodeExtractionError`.
 - Write entry point: `def write_extraction(code: str, output_path: str) -> WriteConfirmation`.

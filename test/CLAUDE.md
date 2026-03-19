@@ -34,6 +34,15 @@ Example — correct:
 assert symbol_weight(1_000_000) < 1.2
 ```
 
+## Tests Must Fail to Reveal, Not Pass to Reassure
+
+A test that cannot fail is worthless. Every assertion must be capable of catching a real deficiency in the implementation. A passing test should mean the implementation satisfies the spec — not that the test avoided checking.
+
+- **No vacuous assertions.** `assert isinstance(result, list)` followed by `if result: assert ...` verifies nothing when the implementation returns `[]` due to a bug. If the spec says the list should be populated, assert `len(result) > 0`.
+- **No conditional verification.** If a contract requires fields to be populated, assert they are populated unconditionally. A test that only checks field values "if they exist" will pass when the implementation silently returns empty data.
+- **Prefer a failing test over a passing one.** When an implementation bug causes a test to pass for the wrong reason (e.g., empty output triggers the correct error path by accident), rewrite the test so it fails until the bug is fixed. A red test that points at the real problem is more valuable than a green test that hides it.
+- **Contract tests must exercise the real interface.** A contract test that gets no data from the real backend (due to a transport bug, timeout, etc.) and passes anyway is not a contract test — it is dead code with a green checkmark.
+
 ## Mock Discipline
 
 Every `Mock()` or `patch()` requires a corresponding **contract test** that exercises the real implementation against the same interface. Skipping via pytest marker (e.g., `@pytest.mark.requires_coq`) is acceptable when external tools are needed; omitting the test is not.

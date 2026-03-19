@@ -817,12 +817,198 @@ class TestSubmitTacticBatch:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# §4.4 Premise Extraction — get_premises
+# §4.4 Vernacular Command Submission — submit_command
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestSubmitCommand:
+    """Spec §4.4: submit_command(session_id, command).
+
+    Sends a raw vernacular command to the session's Coq process and returns
+    the merged stdout+stderr output as a single string.
+    """
+
+    async def test_returns_string(self):
+        """submit_command returns merged Coq output as a single str."""
+        SessionManager = _import_manager()
+        backend = _make_mock_backend()
+        backend.execute_vernacular = AsyncMock(return_value="Nat.add : nat -> nat -> nat")
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, _ = await mgr.create_session("/file.v", "proof1")
+        result = await mgr.submit_command(sid, "Check Nat.add.")
+        assert isinstance(result, str)
+        assert "Nat.add" in result
+
+    async def test_does_not_modify_step_history(self):
+        """MAINTAINS: submit_command does not track states or update step_history."""
+        SessionManager = _import_manager()
+        backend = _make_mock_backend()
+        backend.execute_vernacular = AsyncMock(return_value="some output")
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, initial = await mgr.create_session("/file.v", "proof1")
+        await mgr.submit_command(sid, "Extraction Language OCaml.")
+        state = await mgr.observe_state(sid)
+        assert state.step_index == 0  # unchanged
+
+    async def test_does_not_modify_current_step(self):
+        """MAINTAINS: current_step unchanged after submit_command."""
+        SessionManager = _import_manager()
+        state1 = _make_stepped_state(1)
+        backend = _make_mock_backend(tactic_results=[state1])
+        backend.execute_vernacular = AsyncMock(return_value="ok")
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, _ = await mgr.create_session("/file.v", "proof1")
+        await mgr.submit_tactic(sid, "intro n.")  # step to 1
+        await mgr.submit_command(sid, "Check nat.")
+        state = await mgr.observe_state(sid)
+        assert state.step_index == 1  # still 1, not advanced
+
+    async def test_session_not_found(self):
+        """submit_command on non-existent session → SESSION_NOT_FOUND."""
+        SessionManager = _import_manager()
+        (_, _, _, _, _, _, SESSION_NOT_FOUND, _, _, SessionError) = _import_errors()
+        backend = _make_mock_backend()
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        with pytest.raises(SessionError) as exc_info:
+            await mgr.submit_command("nonexistent", "Check nat.")
+        assert exc_info.value.code == SESSION_NOT_FOUND
+
+    async def test_backend_crashed(self):
+        """submit_command on crashed session → BACKEND_CRASHED."""
+        SessionManager = _import_manager()
+        (BACKEND_CRASHED, _, _, _, _, _, _, _, _, SessionError) = _import_errors()
+        backend = _make_mock_backend()
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, _ = await mgr.create_session("/file.v", "proof1")
+        # Simulate crash by nullifying backends
+        session = mgr._registry[sid]
+        session.coq_backend = None
+        session.coqtop_proc = None
+        session.state = "crashed"
+
+        with pytest.raises(SessionError) as exc_info:
+            await mgr.submit_command(sid, "Check nat.")
+        assert exc_info.value.code == BACKEND_CRASHED
+
+    async def test_updates_last_active_at(self):
+        """submit_command updates last_active_at timestamp."""
+        SessionManager = _import_manager()
+        backend = _make_mock_backend()
+        backend.execute_vernacular = AsyncMock(return_value="output")
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, _ = await mgr.create_session("/file.v", "proof1")
+        before = mgr._registry[sid].last_active_at
+        # Small delay to ensure timestamp differs
+        await asyncio.sleep(0.01)
+        await mgr.submit_command(sid, "Check nat.")
+        after = mgr._registry[sid].last_active_at
+        assert after >= before
+
+    async def test_merged_output_is_single_string(self):
+        """Output model: merged stdout+stderr returned as one string, not structured."""
+        SessionManager = _import_manager()
+        backend = _make_mock_backend()
+        merged_output = "let my_fn x = x + 1\nWarning: axiom has no body."
+        backend.execute_vernacular = AsyncMock(return_value=merged_output)
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, _ = await mgr.create_session("/file.v", "proof1")
+        result = await mgr.submit_command(sid, "Extraction my_fn.")
+        assert isinstance(result, str)
+        # Must NOT have .stdout or .stderr attributes
+        assert not hasattr(result, "stdout")
+        assert not hasattr(result, "stderr")
+
+    async def test_serialized_per_session(self):
+        """Concurrency: submit_command is serialized per session (§7.2)."""
+        SessionManager = _import_manager()
+        backend = _make_mock_backend()
+        call_order = []
+        async def slow_vernacular(cmd):
+            call_order.append(("start", cmd))
+            await asyncio.sleep(0.01)
+            call_order.append(("end", cmd))
+            return f"result of {cmd}"
+        backend.execute_vernacular = AsyncMock(side_effect=slow_vernacular)
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, _ = await mgr.create_session("/file.v", "proof1")
+        r1, r2 = await asyncio.gather(
+            mgr.submit_command(sid, "cmd1"),
+            mgr.submit_command(sid, "cmd2"),
+        )
+        assert isinstance(r1, str)
+        assert isinstance(r2, str)
+        # Serialization: first command must finish before second starts
+        starts = [i for i, (op, _) in enumerate(call_order) if op == "start"]
+        ends = [i for i, (op, _) in enumerate(call_order) if op == "end"]
+        assert len(starts) == 2
+        assert len(ends) == 2
+        assert ends[0] < starts[1]
+
+
+@pytest.mark.requires_coq
+class TestContractSubmitCommand:
+    """Contract test: verify real SessionManager.submit_command interface.
+
+    These tests verify the mock assumptions match the real implementation.
+    """
+
+    @pytest.mark.asyncio
+    async def test_returns_string_from_real_backend(self):
+        """Real submit_command returns a plain str."""
+        from Poule.session.manager import SessionManager
+        manager = SessionManager()
+        session_id = await manager.open_session("contract_submit_cmd")
+        try:
+            result = await manager.submit_command(session_id, "Check nat.")
+            assert isinstance(result, str)
+            assert not hasattr(result, "stdout")
+            assert not hasattr(result, "stderr")
+        finally:
+            await manager.close_session(session_id)
+
+    @pytest.mark.asyncio
+    async def test_session_not_found_raises(self):
+        """Real submit_command raises SessionError for unknown session."""
+        from Poule.session.manager import SessionManager
+        from Poule.session.errors import SessionError, SESSION_NOT_FOUND
+        manager = SessionManager()
+        with pytest.raises(SessionError) as exc_info:
+            await manager.submit_command("nonexistent", "Check nat.")
+        assert exc_info.value.code == SESSION_NOT_FOUND
+
+    @pytest.mark.asyncio
+    async def test_serialized_per_session(self):
+        """Real submit_command is serialized per session (§7.2)."""
+        from Poule.session.manager import SessionManager
+        manager = SessionManager()
+        session_id = await manager.open_session("contract_serial")
+        try:
+            # Concurrent commands on same session should both succeed
+            r1, r2 = await asyncio.gather(
+                manager.submit_command(session_id, "Check nat."),
+                manager.submit_command(session_id, "Check bool."),
+            )
+            assert isinstance(r1, str)
+            assert isinstance(r2, str)
+        finally:
+            await manager.close_session(session_id)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# §4.5 Premise Extraction — get_premises
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestGetPremises:
-    """Spec §4.4: get_premises(session_id)."""
+    """Spec §4.5: get_premises(session_id)."""
 
     async def test_returns_premise_annotations_for_all_steps(self):
         SessionManager = _import_manager()
@@ -867,12 +1053,12 @@ class TestGetPremises:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# §4.4 Premise Extraction — get_step_premises
+# §4.5 Premise Extraction — get_step_premises
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestGetStepPremises:
-    """Spec §4.4: get_step_premises(session_id, step)."""
+    """Spec §4.5: get_step_premises(session_id, step)."""
 
     async def test_returns_single_annotation(self):
         SessionManager = _import_manager()
@@ -927,12 +1113,12 @@ class TestGetStepPremises:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# §4.5 Session Timeout
+# §4.6 Session Timeout
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestSessionTimeout:
-    """Spec §4.5: sessions idle > 30 min are swept."""
+    """Spec §4.6: sessions idle > 30 min are swept."""
 
     async def test_timeout_removes_session(self):
         SessionManager = _import_manager()
@@ -991,12 +1177,12 @@ class TestSessionTimeout:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# §4.6 Crash Detection
+# §4.7 Crash Detection
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestCrashDetection:
-    """Spec §4.6: backend crash marks session as crashed."""
+    """Spec §4.7: backend crash marks session as crashed."""
 
     async def test_crashed_session_returns_backend_crashed(self):
         SessionManager = _import_manager()

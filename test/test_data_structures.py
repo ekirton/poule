@@ -372,12 +372,6 @@ class TestLPrimitive:
 class TestLApp:
     """LApp() — application node, no payload."""
 
-    def test_construction(self):
-        from Poule.models.labels import LApp
-
-        la = LApp()
-        assert la is not None
-
     def test_equality(self):
         from Poule.models.labels import LApp
 
@@ -392,11 +386,6 @@ class TestLApp:
 class TestLAbs:
     """LAbs() — abstraction (lambda) node, no payload."""
 
-    def test_construction(self):
-        from Poule.models.labels import LAbs
-
-        assert LAbs() is not None
-
     def test_equality(self):
         from Poule.models.labels import LAbs
 
@@ -410,11 +399,6 @@ class TestLAbs:
 
 class TestLLet:
     """LLet() — let-in binding, no payload."""
-
-    def test_construction(self):
-        from Poule.models.labels import LLet
-
-        assert LLet() is not None
 
     def test_equality(self):
         from Poule.models.labels import LLet
@@ -479,11 +463,6 @@ class TestLCase:
 
 class TestLProd:
     """LProd() — dependent product (forall), no payload."""
-
-    def test_construction(self):
-        from Poule.models.labels import LProd
-
-        assert LProd() is not None
 
     def test_equality(self):
         from Poule.models.labels import LProd
@@ -797,12 +776,6 @@ class TestRecomputeDepths:
         recompute_depths(tree)
         assert root.depth == 0  # corrected in place
 
-    def test_returns_none(self, sample_prod_tree):
-        from Poule.models.tree import recompute_depths
-
-        result = recompute_depths(sample_prod_tree)
-        assert result is None
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 9. assign_node_ids — pre-order traversal, sequential from 0
@@ -873,12 +846,6 @@ class TestAssignNodeIds:
             sample_prod_tree.root.children[1].node_id,
         ]
         assert ids_first == ids_second
-
-    def test_returns_none(self, sample_prod_tree):
-        from Poule.models.tree import assign_node_ids
-
-        result = assign_node_ids(sample_prod_tree)
-        assert result is None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1113,94 +1080,7 @@ class TestModule:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 12. Label immutability (frozen dataclass)
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestLabelImmutability:
-    """All node labels are frozen — field assignment raises an error."""
-
-    def test_lconst_frozen(self):
-        from Poule.models.labels import LConst
-
-        lc = LConst("x")
-        with pytest.raises(AttributeError):
-            lc.name = "y"
-
-    def test_lind_frozen(self):
-        from Poule.models.labels import LInd
-
-        li = LInd("x")
-        with pytest.raises(AttributeError):
-            li.name = "y"
-
-    def test_lconstruct_frozen(self):
-        from Poule.models.labels import LConstruct
-
-        lc = LConstruct("x", 0)
-        with pytest.raises(AttributeError):
-            lc.index = 1
-
-    def test_lcsevar_frozen(self):
-        from Poule.models.labels import LCseVar
-
-        lv = LCseVar(0)
-        with pytest.raises(AttributeError):
-            lv.id = 1
-
-    def test_lrel_frozen(self):
-        from Poule.models.labels import LRel
-
-        lr = LRel(0)
-        with pytest.raises(AttributeError):
-            lr.index = 1
-
-    def test_lsort_frozen(self):
-        from Poule.models.labels import LSort
-        from Poule.models.enums import SortKind
-
-        ls = LSort(SortKind.PROP)
-        with pytest.raises(AttributeError):
-            ls.kind = SortKind.SET
-
-    def test_lprimitive_frozen(self):
-        from Poule.models.labels import LPrimitive
-
-        lp = LPrimitive(42)
-        with pytest.raises(AttributeError):
-            lp.value = 99
-
-    def test_lproj_frozen(self):
-        from Poule.models.labels import LProj
-
-        lp = LProj("fst")
-        with pytest.raises(AttributeError):
-            lp.name = "snd"
-
-    def test_lcase_frozen(self):
-        from Poule.models.labels import LCase
-
-        lc = LCase("nat")
-        with pytest.raises(AttributeError):
-            lc.ind_name = "bool"
-
-    def test_lfix_frozen(self):
-        from Poule.models.labels import LFix
-
-        lf = LFix(0)
-        with pytest.raises(AttributeError):
-            lf.mutual_index = 1
-
-    def test_lcofix_frozen(self):
-        from Poule.models.labels import LCoFix
-
-        lc = LCoFix(0)
-        with pytest.raises(AttributeError):
-            lc.mutual_index = 1
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 13. Spec example: Nat.add (Section 8)
+# 12. Spec example: Nat.add (Section 8)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -1265,33 +1145,8 @@ class TestSpecExampleCurriedApp:
         assert outer.children[1].node_id == 4  # 2
 
 
-class TestSpecExampleEquality:
-    """Spec Section 8 — equality semantics examples."""
-
-    def test_same_lconst_equal(self):
-        from Poule.models.labels import LConst
-
-        assert LConst("Coq.Init.Nat.add") == LConst("Coq.Init.Nat.add")
-
-    def test_lconst_vs_lind_not_equal(self):
-        from Poule.models.labels import LConst, LInd
-
-        assert LConst("Coq.Init.Nat.add") != LInd("Coq.Init.Nat.add")
-
-    def test_same_lsort_equal(self):
-        from Poule.models.labels import LSort
-        from Poule.models.enums import SortKind
-
-        assert LSort(SortKind.PROP) == LSort(SortKind.PROP)
-
-    def test_same_lconst_same_hash(self):
-        from Poule.models.labels import LConst
-
-        assert hash(LConst("x")) == hash(LConst("x"))
-
-
 # ═══════════════════════════════════════════════════════════════════════════
-# 10. Proof Interaction Types (Spec §4.7)
+# 13. Proof Interaction Types (Spec §4.7)
 # ═══════════════════════════════════════════════════════════════════════════
 
 

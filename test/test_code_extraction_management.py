@@ -138,24 +138,21 @@ def _make_write_confirmation(output_path="/project/extracted/add.ml", bytes_writ
 
 
 def _make_mock_session_manager(
-    command_stdout="",
-    command_stderr="",
+    command_output="",
     raises=None,
 ):
     """Create a mock session manager for extraction tests.
 
     The session manager exposes a submit_command method that returns
-    stdout/stderr from Coq.
+    a single string (the merged Coq output), matching the real
+    SessionManager interface.
     """
     manager = AsyncMock()
 
     if raises is not None:
         manager.submit_command.side_effect = raises
     else:
-        manager.submit_command.return_value = MagicMock(
-            stdout=command_stdout,
-            stderr=command_stderr,
-        )
+        manager.submit_command.return_value = command_output
 
     return manager
 
@@ -341,10 +338,7 @@ class TestExtractCodeEntryPoint:
         """Given no output_path, operates in preview mode (no file written) (Section 4.1)."""
         extract_code = _import_extract_code()
         _, ExtractionResult, _, _ = _import_code_types()
-        manager = _make_mock_session_manager(
-            command_stdout="let my_fn x = x + 1",
-            command_stderr="",
-        )
+        manager = _make_mock_session_manager(command_output="let my_fn x = x + 1")
         result = await extract_code(
             session_manager=manager,
             session_id="s1",
@@ -358,13 +352,10 @@ class TestExtractCodeEntryPoint:
 
     @pytest.mark.asyncio
     async def test_spec_example_single_ocaml(self):
-        """Spec example: extract_code(s1, 'my_fn', 'OCaml', false) -> ExtractionResult (Section 4.1)."""
+        """Spec example: extract_code(s1, 'my_fn', 'OCaml', false) -> ExtractionResult (Section 4.1, 9)."""
         extract_code = _import_extract_code()
         _, ExtractionResult, _, _ = _import_code_types()
-        manager = _make_mock_session_manager(
-            command_stdout="let my_fn x = x + 1",
-            command_stderr="",
-        )
+        manager = _make_mock_session_manager(command_output="let my_fn x = x + 1")
         result = await extract_code(
             session_manager=manager,
             session_id="s1",
@@ -381,14 +372,11 @@ class TestExtractCodeEntryPoint:
 
     @pytest.mark.asyncio
     async def test_spec_example_recursive_haskell(self):
-        """Spec example: extract_code(s2, 'serialize', 'Haskell', true) (Section 4.1)."""
+        """Spec example: extract_code(s2, 'serialize', 'Haskell', true) (Section 4.1, 9)."""
         extract_code = _import_extract_code()
         _, ExtractionResult, _, _ = _import_code_types()
         haskell_code = "module Serialize where\n  serialize :: Tree -> String\n  serialize = ..."
-        manager = _make_mock_session_manager(
-            command_stdout=haskell_code,
-            command_stderr="",
-        )
+        manager = _make_mock_session_manager(command_output=haskell_code)
         result = await extract_code(
             session_manager=manager,
             session_id="s2",
@@ -404,12 +392,11 @@ class TestExtractCodeEntryPoint:
 
     @pytest.mark.asyncio
     async def test_spec_example_opaque_term(self):
-        """Spec example: opaque_fn closed with Qed returns ExtractionError (Section 4.1)."""
+        """Spec example: opaque_fn closed with Qed returns CodeExtractionError (Section 4.1, 9)."""
         extract_code = _import_extract_code()
         _, _, CodeExtractionError, _ = _import_code_types()
         manager = _make_mock_session_manager(
-            command_stdout="",
-            command_stderr="Error: opaque_fn is not a defined object.",
+            command_output="Error: opaque_fn is not a defined object.",
         )
         result = await extract_code(
             session_manager=manager,
@@ -427,10 +414,7 @@ class TestExtractCodeEntryPoint:
     async def test_submits_correct_command_sequence(self):
         """extract_code submits 'Extraction Language {lang}. Extraction {name}.' to Coq (Section 4.1)."""
         extract_code = _import_extract_code()
-        manager = _make_mock_session_manager(
-            command_stdout="let double n = n + n",
-            command_stderr="",
-        )
+        manager = _make_mock_session_manager(command_output="let double n = n + n")
         await extract_code(
             session_manager=manager,
             session_id="s1",
@@ -449,10 +433,7 @@ class TestExtractCodeEntryPoint:
     async def test_definition_name_passed_verbatim_to_coq(self):
         """MAINTAINS: The definition name is passed verbatim to Coq without transformation (Section 4.1)."""
         extract_code = _import_extract_code()
-        manager = _make_mock_session_manager(
-            command_stdout="(* extracted *)",
-            command_stderr="",
-        )
+        manager = _make_mock_session_manager(command_output="(* extracted *)")
         await extract_code(
             session_manager=manager,
             session_id="s1",
@@ -472,17 +453,14 @@ class TestExtractCodeEntryPoint:
 
 
 class TestResultParsing:
-    """Section 4.3: Result parsing behavior."""
+    """Section 4.3: Result parsing on merged command output."""
 
     @pytest.mark.asyncio
-    async def test_stdout_code_no_stderr_returns_result(self):
-        """Stdout with code, empty stderr -> ExtractionResult with code (Section 4.3)."""
+    async def test_code_only_returns_result(self):
+        """Output with code lines, no error/warning lines -> ExtractionResult (Section 4.3)."""
         extract_code = _import_extract_code()
         _, ExtractionResult, _, _ = _import_code_types()
-        manager = _make_mock_session_manager(
-            command_stdout="let my_fn x = x + 1",
-            command_stderr="",
-        )
+        manager = _make_mock_session_manager(command_output="let my_fn x = x + 1")
         result = await extract_code(
             session_manager=manager,
             session_id="s1",
@@ -493,14 +471,16 @@ class TestResultParsing:
         assert result.code == "let my_fn x = x + 1"
 
     @pytest.mark.asyncio
-    async def test_stdout_code_with_warning_returns_result_with_warnings(self):
-        """Stdout with code + non-fatal warning in stderr -> ExtractionResult with warnings (Section 4.3)."""
+    async def test_code_with_warning_returns_result_with_warnings(self):
+        """Output with code and warning lines -> ExtractionResult with warnings (Section 4.3, 9)."""
         extract_code = _import_extract_code()
         _, ExtractionResult, _, _ = _import_code_types()
-        manager = _make_mock_session_manager(
-            command_stdout='let uses_axiom = ... (assert false (* AXIOM TO BE REALIZED *))',
-            command_stderr="Warning: my_axiom has no body.",
+        # Merged output: code followed by warning line
+        merged = (
+            "let uses_axiom = ... (assert false (* AXIOM TO BE REALIZED *))\n"
+            "Warning: my_axiom has no body."
         )
+        manager = _make_mock_session_manager(command_output=merged)
         result = await extract_code(
             session_manager=manager,
             session_id="s4",
@@ -513,13 +493,12 @@ class TestResultParsing:
         assert any("has no body" in w for w in result.warnings)
 
     @pytest.mark.asyncio
-    async def test_stderr_error_returns_extraction_error(self):
-        """Stderr with error -> ExtractionError (Section 4.3)."""
+    async def test_error_line_returns_extraction_error(self):
+        """Output with error line -> CodeExtractionError (Section 4.3)."""
         extract_code = _import_extract_code()
         _, _, CodeExtractionError, _ = _import_code_types()
         manager = _make_mock_session_manager(
-            command_stdout="",
-            command_stderr="Error: opaque_lemma is not a defined object.",
+            command_output="Error: opaque_lemma is not a defined object.",
         )
         result = await extract_code(
             session_manager=manager,
@@ -531,13 +510,11 @@ class TestResultParsing:
 
     @pytest.mark.asyncio
     async def test_both_code_and_error_treated_as_error(self):
-        """Stdout with code AND stderr error -> ExtractionError; partial output not returned (Section 7.4)."""
+        """Output with both code lines and error lines -> CodeExtractionError; partial output discarded (Section 7.4)."""
         extract_code = _import_extract_code()
         _, _, CodeExtractionError, _ = _import_code_types()
-        manager = _make_mock_session_manager(
-            command_stdout="let partial = ...",
-            command_stderr="Error: something went wrong",
-        )
+        merged = "let partial = ...\nError: something went wrong"
+        manager = _make_mock_session_manager(command_output=merged)
         result = await extract_code(
             session_manager=manager,
             session_id="s1",
@@ -547,14 +524,11 @@ class TestResultParsing:
         assert isinstance(result, CodeExtractionError)
 
     @pytest.mark.asyncio
-    async def test_empty_stdout_no_error_returns_result_with_warning(self):
-        """Empty stdout, no stderr error -> ExtractionResult with empty code and warning (Section 7.4)."""
+    async def test_empty_output_no_error_returns_result_with_warning(self):
+        """Empty output, no error pattern -> ExtractionResult with empty code and warning (Section 7.4)."""
         extract_code = _import_extract_code()
         _, ExtractionResult, _, _ = _import_code_types()
-        manager = _make_mock_session_manager(
-            command_stdout="",
-            command_stderr="",
-        )
+        manager = _make_mock_session_manager(command_output="")
         result = await extract_code(
             session_manager=manager,
             session_id="s1",
@@ -572,7 +546,7 @@ class TestResultParsing:
 
 
 class TestErrorClassification:
-    """Section 4.5: Error classification by stderr pattern matching."""
+    """Section 4.5: Error classification by pattern matching on command output."""
 
     @pytest.mark.asyncio
     async def test_opaque_term_classification(self):
@@ -580,8 +554,7 @@ class TestErrorClassification:
         extract_code = _import_extract_code()
         _, _, CodeExtractionError, _ = _import_code_types()
         manager = _make_mock_session_manager(
-            command_stdout="",
-            command_stderr="Error: opaque_lemma is not a defined object.",
+            command_output="Error: opaque_lemma is not a defined object.",
         )
         result = await extract_code(
             session_manager=manager,
@@ -600,8 +573,7 @@ class TestErrorClassification:
         extract_code = _import_extract_code()
         _, _, CodeExtractionError, _ = _import_code_types()
         manager = _make_mock_session_manager(
-            command_stdout="",
-            command_stderr="Error: my_axiom has no body",
+            command_output="Error: my_axiom has no body",
         )
         result = await extract_code(
             session_manager=manager,
@@ -619,8 +591,7 @@ class TestErrorClassification:
         extract_code = _import_extract_code()
         _, _, CodeExtractionError, _ = _import_code_types()
         manager = _make_mock_session_manager(
-            command_stdout="",
-            command_stderr="Error: Universe inconsistency",
+            command_output="Error: Universe inconsistency",
         )
         result = await extract_code(
             session_manager=manager,
@@ -637,8 +608,7 @@ class TestErrorClassification:
         extract_code = _import_extract_code()
         _, _, CodeExtractionError, _ = _import_code_types()
         manager = _make_mock_session_manager(
-            command_stdout="",
-            command_stderr="Error: Cannot extract this match pattern",
+            command_output="Error: Cannot extract this match pattern",
         )
         result = await extract_code(
             session_manager=manager,
@@ -655,8 +625,7 @@ class TestErrorClassification:
         extract_code = _import_extract_code()
         _, _, CodeExtractionError, _ = _import_code_types()
         manager = _make_mock_session_manager(
-            command_stdout="",
-            command_stderr="Error: Module type mismatch in functor application",
+            command_output="Error: Module type mismatch in functor application",
         )
         result = await extract_code(
             session_manager=manager,
@@ -673,8 +642,7 @@ class TestErrorClassification:
         extract_code = _import_extract_code()
         _, _, CodeExtractionError, _ = _import_code_types()
         manager = _make_mock_session_manager(
-            command_stdout="",
-            command_stderr="Error: something unexpected",
+            command_output="Error: something unexpected",
         )
         result = await extract_code(
             session_manager=manager,
@@ -691,11 +659,9 @@ class TestErrorClassification:
         """Error classification matches most specific pattern first (Section 4.5)."""
         extract_code = _import_extract_code()
         _, _, CodeExtractionError, _ = _import_code_types()
-        # An error containing both 'is not a defined object' and 'Module type'
-        # should match opaque_term first (more specific)
+        # 'is not a defined object' should match opaque_term (most specific)
         manager = _make_mock_session_manager(
-            command_stdout="",
-            command_stderr="Error: foo is not a defined object.",
+            command_output="Error: foo is not a defined object.",
         )
         result = await extract_code(
             session_manager=manager,
@@ -863,10 +829,7 @@ class TestEdgeCases:
     async def test_definition_name_with_special_characters(self):
         """Definition name with special characters is passed verbatim (Section 7.4)."""
         extract_code = _import_extract_code()
-        manager = _make_mock_session_manager(
-            command_stdout="(* extracted *)",
-            command_stderr="",
-        )
+        manager = _make_mock_session_manager(command_output="(* extracted *)")
         result = await extract_code(
             session_manager=manager,
             session_id="s1",
@@ -881,10 +844,7 @@ class TestEdgeCases:
     async def test_idempotent_extraction(self):
         """Same definition extracted twice produces same result (Section 7.4)."""
         extract_code = _import_extract_code()
-        manager = _make_mock_session_manager(
-            command_stdout="let double n = n + n",
-            command_stderr="",
-        )
+        manager = _make_mock_session_manager(command_output="let double n = n + n")
         result1 = await extract_code(
             session_manager=manager,
             session_id="s1",
@@ -942,10 +902,7 @@ class TestInterfaceContracts:
         # This is a design constraint verified by inspection:
         # extract_code delegates all Coq interaction to session_manager.
         extract_code = _import_extract_code()
-        manager = _make_mock_session_manager(
-            command_stdout="let x = 1",
-            command_stderr="",
-        )
+        manager = _make_mock_session_manager(command_output="let x = 1")
         with patch("subprocess.run") as mock_run, \
              patch("subprocess.Popen") as mock_popen:
             await extract_code(
@@ -1068,10 +1025,7 @@ class TestNonFunctionalRequirements:
             "Error: something totally unknown happened here",
         ]
         for error_msg in errors:
-            manager = _make_mock_session_manager(
-                command_stdout="",
-                command_stderr=error_msg,
-            )
+            manager = _make_mock_session_manager(command_output=error_msg)
             start = time.perf_counter_ns()
             await extract_code(
                 session_manager=manager,

@@ -243,6 +243,33 @@ The backend returns raw premise references. The session manager classifies each 
 
 Classification uses the Coq environment's declaration metadata. Ambiguous cases (e.g., a local definition shadowing a global one) are resolved by the scoping rules Coq itself applies — the premise is classified based on what Coq actually used, not what the name resolves to in the global scope.
 
+## Vernacular Command Submission
+
+The Session Manager provides a raw command submission operation for components that need unstructured Coq output (extraction, notation inspection, assumption auditing). This is distinct from `submit_tactic`, which returns a structured `ProofState`.
+
+```
+submit_command(session_id, command)
+  │
+  ├─ Look up session → error if not found/expired
+  │
+  ├─ Update last_active timestamp
+  │
+  ├─ Send command to the session's Coq process
+  │    └─ Detect end-of-output via sentinel framing
+  │
+  └─ Return command output as a single string
+```
+
+### Output Model
+
+The Coq process is spawned with stdout and stderr merged into a single stream. The `submit_command` operation returns this merged output as a single string. Consumers parse the combined output using pattern matching to distinguish code, errors, and warnings.
+
+Merging is required because the sentinel-based end-of-output detection relies on a `Fail` command whose output destination (stdout vs stderr) varies across Coq/Rocq versions and flags. Merging streams at the OS level ensures the sentinel is always visible on the stream being read.
+
+### Implications for Consumers
+
+Components that consume `submit_command` output must not assume separate stdout/stderr streams. Error detection, warning extraction, and code identification all operate on the single merged string via pattern matching. This is a deliberate design choice — Coq's own stream behavior is not cleanly separated (warnings can appear on stdout during successful operations), so pattern-based classification is more reliable than stream-based classification regardless of merging.
+
 ## CoqBackend Interface
 
 The `CoqBackend` abstracts the communication with a Coq process (coq-lsp or SerAPI). Each session owns one backend instance.

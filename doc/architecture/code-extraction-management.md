@@ -21,9 +21,9 @@ MCP Server
 |  +---------------------------+  +---------------------------+ |
 |  | Command Constructor       |  | Result Parser             | |
 |  |                           |  |                           | |
-|  | Builds Coq Extraction or  |  | Parses Coq output into   | |
-|  | Recursive Extraction      |  | ExtractionResult or      | |
-|  | command from request      |  | ExtractionError           | |
+|  | Builds Coq Extraction or  |  | Classifies lines in      | |
+|  | Recursive Extraction      |  | merged command output    | |
+|  | command from request      |  | by pattern               | |
 |  +---------------------------+  +---------------------------+ |
 |                                                               |
 |  +---------------------------+                                |
@@ -35,12 +35,12 @@ MCP Server
 |  +---------------------------+                                |
 +---------------------------------------------------------------+
   |                                     |
-  | command execution                   | file write (write mode only)
+  | submit_command (returns str)        | file write (write mode only)
   v                                     v
 Proof Session Manager               Filesystem
   |
   v
-Coq Backend Process
+Coq Backend Process (stdout+stderr merged)
 ```
 
 ## Boundary Contract
@@ -93,17 +93,16 @@ extract_code(definition="my_fn", language="OCaml", recursive=false)
   |     "Extraction Language OCaml. Extraction my_fn."
   |
   +-- Submit command sequence to Proof Session Manager
-  |     (via the active session's Coq backend)
+  |     (via submit_command, which returns a single output string)
   |
-  +-- Coq backend executes, returns stdout/stderr
-  |
-  +-- Result Parser inspects output:
+  +-- Result Parser classifies output lines by pattern:
   |     |
-  |     +-- stdout contains extracted code?
-  |     |     -> ExtractionResult with code, language, definition_name
+  |     +-- output contains error pattern (e.g., line starting with "Error:")?
+  |     |     -> ExtractionError with raw_error, category, explanation, suggestions
   |     |
-  |     +-- stderr contains error?
-  |           -> ExtractionError with raw_error, category, explanation, suggestions
+  |     +-- no error pattern; remaining lines are extracted code
+  |           -> ExtractionResult with code, language, definition_name
+  |           (lines matching warning patterns captured separately in warnings)
   |
   +-- Return ExtractionResult or ExtractionError to MCP Server
 ```
@@ -119,16 +118,16 @@ extract_code(definition="serialize", language="OCaml", recursive=true)
   |     "Extraction Language OCaml. Recursive Extraction serialize."
   |
   +-- Submit command sequence to Proof Session Manager
+  |     (via submit_command, which returns a single output string)
   |
-  +-- Coq backend executes, returns stdout/stderr
-  |
-  +-- Result Parser inspects output:
+  +-- Result Parser classifies output lines by pattern:
   |     |
-  |     +-- stdout contains extracted module code?
-  |     |     -> ExtractionResult with code containing all transitive dependencies
+  |     +-- output contains error pattern?
+  |     |     -> ExtractionError
   |     |
-  |     +-- stderr contains error?
-  |           -> ExtractionError
+  |     +-- no error pattern; remaining lines are extracted code
+  |           -> ExtractionResult with code containing all transitive dependencies
+  |           (warning lines captured separately)
   |
   +-- Return ExtractionResult or ExtractionError to MCP Server
 ```
@@ -168,7 +167,7 @@ When extraction fails, the Result Parser classifies the Coq error into one of fi
 
 ### Error Classification
 
-The Result Parser matches patterns in Coq's stderr output against known error signatures:
+The Result Parser matches patterns in the command output against known error signatures:
 
 | Category | Coq Error Pattern | Explanation | Suggested Fixes |
 |----------|------------------|-------------|-----------------|

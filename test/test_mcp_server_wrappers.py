@@ -63,9 +63,7 @@ def ctx():
     # Mock session manager
     c.session_manager = MagicMock()
     c.session_manager.send_command = AsyncMock(return_value="")
-    c.session_manager.submit_command = AsyncMock(
-        return_value=MagicMock(stdout="", stderr="")
-    )
+    c.session_manager.submit_command = AsyncMock(return_value="")
     c.session_manager.observe_state = AsyncMock()
     c.session_manager.coq_query = AsyncMock(return_value="")
     # Mock pipeline

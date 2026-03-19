@@ -12,7 +12,7 @@ Define the session manager that creates and destroys proof sessions, dispatches 
 
 ## 2. Scope
 
-**In scope**: Session registry, session lifecycle (open, close, timeout, crash), SessionState data model, state history management, tactic dispatch (submit, step forward, step backward, batch), proof trace extraction, premise extraction, CoqBackend interface, concurrency model.
+**In scope**: Session registry, session lifecycle (open, close, timeout, crash), SessionState data model, state history management, tactic dispatch (submit, step forward, step backward, batch), vernacular command submission, proof trace extraction, premise extraction, CoqBackend interface, concurrency model.
 
 **Out of scope**: MCP protocol handling (owned by mcp-server), proof state serialization to JSON (owned by proof-serialization), search index and retrieval (independent subsystem).
 
@@ -212,7 +212,47 @@ MAINTAINS: Every operation that targets a session by ID shall call `lookup_sessi
 > **When** `submit_tactic_batch(session_id, ["intro n.", "reflexivity."])` is called and tactic 2 completes the proof
 > **Then** the results list contains 2 success entries, the second has `is_complete = true`, and no further tactics are processed
 
-### 4.4 Premise Extraction
+### 4.4 Vernacular Command Submission
+
+#### submit_command(session_id, command)
+
+- REQUIRES: Session exists and is active. `command` is a non-empty string containing one or more Coq vernacular commands (each terminated with `.`).
+- ENSURES: Sends `command` to the session's Coq process. Returns the command output as a single string. The output is the merged stdout and stderr from the Coq process — consumers must not assume separate streams.
+- MAINTAINS: The session's `last_active_at` is updated. The session's proof state history is not modified — `submit_command` does not track states or update `step_history`. The Coq environment may be modified by the command (e.g., `Extraction Language OCaml.` changes extraction settings).
+- On session not found: returns `SESSION_NOT_FOUND` error.
+- On session expired: returns `SESSION_EXPIRED` error.
+- On backend crashed: returns `BACKEND_CRASHED` error.
+
+> **Given** an active session with a definition `my_fn` in scope
+> **When** `submit_command(session_id, "Extraction Language OCaml. Extraction my_fn.")` is called
+> **Then** a string is returned containing the Coq output (extracted OCaml code, or error messages, or both warnings and code — all merged into a single string)
+
+> **Given** an active session
+> **When** `submit_command(session_id, "Print Assumptions my_theorem.")` is called
+> **Then** a string is returned containing the Coq output listing the assumptions
+
+> **Given** a session that has timed out
+> **When** `submit_command(session_id, "Check nat.")` is called
+> **Then** a `SESSION_EXPIRED` error is returned
+
+#### Output model
+
+The Coq process is spawned with stdout and stderr merged into a single stream. This is required because the sentinel-based end-of-output detection relies on a `Fail` command whose output destination varies across Coq/Rocq versions and flags. Merging at the OS level ensures the sentinel is always visible.
+
+Consumers that need to distinguish code from errors or warnings (e.g., the extraction handler) use pattern matching on the merged output string. The session manager does not perform any classification — it returns the raw merged output.
+
+#### Relationship to submit_tactic
+
+`submit_command` and `submit_tactic` serve different purposes:
+
+| Property | `submit_tactic` | `submit_command` |
+|----------|-----------------|------------------|
+| Return type | `ProofState` (structured) | `str` (raw merged output) |
+| State tracking | Updates `step_history` and `current_step` | No state tracking |
+| Use case | Interactive proof stepping | Extraction, notation inspection, assumption auditing, queries |
+| Concurrency | Serialized per session | Serialized per session |
+
+### 4.5 Premise Extraction
 
 #### get_premises(session_id)
 
@@ -254,7 +294,7 @@ When the CoqBackend reports raw premise references, the session manager shall cl
 
 Classification shall use the Coq environment's declaration metadata. When a local name shadows a global name, the premise shall be classified based on what Coq actually resolved — determined by Coq's scoping rules, not by name lookup in the global environment.
 
-### 4.5 Session Timeout
+### 4.6 Session Timeout
 
 The session manager shall run a periodic background sweep (interval is implementation-defined). For each session where `now - last_active_at > 30 minutes`:
 
@@ -264,7 +304,7 @@ The session manager shall run a periodic background sweep (interval is implement
 
 No notification is pushed to the client. The client discovers the timeout on the next `lookup_session` call via a `SESSION_EXPIRED` error.
 
-### 4.6 Crash Detection
+### 4.7 Crash Detection
 
 The session manager shall monitor each CoqBackend process. When a process exits unexpectedly:
 
@@ -315,6 +355,7 @@ The MCP server calls session manager functions in-process. The session manager r
 | `submit_tactic_batch(session_id, tactics)` | Session ID + string list | `BatchResult[]` | `SESSION_NOT_FOUND`, `SESSION_EXPIRED`, `BACKEND_CRASHED` |
 | `get_premises(session_id)` | Session ID string | `PremiseAnnotation[]` | `SESSION_NOT_FOUND`, `SESSION_EXPIRED`, `BACKEND_CRASHED`, `STEP_OUT_OF_RANGE` |
 | `get_step_premises(session_id, step)` | Session ID + integer | `PremiseAnnotation` | `SESSION_NOT_FOUND`, `SESSION_EXPIRED`, `BACKEND_CRASHED`, `STEP_OUT_OF_RANGE` |
+| `submit_command(session_id, command)` | Session ID + command string | `str` (merged Coq output) | `SESSION_NOT_FOUND`, `SESSION_EXPIRED`, `BACKEND_CRASHED` |
 
 Concurrency: the MCP server may call session manager functions concurrently from different tool handlers. The session manager serializes operations on the same session (§7.2).
 
@@ -359,6 +400,7 @@ The CoqBackend abstracts the difference between coq-lsp and SerAPI. The session 
 | `active` | `get_step_premises` | Valid step | Ensure stepped through, return premises | `active` |
 | `active` | `get_step_premises` | Invalid step | Return `STEP_OUT_OF_RANGE` | `active` |
 | `active` | `submit_tactic_batch` | — | Process sequentially per §4.3 | `active` |
+| `active` | `submit_command` | — | Send command, return output | `active` |
 | `active` | timeout sweep | Idle > 30 min | Kill backend, deregister, log | `timed_out` (terminal) |
 | `active` | backend crash | Process exited unexpectedly | Mark crashed, log | `crashed` |
 | `crashed` | `close_session` | — | Deregister | `closed` (terminal) |
@@ -377,7 +419,7 @@ The session registry shall support:
 |---------------|-----------|
 | Concurrent reads (list sessions, lookup by ID) | Safe without locking |
 | Registry writes (create, close, timeout sweep) | Serialized |
-| Per-session operations (submit tactic, step, observe) | Serialized per session; independent across sessions |
+| Per-session operations (submit tactic, submit command, step, observe) | Serialized per session; independent across sessions |
 
 Two concurrent operations on the same session (e.g., `submit_tactic` and `step_backward`) shall not interleave. Per-session locking ensures serial execution.
 

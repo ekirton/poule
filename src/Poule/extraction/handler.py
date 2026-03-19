@@ -179,6 +179,39 @@ def _parse_warnings(stderr: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Output splitting — separate code from error/warning lines (Section 4.3)
+# ---------------------------------------------------------------------------
+
+
+def _split_output(combined: str) -> tuple[str, str]:
+    """Split a combined coqtop output string into (stdout, stderr) components.
+
+    The real SessionManager.submit_command returns a single string that
+    merges stdout and stderr.  This function heuristically separates
+    error/warning lines (which would have appeared on stderr) from
+    extracted code (which would have appeared on stdout).
+
+    Lines starting with "Error:" or "Warning:" (possibly preceded by
+    whitespace or a filename/location prefix) are classified as stderr.
+    Everything else is classified as stdout.
+    """
+    if not combined.strip():
+        return ("", "")
+
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+
+    for line in combined.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("Error:") or stripped.startswith("Warning:"):
+            stderr_lines.append(line)
+        else:
+            stdout_lines.append(line)
+
+    return ("".join(stdout_lines).strip(), "".join(stderr_lines).strip())
+
+
+# ---------------------------------------------------------------------------
 # Entry points (Section 4.1, Section 4.4, Section 10)
 # ---------------------------------------------------------------------------
 
@@ -202,10 +235,11 @@ async def extract_code(
     cmd = build_command(definition_name, language, recursive)
 
     # Submit to Coq — SessionError propagates (Section 6, 7.1, 7.2)
+    # submit_command returns str: the merged Coq output (Section 6)
     response = await session_manager.submit_command(session_id, cmd)
 
-    stdout = response.stdout
-    stderr = response.stderr
+    # Split merged output into code vs error/warning lines (Section 4.3)
+    stdout, stderr = _split_output(response)
 
     # Section 4.3 / 7.4: stderr error takes priority over stdout code
     if _is_error(stderr):

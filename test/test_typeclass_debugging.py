@@ -305,7 +305,7 @@ class TestListInstances:
     @pytest.mark.requires_coq
     @pytest.mark.asyncio
     async def test_contract_list_instances_real_backend(self):
-        """Contract test: list_instances against real Coq backend."""
+        """Contract test: list_instances returns populated TypeclassInfo records (S4.1)."""
         list_instances, *_ = _import_debugging()
         TypeclassInfo, *_ = _import_types()
 
@@ -313,14 +313,49 @@ class TestListInstances:
         manager = ProofSessionManager()
         session_id = await manager.open_session("test_contract")
         try:
+            # Import a library with known typeclass instances
+            await manager.execute_vernacular(
+                session_id, "Require Import Coq.Classes.RelationClasses."
+            )
             result = await list_instances(
                 session_id=session_id,
-                typeclass_name="Eq",
+                typeclass_name="Equivalence",
                 session_manager=manager,
             )
             assert isinstance(result, list)
-            if result:
-                assert isinstance(result[0], TypeclassInfo)
+            assert len(result) > 0, (
+                "Equivalence should have instances (e.g. eq_equivalence) "
+                "after importing RelationClasses"
+            )
+            for info in result:
+                assert isinstance(info, TypeclassInfo)
+                assert info.instance_name, "instance_name must be non-empty (S5)"
+                assert info.typeclass_name == "Equivalence"
+                assert info.type_signature, "type_signature must be non-empty (S5)"
+                assert info.defining_module, "defining_module must be non-empty (S5)"
+        finally:
+            await manager.close_session(session_id)
+
+    @pytest.mark.requires_coq
+    @pytest.mark.asyncio
+    async def test_contract_list_instances_not_a_typeclass(self):
+        """Contract test: list_instances raises NOT_A_TYPECLASS for a non-typeclass (S7.1)."""
+        list_instances, *_ = _import_debugging()
+
+        from Poule.session.manager import ProofSessionManager
+        manager = ProofSessionManager()
+        session_id = await manager.open_session("test_contract")
+        try:
+            with pytest.raises(Exception) as exc_info:
+                await list_instances(
+                    session_id=session_id,
+                    typeclass_name="nat",
+                    session_manager=manager,
+                )
+            assert "NOT_A_TYPECLASS" in str(exc_info.value) or (
+                hasattr(exc_info.value, "code")
+                and exc_info.value.code == "NOT_A_TYPECLASS"
+            )
         finally:
             await manager.close_session(session_id)
 
@@ -409,7 +444,7 @@ class TestListTypeclasses:
     @pytest.mark.requires_coq
     @pytest.mark.asyncio
     async def test_contract_list_typeclasses_real_backend(self):
-        """Contract test: list_typeclasses against real Coq backend."""
+        """Contract test: list_typeclasses returns populated TypeclassSummary records (S4.1)."""
         _, list_typeclasses, *_ = _import_debugging()
         _, TypeclassSummary, *_ = _import_types()
 
@@ -417,13 +452,29 @@ class TestListTypeclasses:
         manager = ProofSessionManager()
         session_id = await manager.open_session("test_contract")
         try:
+            # Import a library to ensure typeclasses are in scope
+            await manager.execute_vernacular(
+                session_id, "Require Import Coq.Classes.RelationClasses."
+            )
             result = await list_typeclasses(
                 session_id=session_id,
                 session_manager=manager,
             )
             assert isinstance(result, list)
-            if result:
-                assert isinstance(result[0], TypeclassSummary)
+            assert len(result) > 0, (
+                "Rocq environment should have typeclasses after importing RelationClasses"
+            )
+            for summary in result:
+                assert isinstance(summary, TypeclassSummary)
+                assert summary.typeclass_name, "typeclass_name must be non-empty (S5)"
+                assert isinstance(summary.instance_count, (int, type(None)))
+            # With fewer than 200 typeclasses, instance_count should be populated (S4.1)
+            if len(result) <= 200:
+                for summary in result:
+                    assert summary.instance_count is not None, (
+                        f"instance_count should be non-null for {summary.typeclass_name} "
+                        "when total typeclasses <= 200 (S4.1)"
+                    )
         finally:
             await manager.close_session(session_id)
 
@@ -604,14 +655,19 @@ class TestTraceResolution:
 
     @pytest.mark.requires_coq
     @pytest.mark.asyncio
-    async def test_contract_trace_resolution_no_goal_error(self):
-        """Contract test: trace_resolution returns NO_TYPECLASS_GOAL with no proof goal."""
+    async def test_contract_trace_resolution_no_typeclass_goal(self):
+        """Contract test: trace_resolution at non-typeclass goal returns NO_TYPECLASS_GOAL (S4.2)."""
         _, _, trace_resolution, *_ = _import_debugging()
 
         from Poule.session.manager import ProofSessionManager
         manager = ProofSessionManager()
         session_id = await manager.open_session("test_contract")
         try:
+            # Start a proof whose goal does not involve typeclass resolution
+            await manager.execute_vernacular(
+                session_id, "Lemma add_0_r : forall n : nat, n + 0 = n."
+            )
+            await manager.execute_vernacular(session_id, "Proof.")
             with pytest.raises(Exception) as exc_info:
                 await trace_resolution(
                     session_id=session_id,
@@ -620,6 +676,35 @@ class TestTraceResolution:
             assert "NO_TYPECLASS_GOAL" in str(exc_info.value) or (
                 hasattr(exc_info.value, "code") and exc_info.value.code == "NO_TYPECLASS_GOAL"
             )
+        finally:
+            await manager.close_session(session_id)
+
+    @pytest.mark.requires_coq
+    @pytest.mark.asyncio
+    async def test_contract_trace_resolution_cleanup_guarantee(self):
+        """Contract test: debug flag is cleaned up even after NO_TYPECLASS_GOAL (S7.4).
+
+        After trace_resolution raises NO_TYPECLASS_GOAL, sending a subsequent
+        vernacular command should succeed without debug output leaking.
+        """
+        _, _, trace_resolution, *_ = _import_debugging()
+
+        from Poule.session.manager import ProofSessionManager
+        manager = ProofSessionManager()
+        session_id = await manager.open_session("test_contract")
+        try:
+            await manager.execute_vernacular(
+                session_id, "Lemma cleanup_test : forall n : nat, n = n."
+            )
+            await manager.execute_vernacular(session_id, "Proof.")
+            with pytest.raises(Exception):
+                await trace_resolution(
+                    session_id=session_id,
+                    session_manager=manager,
+                )
+            # Session should still be usable after the error -- debug flag was cleaned up
+            response = await manager.execute_vernacular(session_id, "Check nat.")
+            assert isinstance(response, str)
         finally:
             await manager.close_session(session_id)
 
