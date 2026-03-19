@@ -56,6 +56,23 @@ The launchers manage:
 - Persistent home directory at `~/poule-home/`
 - Claude Code MCP server auto-configuration
 
+### Persistent home directory
+
+State is preserved across sessions in `~/poule-home`:
+
+```
+~/poule-home/
+├── .claude/          # Claude Code settings, MCP config, auth
+└── .ssh/             # SSH keys (copy from host)
+```
+
+To set up git and SSH inside the container, copy your existing config:
+
+```bash
+cp ~/.gitconfig ~/poule-home/.gitconfig
+cp -r ~/.ssh ~/poule-home/.ssh
+```
+
 ### MCP server lifecycle
 
 The Poule MCP server runs in **streamable-HTTP mode** as a background daemon inside the container, so Claude Code connects to it over HTTP rather than via a spawned subprocess. This lets the developer (or Claude itself) restart the server after editing code without exiting Claude.

@@ -308,7 +308,7 @@ echo ""
 # ── Detect Poule CLI subcommands ─────────────────────────────────────────────
 # If the first arg is a known poule subcommand, route to the poule CLI
 # inside the container.  Otherwise pass args through as-is.
-POULE_SUBCOMMANDS="search-by-name|search-by-type|search-by-structure|search-by-symbols|get-lemma|find-related|list-modules|download-index|replay-proof|extract|extract-deps|quality-report"
+POULE_SUBCOMMANDS="search-by-name|search-by-type|search-by-structure|search-by-symbols|get-lemma|find-related|list-modules|replay-proof|extract|extract-deps|quality-report"
 
 if [ ${#ARGS[@]} -eq 0 ]; then
     # No command: entrypoint starts MCP server, syncs commands, launches Claude.

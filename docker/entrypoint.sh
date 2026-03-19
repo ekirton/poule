@@ -7,6 +7,7 @@ set -euo pipefail
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share"
 ln -sf "$(ls -d /opt/claude/versions/* | head -1)" "$HOME/.local/bin/claude"
 ln -sf /opt/claude "$HOME/.local/share/claude"
+export PATH="$HOME/.local/bin:$PATH"
 
 # ── Slash commands ────────────────────────────────────────────────────────────
 # Symlink each baked-in slash command individually so user-added commands

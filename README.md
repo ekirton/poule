@@ -18,11 +18,11 @@ Six Coq libraries are available as prebuilt indexes: **stdlib**, **MathComp**, *
 - **Structural** — Weisfeiler-Lehman graph kernels, tree edit distance, and collapse matching
 - **Symbol** — MePo-style iterative relevance filtering with weighted symbol overlap
 - **Lexical** — FTS5 full-text search over names, statements, and modules
-- **Neural** — bi-encoder embeddings (INT8, CPU-only) fused with symbolic channels via RRF
+- **Neural** *(NYI)* — bi-encoder embeddings (INT8, CPU-only) fused with symbolic channels via RRF
 - **Type** — multi-channel fusion combining all of the above
 - **Dependency navigation** — `uses`, `used_by`, `same_module`, `same_typeclass`
 
-### Neural Premise Selection
+### Neural Premise Selection *(NYI)*
 
 - Train a bi-encoder on proof traces with masked contrastive loss and hard negative mining
 - Evaluate with Recall@k and MRR; compare neural vs. symbolic retrieval
@@ -77,61 +77,25 @@ cp poule/bin/poule ~/bin/poule
 chmod +x ~/bin/poule
 ```
 
-**2. Add to your `~/.zshrc`**
+Make sure `~/bin` is on your `PATH` (add `export PATH="$HOME/bin:$PATH"` to your `~/.zshrc` if needed).
+
+**2. Run**
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...          # your Anthropic API key
-export POULE_PROJECT_DIR=~/Projects/my-coq-project   # your Coq project
+poule          # run this from your project dir
 ```
 
-Make sure `~/bin` is on your `PATH` (add `export PATH="$HOME/bin:$PATH"` if needed).
-
-**3. Run**
-
-```bash
-poule          # launches Claude Code with your project mounted
-```
+To always start with the same project regardless of your current directory, set `POULE_PROJECT_DIR` (e.g. add `export POULE_PROJECT_DIR=~/Projects/my-coq-project` to your `~/.zshrc`).
 
 Everything runs inside the container — no local Coq, Python, or opam installation required. All six supported libraries are pre-installed in the container for proof interaction. Claude Code and the search index are baked into the image for instant startup. On first run, the launcher pulls the image and initializes a persistent home directory at `~/poule-home`.
 
-To run a one-off command instead:
-
-```bash
-poule coqc --version   # run a command in the container
-```
-
-If you want to use a different project for a one-off session, just `cd` into it and run `poule` — the launcher falls back to `$PWD` when `POULE_PROJECT_DIR` is not set.
-
 ### Library indexes
 
-All 6 supported libraries are indexed and baked into the container image at build time. The index is validated against the installed Coq and library versions during the Docker build — a version mismatch fails the build. A startup message confirms which libraries are currently indexed.
-
-### Persistent home directory
-
-State is preserved across sessions in `~/poule-home`:
-
-```
-~/poule-home/
-├── .claude/          # Claude Code settings, MCP config, auth
-└── .ssh/             # SSH keys (copy from host)
-```
-
-To set up git and SSH inside the container, copy your existing config:
-
-```bash
-cp ~/.gitconfig ~/poule-home/.gitconfig
-cp -r ~/.ssh ~/poule-home/.ssh
-```
+All supported libraries (**stdlib**, **MathComp**, **std++**, **Flocq**, **Coquelicot**, **CoqInterval**) are indexed and baked into the container image at build time. The index is validated against the installed Coq and library versions during the Docker build — a version mismatch fails the build. A startup message confirms which libraries are currently indexed.
 
 ### Updating
 
-The launcher pulls the latest image each time it runs and checks for Claude Code updates. If a newer Claude Code version is available, it defers the update to exit time so your session isn't interrupted. The search index is baked into each image — pulling a new image automatically gets the latest index.
-
-```bash
-poule --no-pull          # Skip pulling the latest image
-poule --no-auto-update   # Skip Claude Code update check
-poule --rebuild          # Force update Claude Code immediately
-```
+The launcher automatically pulls the latest container image each time you run `poule`. The image includes Claude Code, the search index, and all Coq libraries — everything updates together.
 
 ## Use with Claude Code
 
@@ -139,17 +103,25 @@ poule --rebuild          # Force update Claude Code immediately
 
 For example, you can ask Claude things like:
 
-**Search:**
+**Search — find lemmas you didn't know existed:**
 - *"Find lemmas about list reversal being involutive"*
 - *"Search for lemmas with type `forall n : nat, n + 0 = n`"*
+- *"I need a lemma that says filtering a list twice is the same as filtering once"*
+- *"What MathComp lemmas deal with matrix determinants?"*
+- *"Find something in Flocq about rounding errors on addition"*
+
+**Exploration — navigate unfamiliar libraries:**
 - *"What's in the Coq.Arith module?"*
+- *"Give me an overview of the MathComp ssreflect sequence lemmas"*
+- *"What typeclasses does std++ provide for finite maps?"*
+- *"How does Coquelicot define integration?"*
 
 **Proof interaction:**
 - *"Open a proof session on `rev_involutive` in `examples/lists.v` and show me the current goal"*
 - *"Step through the proof of `add_comm` in `examples/arith.v` and explain each tactic"*
 - *"Try applying `intros` then `induction n` in my current proof session"*
 
-**Dependencies:**
+**Dependencies — understand how lemmas connect:**
 - *"What lemmas does `Nat.add_comm` depend on?"*
 - *"Which lemmas use `Nat.add_0_r`?"*
 - *"Show me other lemmas in the same module as `List.rev_append`"*
@@ -202,6 +174,10 @@ poule --help
 ## Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for architecture, project structure, testing, and documentation layers.
+
+## FAQ
+
+See [FAQ.md](FAQ.md).
 
 ## License
 
