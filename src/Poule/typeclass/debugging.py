@@ -70,7 +70,12 @@ async def list_instances(
     )
 
     # Check for error responses
-    if response and "is not a typeclass" in response.lower():
+    # Coq says "is not a typeclass", Rocq says "is not a declared type class"
+    resp_lower = response.lower() if response else ""
+    if resp_lower and (
+        "is not a typeclass" in resp_lower
+        or "is not a declared type class" in resp_lower
+    ):
         raise TypeclassError(
             "NOT_A_TYPECLASS",
             f"`{typeclass_name}` is not a registered typeclass.",
@@ -84,11 +89,25 @@ async def list_instances(
     if not response or not response.strip():
         return []
 
-    results: List[TypeclassInfo] = []
-    for line in response.strip().split("\n"):
-        line = line.strip()
-        if not line:
+    # Join continuation lines.  A new instance entry looks like
+    # "instance_name : type_signature" where the name is an identifier
+    # (letters, digits, dots, underscores, angle-bracket prefixes).
+    # Continuation lines start with type-expression keywords like "forall".
+    _ENTRY_RE = re.compile(r"^[A-Za-z0-9_.<> ]+\s*:")
+    raw_lines = response.strip().split("\n")
+    joined_lines: List[str] = []
+    for raw_line in raw_lines:
+        stripped = raw_line.strip()
+        if not stripped:
             continue
+        if _ENTRY_RE.match(stripped) or not joined_lines:
+            joined_lines.append(stripped)
+        else:
+            # Continuation of previous line
+            joined_lines[-1] += " " + stripped
+
+    results: List[TypeclassInfo] = []
+    for line in joined_lines:
         info = _parse_instance_line(line, typeclass_name)
         if info is not None:
             results.append(info)
@@ -101,6 +120,14 @@ def _parse_instance_line(line: str, typeclass_name: str) -> Optional[TypeclassIn
 
     Expected format: "InstanceName : type signature"
     """
+    # Strip REPL prompt prefix (e.g. "Rocq < ")
+    line = re.sub(r"^Rocq\s*<\s*", "", line)
+    # Strip REPL trailing pipe/number suffix (e.g. "| 10")
+    line = re.sub(r"\s*\|\s*\d+\s*$", "", line)
+    line = line.strip()
+    if not line:
+        return None
+
     # Split on first ':'
     parts = line.split(":", 1)
     if len(parts) < 2:
@@ -251,6 +278,13 @@ async def trace_resolution(
     try:
         root_nodes = parser.parse(debug_output)
     except Exception:
+        # Parser raised — check whether the output even contains typeclass
+        # resolution lines before classifying as a parse error.
+        if "looking for" not in debug_output:
+            raise TypeclassError(
+                "NO_TYPECLASS_GOAL",
+                "The current goal does not involve typeclass resolution.",
+            )
         raise TypeclassError(
             "PARSE_ERROR",
             "Failed to parse typeclass debug output. Raw output is included in the response.",
@@ -261,7 +295,10 @@ async def trace_resolution(
         # If parser returned no nodes, check whether this is because there
         # was no typeclass goal (no debug resolution lines at all) vs an
         # actual parse failure (debug lines present but unparseable).
-        if "looking for" not in debug_output:
+        # Also treat "Proof search failed" with zero matches as no typeclass goal,
+        # since typeclasses eauto was invoked on a non-typeclass goal.
+        has_resolution_lines = "looking for" in debug_output and "trying" in debug_output
+        if not has_resolution_lines:
             raise TypeclassError(
                 "NO_TYPECLASS_GOAL",
                 "The current goal does not involve typeclass resolution.",
