@@ -697,8 +697,8 @@ class TestSchemaVersionMismatch:
 # ===========================================================================
 
 
-class TestDbOptionRequired:
-    """--db is required for all subcommands."""
+class TestDbOptionDefault:
+    """--db defaults to /data/index.db when not specified."""
 
     @pytest.mark.parametrize("subcmd", [
         ["search-by-name", "foo"],
@@ -709,10 +709,11 @@ class TestDbOptionRequired:
         ["find-related", "--relation", "uses", "Nat.add_comm"],
         ["list-modules"],
     ])
-    def test_missing_db_exits_usage_error(self, runner, subcmd):
+    def test_missing_db_does_not_exit_usage_error(self, runner, subcmd):
+        """Without --db, commands use the default path — no usage error (exit 2)."""
         cli = _import_cli()
         result = runner.invoke(cli, subcmd)
-        assert result.exit_code == 2
+        assert result.exit_code != 2
 
 
 # ===========================================================================

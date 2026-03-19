@@ -30,41 +30,40 @@ from Poule.cli.startup_check import (
 # ---------------------------------------------------------------------------
 
 
-def _create_per_library_db(
+def _create_index_db(
     path: Path,
-    library_name: str,
+    libraries: list[str],
+    library_versions: dict[str, str] | None = None,
     coq_version: str = "8.19.2",
     schema_version: str = "1",
-    library_version: str = "1.0.0",
 ) -> Path:
-    """Create a minimal per-library index database."""
-    decl = {
-        "name": f"{library_name}.test_decl",
-        "module": library_name,
-        "kind": "definition",
-        "statement": "test",
-        "type_expr": "nat",
-        "constr_tree": None,
-        "node_count": 1,
-        "symbol_set": [],
-    }
+    """Create a minimal merged index.db with the given libraries."""
+    if library_versions is None:
+        library_versions = {lib: "1.0.0" for lib in libraries}
+
     writer = IndexWriter.create(path)
-    writer.insert_declarations([decl])
+    decls = []
+    for lib in libraries:
+        decls.append({
+            "name": f"{lib}.test_decl",
+            "module": lib,
+            "kind": "definition",
+            "statement": "test",
+            "type_expr": "nat",
+            "constr_tree": None,
+            "node_count": 1,
+            "symbol_set": [],
+        })
+    writer.insert_declarations(decls)
     writer.insert_wl_vectors([])
     writer.insert_symbol_freq({})
     writer.write_meta("schema_version", schema_version)
     writer.write_meta("coq_version", coq_version)
-    writer.write_meta("libraries", json.dumps([library_name]))
-    writer.write_meta("library_versions", json.dumps({library_name: library_version}))
+    writer.write_meta("libraries", json.dumps(libraries))
+    writer.write_meta("library_versions", json.dumps(library_versions))
     writer.write_meta("created_at", "2026-03-18T00:00:00Z")
     writer.finalize()
     return path
-
-
-def _write_config(libs_dir: Path, libraries: list[str]) -> None:
-    """Write a config.toml with the given libraries."""
-    config = libs_dir / "config.toml"
-    config.write_text(f'[index]\nlibraries = {json.dumps(libraries)}\n')
 
 
 # ===========================================================================
@@ -82,164 +81,107 @@ class TestReadIndexedLibraries:
 
     def test_reads_libraries_from_metadata(self, tmp_path):
         """Reads libraries JSON array from index_meta."""
-        from Poule.storage.merge import merge_indexes
-
-        db = _create_per_library_db(tmp_path / "index-stdlib.db", "stdlib")
         dest = tmp_path / "index.db"
-        merge_indexes([("stdlib", db)], dest)
+        _create_index_db(dest, ["stdlib"])
         result = _read_indexed_libraries(dest)
         assert result == {"stdlib"}
 
     def test_reads_multiple_libraries(self, tmp_path):
-        """Two libraries merged → both returned."""
-        from Poule.storage.merge import merge_indexes
-
-        db1 = _create_per_library_db(tmp_path / "index-stdlib.db", "stdlib")
-        db2 = _create_per_library_db(tmp_path / "index-mathcomp.db", "mathcomp")
+        """Multiple libraries in index → all returned."""
         dest = tmp_path / "index.db"
-        merge_indexes([("stdlib", db1), ("mathcomp", db2)], dest)
+        _create_index_db(dest, ["stdlib", "mathcomp"])
         result = _read_indexed_libraries(dest)
         assert result == {"stdlib", "mathcomp"}
 
 
 # ===========================================================================
-# 2. startup_check — config matches index
+# 2. startup_check — index.db exists
 # ===========================================================================
 
 
-class TestStartupCheckMatches:
-    """When config matches index, no rebuild occurs."""
+class TestStartupCheckExists:
+    """When index.db exists, startup_check reports status without downloading."""
 
-    def test_no_rebuild_when_config_matches(self, tmp_path):
-        """Config lists stdlib, index.db contains stdlib → no merge called."""
-        from Poule.storage.merge import merge_indexes
-
-        db = _create_per_library_db(
-            tmp_path / "index-stdlib.db", "stdlib", library_version="8.19.2"
+    def test_reports_status_when_index_exists(self, tmp_path, capsys):
+        """index.db present → reports libraries, no download attempted."""
+        _create_index_db(
+            tmp_path / "index.db",
+            ["stdlib", "mathcomp"],
+            {"stdlib": "8.19.2", "mathcomp": "2.2.0"},
         )
-        merge_indexes([("stdlib", db)], tmp_path / "index.db")
-        _write_config(tmp_path, ["stdlib"])
 
-        with patch("Poule.cli.startup_check.merge_indexes") as mock_merge:
+        with patch("Poule.cli.startup_check._download_index") as mock_dl:
             startup_check(tmp_path)
-            mock_merge.assert_not_called()
+            mock_dl.assert_not_called()
 
+        captured = capsys.readouterr()
+        assert "stdlib 8.19.2" in captured.err
+        assert "mathcomp 2.2.0" in captured.err
 
-# ===========================================================================
-# 3. startup_check — config differs from index
-# ===========================================================================
-
-
-class TestStartupCheckMismatch:
-    """When config differs from index, rebuild occurs."""
-
-    def test_rebuilds_when_library_added(self, tmp_path):
-        """Config adds mathcomp, only stdlib indexed → merge called."""
-        from Poule.storage.merge import merge_indexes as real_merge
-
-        db1 = _create_per_library_db(
-            tmp_path / "index-stdlib.db", "stdlib", library_version="8.19.2"
-        )
-        real_merge([("stdlib", db1)], tmp_path / "index.db")
-
-        # Add mathcomp per-library db and update config
-        _create_per_library_db(
-            tmp_path / "index-mathcomp.db", "mathcomp", library_version="2.2.0"
-        )
-        _write_config(tmp_path, ["stdlib", "mathcomp"])
+    def test_reports_all_six_libraries(self, tmp_path, capsys):
+        """index.db with all 6 libraries → all reported."""
+        all_libs = ["stdlib", "mathcomp", "stdpp", "flocq", "coquelicot", "coqinterval"]
+        versions = {lib: f"{i}.0.0" for i, lib in enumerate(all_libs)}
+        _create_index_db(tmp_path / "index.db", all_libs, versions)
 
         startup_check(tmp_path)
 
-        # Verify the merged index now has both libraries
-        result = _read_indexed_libraries(tmp_path / "index.db")
-        assert result == {"stdlib", "mathcomp"}
-
-    def test_rebuilds_when_library_removed(self, tmp_path):
-        """Config has only stdlib, index has stdlib+mathcomp → rebuild."""
-        from Poule.storage.merge import merge_indexes as real_merge
-
-        db1 = _create_per_library_db(
-            tmp_path / "index-stdlib.db", "stdlib", library_version="8.19.2"
-        )
-        db2 = _create_per_library_db(
-            tmp_path / "index-mathcomp.db", "mathcomp", library_version="2.2.0"
-        )
-        real_merge([("stdlib", db1), ("mathcomp", db2)], tmp_path / "index.db")
-
-        _write_config(tmp_path, ["stdlib"])
-
-        startup_check(tmp_path)
-
-        result = _read_indexed_libraries(tmp_path / "index.db")
-        assert result == {"stdlib"}
-
-    def test_builds_from_scratch_when_no_index(self, tmp_path):
-        """No index.db, per-library files exist → merge creates index.db."""
-        _create_per_library_db(
-            tmp_path / "index-stdlib.db", "stdlib", library_version="8.19.2"
-        )
-        _write_config(tmp_path, ["stdlib"])
-
-        startup_check(tmp_path)
-
-        assert (tmp_path / "index.db").exists()
-        result = _read_indexed_libraries(tmp_path / "index.db")
-        assert result == {"stdlib"}
+        captured = capsys.readouterr()
+        for lib in all_libs:
+            assert lib in captured.err
 
 
 # ===========================================================================
-# 4. startup_check — missing per-library files trigger download
+# 3. startup_check — index.db missing triggers download
 # ===========================================================================
 
 
 class TestStartupCheckDownload:
-    """When per-library index files are missing, download is attempted."""
+    """When index.db is missing, startup_check attempts to download it."""
 
-    def test_downloads_missing_libraries(self, tmp_path):
-        """Config lists stdlib but index-stdlib.db missing → download called."""
-        _write_config(tmp_path, ["stdlib"])
-
-        with patch("Poule.cli.startup_check._download_missing") as mock_dl:
+    def test_downloads_when_index_missing(self, tmp_path):
+        """No index.db → _download_index called."""
+        with patch("Poule.cli.startup_check._download_index") as mock_dl:
             startup_check(tmp_path)
-            mock_dl.assert_called_once()
-            args = mock_dl.call_args[0]
-            assert "stdlib" in args[1]  # missing list
+            mock_dl.assert_called_once_with(tmp_path / "index.db")
 
-    def test_skips_download_when_files_exist(self, tmp_path):
-        """Per-library files exist, no index.db → merge only, no download."""
-        _create_per_library_db(
-            tmp_path / "index-stdlib.db", "stdlib", library_version="8.19.2"
-        )
-        _write_config(tmp_path, ["stdlib"])
-
-        with patch("Poule.cli.startup_check._download_missing") as mock_dl:
+    def test_prints_error_on_download_failure(self, tmp_path, capsys):
+        """Download fails → error message printed, no crash."""
+        with patch(
+            "Poule.cli.startup_check._download_index",
+            side_effect=RuntimeError("network error"),
+        ):
             startup_check(tmp_path)
-            mock_dl.assert_not_called()
+
+        captured = capsys.readouterr()
+        assert "Download failed" in captured.err
+        assert "download-index" in captured.err
 
 
 # ===========================================================================
-# 5. startup_check — default config
+# 4. _read_library_versions
 # ===========================================================================
 
 
-class TestStartupCheckDefaultConfig:
-    """When no config.toml exists, defaults to stdlib."""
+class TestReadLibraryVersions:
+    """Read library version metadata from index.db."""
 
-    def test_defaults_to_stdlib(self, tmp_path):
-        """No config.toml → acts as if libraries = ["stdlib"]."""
-        _create_per_library_db(
-            tmp_path / "index-stdlib.db", "stdlib", library_version="8.19.2"
-        )
-        # No config.toml written
+    def test_returns_empty_when_no_index(self, tmp_path):
+        """No index.db → empty dict."""
+        result = _read_library_versions(tmp_path / "index.db")
+        assert result == {}
 
-        startup_check(tmp_path)
-
-        result = _read_indexed_libraries(tmp_path / "index.db")
-        assert result == {"stdlib"}
+    def test_reads_versions(self, tmp_path):
+        """Reads library_versions JSON from index_meta."""
+        dest = tmp_path / "index.db"
+        versions = {"stdlib": "8.19.2", "mathcomp": "2.2.0"}
+        _create_index_db(dest, ["stdlib", "mathcomp"], versions)
+        result = _read_library_versions(dest)
+        assert result == versions
 
 
 # ===========================================================================
-# 6. Entrypoint wiring
+# 5. Entrypoint wiring
 # ===========================================================================
 
 

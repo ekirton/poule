@@ -40,28 +40,33 @@ SAMPLE_DB_SHA256 = hashlib.sha256(SAMPLE_DB_CONTENT).hexdigest()
 SAMPLE_ONNX_CONTENT = b"fake-onnx-model-bytes"
 SAMPLE_ONNX_SHA256 = hashlib.sha256(SAMPLE_ONNX_CONTENT).hexdigest()
 
-SAMPLE_STDLIB_CONTENT = b"fake-stdlib-index-content"
-SAMPLE_STDLIB_SHA256 = hashlib.sha256(SAMPLE_STDLIB_CONTENT).hexdigest()
+ALL_LIBRARIES = ["stdlib", "stdpp", "mathcomp", "flocq", "coqinterval", "coquelicot"]
 
-SAMPLE_MATHCOMP_CONTENT = b"fake-mathcomp-index-content"
-SAMPLE_MATHCOMP_SHA256 = hashlib.sha256(SAMPLE_MATHCOMP_CONTENT).hexdigest()
+# Generate sample content and checksums for each library
+SAMPLE_LIB_CONTENT = {}
+SAMPLE_LIB_SHA256 = {}
+for _lib in ALL_LIBRARIES:
+    content = f"fake-{_lib}-index-content".encode()
+    SAMPLE_LIB_CONTENT[_lib] = content
+    SAMPLE_LIB_SHA256[_lib] = hashlib.sha256(content).hexdigest()
+
+# Keep backward-compatible aliases used by existing tests
+SAMPLE_STDLIB_CONTENT = SAMPLE_LIB_CONTENT["stdlib"]
+SAMPLE_STDLIB_SHA256 = SAMPLE_LIB_SHA256["stdlib"]
+SAMPLE_MATHCOMP_CONTENT = SAMPLE_LIB_CONTENT["mathcomp"]
+SAMPLE_MATHCOMP_SHA256 = SAMPLE_LIB_SHA256["mathcomp"]
 
 SAMPLE_MANIFEST = {
     "schema_version": "1",
     "coq_version": "8.19",
     "libraries": {
-        "stdlib": {
-            "version": "8.19.2",
-            "sha256": SAMPLE_STDLIB_SHA256,
-            "asset_name": "index-stdlib.db",
-            "declarations": 12450,
-        },
-        "mathcomp": {
-            "version": "2.2.0",
-            "sha256": SAMPLE_MATHCOMP_SHA256,
-            "asset_name": "index-mathcomp.db",
-            "declarations": 8320,
-        },
+        lib: {
+            "version": f"{i}.0.0",
+            "sha256": SAMPLE_LIB_SHA256[lib],
+            "asset_name": f"index-{lib}.db",
+            "declarations": 1000 * (i + 1),
+        }
+        for i, lib in enumerate(ALL_LIBRARIES)
     },
     "onnx_model_sha256": SAMPLE_ONNX_SHA256,
     "created_at": "2026-03-18T00:00:00Z",
@@ -70,31 +75,25 @@ SAMPLE_MANIFEST = {
 
 def _make_release(tag: str = "index-v1-coq8.19") -> dict:
     """Create a fake GitHub release dict."""
-    return {
-        "tag_name": tag,
-        "assets": [
-            {
-                "name": "manifest.json",
-                "browser_download_url": "https://example.com/manifest.json",
-                "url": "https://api.github.com/repos/ekirton/Poule/releases/assets/1",
-            },
-            {
-                "name": "index-stdlib.db",
-                "browser_download_url": "https://example.com/index-stdlib.db",
-                "url": "https://api.github.com/repos/ekirton/Poule/releases/assets/2",
-            },
-            {
-                "name": "index-mathcomp.db",
-                "browser_download_url": "https://example.com/index-mathcomp.db",
-                "url": "https://api.github.com/repos/ekirton/Poule/releases/assets/3",
-            },
-            {
-                "name": "neural-premise-selector.onnx",
-                "browser_download_url": "https://example.com/model.onnx",
-                "url": "https://api.github.com/repos/ekirton/Poule/releases/assets/4",
-            },
-        ],
-    }
+    assets = [
+        {
+            "name": "manifest.json",
+            "browser_download_url": "https://example.com/manifest.json",
+            "url": "https://api.github.com/repos/ekirton/Poule/releases/assets/1",
+        },
+    ]
+    for i, lib in enumerate(ALL_LIBRARIES):
+        assets.append({
+            "name": f"index-{lib}.db",
+            "browser_download_url": f"https://example.com/index-{lib}.db",
+            "url": f"https://api.github.com/repos/ekirton/Poule/releases/assets/{i + 2}",
+        })
+    assets.append({
+        "name": "neural-premise-selector.onnx",
+        "browser_download_url": "https://example.com/model.onnx",
+        "url": f"https://api.github.com/repos/ekirton/Poule/releases/assets/{len(ALL_LIBRARIES) + 2}",
+    })
+    return {"tag_name": tag, "assets": assets}
 
 
 def _mock_urlopen(url_to_content: dict):
@@ -242,32 +241,27 @@ class TestFindAsset:
 class TestDownloadIndexCommand:
     """CLI download-index command end-to-end with mocked network."""
 
-    def _invoke_download(self, runner, tmp_path, libraries=None, extra_args=None):
+    def _invoke_download(self, runner, tmp_path, extra_args=None):
         """Invoke download-index with fully mocked network I/O."""
         libs_dir = tmp_path / "libraries"
         libs_dir.mkdir()
-
-        # Write config
-        if libraries:
-            config = libs_dir / "config.toml"
-            config.write_text(f'[index]\nlibraries = {json.dumps(libraries)}\n')
 
         releases = [_make_release()]
         manifest_bytes = json.dumps(SAMPLE_MANIFEST).encode()
 
         url_map = {
             "https://example.com/manifest.json": manifest_bytes,
-            "https://example.com/index-stdlib.db": SAMPLE_STDLIB_CONTENT,
-            "https://example.com/index-mathcomp.db": SAMPLE_MATHCOMP_CONTENT,
             "https://example.com/model.onnx": SAMPLE_ONNX_CONTENT,
         }
+        for lib in ALL_LIBRARIES:
+            url_map[f"https://example.com/index-{lib}.db"] = SAMPLE_LIB_CONTENT[lib]
 
         with patch("Poule.cli.download.urllib.request.urlopen") as mock_open, \
              patch("Poule.cli.download.merge_indexes", return_value={
                  "total_declarations": 100,
                  "total_dependencies": 50,
                  "dropped_dependencies": 0,
-                 "libraries": libraries or ["stdlib"],
+                 "libraries": ALL_LIBRARIES,
              }) as mock_merge:
             def _routing_side_effect(req):
                 url = req.full_url if hasattr(req, "full_url") else str(req)
@@ -296,33 +290,21 @@ class TestDownloadIndexCommand:
         return result, libs_dir, mock_merge
 
     def test_downloads_per_library_indexes(self, runner, tmp_path):
-        """§4.9: Downloads per-library index files to libraries dir."""
-        result, libs_dir, _ = self._invoke_download(
-            runner, tmp_path, libraries=["stdlib"]
-        )
+        """§4.9: Downloads all 6 per-library index files to libraries dir."""
+        result, libs_dir, _ = self._invoke_download(runner, tmp_path)
         assert result.exit_code == 0, result.output
-        assert (libs_dir / "index-stdlib.db").exists()
-
-    def test_downloads_only_configured_libraries(self, runner, tmp_path):
-        """§4.9: Only downloads libraries in config."""
-        result, libs_dir, _ = self._invoke_download(
-            runner, tmp_path, libraries=["stdlib"]
-        )
-        assert result.exit_code == 0, result.output
-        assert (libs_dir / "index-stdlib.db").exists()
-        assert not (libs_dir / "index-mathcomp.db").exists()
+        for lib in ALL_LIBRARIES:
+            assert (libs_dir / f"index-{lib}.db").exists()
 
     def test_calls_merge_indexes(self, runner, tmp_path):
         """§4.9: After download, merge_indexes is called."""
-        result, libs_dir, mock_merge = self._invoke_download(
-            runner, tmp_path, libraries=["stdlib"]
-        )
+        result, libs_dir, mock_merge = self._invoke_download(runner, tmp_path)
         assert result.exit_code == 0, result.output
         mock_merge.assert_called_once()
 
     def test_prints_done_on_success(self, runner, tmp_path):
         """§4.9: Prints summary on success."""
-        result, _, _ = self._invoke_download(runner, tmp_path, libraries=["stdlib"])
+        result, _, _ = self._invoke_download(runner, tmp_path)
         assert result.exit_code == 0
         assert "Done" in result.output
 
@@ -331,7 +313,6 @@ class TestDownloadIndexCommand:
         model_dir = tmp_path / "models"
         result, _, _ = self._invoke_download(
             runner, tmp_path,
-            libraries=["stdlib"],
             extra_args=["--include-model", "--model-dir", str(model_dir)],
         )
         assert result.exit_code == 0, result.output
@@ -341,11 +322,9 @@ class TestDownloadIndexCommand:
 
     def test_include_model_null_onnx_prints_warning_and_skips(self, runner, tmp_path):
         """§4.7: --include-model but onnx_model_sha256 is null → warning, skip, exit 0."""
+        model_dir = tmp_path / "models"
         libs_dir = tmp_path / "libraries"
         libs_dir.mkdir()
-        config = libs_dir / "config.toml"
-        config.write_text('[index]\nlibraries = ["stdlib"]\n')
-        model_dir = tmp_path / "models"
         manifest_no_onnx = {
             **SAMPLE_MANIFEST,
             "onnx_model_sha256": None,
@@ -355,15 +334,16 @@ class TestDownloadIndexCommand:
 
         url_map = {
             "https://example.com/manifest.json": manifest_bytes,
-            "https://example.com/index-stdlib.db": SAMPLE_STDLIB_CONTENT,
         }
+        for lib in ALL_LIBRARIES:
+            url_map[f"https://example.com/index-{lib}.db"] = SAMPLE_LIB_CONTENT[lib]
 
         with patch("Poule.cli.download.urllib.request.urlopen") as mock_open, \
              patch("Poule.cli.download.merge_indexes", return_value={
                  "total_declarations": 100,
                  "total_dependencies": 50,
                  "dropped_dependencies": 0,
-                 "libraries": ["stdlib"],
+                 "libraries": ALL_LIBRARIES,
              }):
             def _routing(req):
                 url = req.full_url if hasattr(req, "full_url") else str(req)
