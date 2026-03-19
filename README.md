@@ -106,7 +106,7 @@ If you want to use a different project for a one-off session, just `cd` into it 
 
 All 6 supported libraries are indexed automatically on first run. The container checks whether the search index is present on every startup and downloads it if missing. A startup message confirms which libraries are currently indexed.
 
-Library indexes are stored in `~/poule-libraries/`. To override this location:
+Library indexes are stored in `~/poule-home/data/`. To override this location:
 
 ```bash
 export POULE_LIBRARIES_PATH=/data/my-libraries
@@ -124,10 +124,10 @@ State is preserved across sessions in `~/poule-home`:
 └── .zsh_history      # Shell history
 ```
 
-Library indexes are stored in `~/poule-libraries/`:
+Library indexes are stored in `~/poule-home/data/`:
 
 ```
-~/poule-libraries/
+~/poule-home/data/
 ├── index-stdlib.db       # Per-library index
 ├── index-mathcomp.db     # Per-library index
 ├── index-stdpp.db        # Per-library index
@@ -158,7 +158,7 @@ poule --rebuild          # Force update Claude Code immediately
 To force re-download of library indexes:
 
 ```bash
-rm ~/poule-libraries/index-*.db ~/poule-libraries/index.db
+rm ~/poule-home/data/index-*.db ~/poule-home/data/index.db
 poule    # re-download triggers automatically on next startup
 ```
 
