@@ -320,7 +320,7 @@ Publish a new release when any of these change:
 5. Point the MCP server at the newly built index and restart it:
 
 ```bash
-export POULE_MCP_DB=/poule/output/index.db
+export POULE_MCP_DB=~/index.db
 poule-mcp restart
 ```
 
