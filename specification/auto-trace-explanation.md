@@ -228,7 +228,7 @@ When an error occurs after `Set Debug "auto".` has been sent but before `Unset D
 
 **Focused hint query (hint_name provided):**
 
-4. When `hint_name` is provided and the name does not appear in any retrieved HintDatabase, the component shall return a `NOT_FOUND` error: `Hint "<name>" not found in any consulted database.`
+4. When `hint_name` is provided, the component shall search all databases available via `hint_inspect` — not just the consulted databases — to locate the hint. If the hint is found in a non-consulted database, it shall be included in classification and diagnosed as `wrong_database`. If the hint is not found in any available database, the component shall return a `NOT_FOUND` error: `Hint "<name>" not found in any consulted database.`
 5. When `hint_name` is provided and the name appears in a database, the component shall filter the classifications list to the single entry for that hint and return the focused diagnosis.
 
 > **Given** a proof session at goal `n + 0 = n` where `auto` fails because `Nat.add_0_r` is in `arith` but not `core`
@@ -414,7 +414,7 @@ When an error occurs at any step after `Set Debug "auto".`, the component transi
 |-----------|-----------|---------|
 | `session_id` references non-existent session | `SESSION_NOT_FOUND` | `Proof session "<session_id>" not found or has expired.` |
 | No open goal in session | `NO_GOAL` | `No open goal to diagnose.` |
-| `hint_name` not found in any consulted database | `NOT_FOUND` | `Hint "<name>" not found in any consulted database.` |
+| `hint_name` not found in any available database (consulted and probed) | `NOT_FOUND` | `Hint "<name>" not found in any consulted database.` |
 
 ### 8.3 Dependency Errors
 
