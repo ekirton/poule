@@ -64,7 +64,7 @@ Cross-references:
 
 | ID | Requirement |
 |----|-------------|
-| PP-P0-1 | Profile a single proof script file and return per-tactic timing, ranked from slowest to fastest |
+| PP-P0-1 | Profile a single proof script file and return per-sentence timing (including imports, definitions, tactics, and `Qed`), ranked from slowest to fastest |
 | PP-P0-2 | Profile a specific proof (by lemma name) within a file and return per-step timing for that proof only |
 | PP-P0-3 | Identify and highlight the top bottlenecks in a profiling result, with natural-language explanation of why each step is slow |
 | PP-P0-4 | Suggest concrete optimizations for identified bottlenecks based on known performance patterns (slow `simpl`/`cbn` → use `lazy`/`cbv`; expensive `Qed` → use `abstract`; typeclass blowup → adjust priorities) |
