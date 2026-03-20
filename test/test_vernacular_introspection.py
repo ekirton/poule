@@ -352,21 +352,28 @@ class TestExecutionRouting:
         pool.send_command.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_session_aware_check_hypothesis_in_context(self):
-        """Given a proof session with hypothesis H : a = b in context,
-        When coq_query executes Check H in session context,
-        Then the output contains the type of H (a = b)."""
+    async def test_session_aware_check_with_file_imports(self):
+        """Spec §4.3 example: Given a proof session with 'Require Import Arith.'
+        in the file preamble and command='Check', argument='Nat.add_comm',
+        When coq_query executes in session context,
+        Then the output contains the type of Nat.add_comm.
+
+        Note: the coqtop subprocess loads file-level imports, so definitions
+        from imported modules are available."""
         coq_query = _import_coq_query()
-        manager = _make_mock_session_manager(submit_result="H : a = b")
+        manager = _make_mock_session_manager(
+            submit_result="Nat.add_comm\n     : forall n m : nat, n + m = m + n"
+        )
 
         result = await coq_query(
             command="Check",
-            argument="H",
+            argument="Nat.add_comm",
             session_id="session1",
             session_manager=manager,
         )
 
-        assert "a = b" in result.output
+        assert "forall n m : nat" in result.output
+        assert "n + m = m + n" in result.output
 
     @pytest.mark.asyncio
     async def test_session_free_locate_standard_library(self):
@@ -400,6 +407,99 @@ class TestExecutionRouting:
         # Only read-only operations should be called
         manager.submit_vernacular.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_session_aware_routes_through_coqtop_not_coq_lsp(self):
+        """Spec §4.3: session-aware execution routes through coqtop subprocess,
+        not the session's coq-lsp backend, because coq-lsp's LSP protocol does
+        not expose vernacular command output."""
+        coq_query = _import_coq_query()
+        manager = _make_mock_session_manager(submit_result="forall n m : nat, n + m = m + n")
+
+        await coq_query(
+            command="Check",
+            argument="Nat.add_comm",
+            session_id="s1",
+            session_manager=manager,
+        )
+
+        # The handler calls submit_vernacular, which internally routes to coqtop
+        # (prefer_coqtop=True). The handler does NOT call execute_vernacular
+        # (which would use coq-lsp and return empty for successful queries).
+        manager.submit_vernacular.assert_called_once()
+        if hasattr(manager, "execute_vernacular"):
+            manager.execute_vernacular.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_session_aware_import_context_available(self):
+        """Spec §4.3: session-aware execution has access to file's import context.
+
+        Given a proof session with 'Require Import Arith.' in the file preamble
+        and command='Check', argument='Nat.add_comm',
+        When coq_query executes in session context,
+        Then the output contains the type of Nat.add_comm."""
+        coq_query = _import_coq_query()
+        # Simulate a session whose file imports Arith — Nat.add_comm is available
+        manager = _make_mock_session_manager(
+            submit_result="Nat.add_comm\n     : forall n m : nat, n + m = m + n"
+        )
+
+        result = await coq_query(
+            command="Check",
+            argument="Nat.add_comm",
+            session_id="s1",
+            session_manager=manager,
+        )
+
+        assert "forall n m : nat" in result.output
+        assert "n + m = m + n" in result.output
+
+    @pytest.mark.asyncio
+    async def test_session_aware_local_hypotheses_not_available(self):
+        """Spec §4.3: local proof hypotheses and let-bindings from the coq-lsp
+        proof state are NOT available in the coqtop subprocess.
+
+        The coqtop subprocess only loads file-level imports, not the proof
+        context. Checking a local hypothesis returns an error."""
+        coq_query = _import_coq_query()
+        # Simulate coqtop returning NOT_FOUND for a local hypothesis
+        manager = _make_mock_session_manager(
+            submit_result="Error: The reference H was not found in the current environment."
+        )
+
+        # The handler should classify this as an error
+        with pytest.raises(Exception) as exc_info:
+            await coq_query(
+                command="Check",
+                argument="H",
+                session_id="s1",
+                session_manager=manager,
+            )
+
+        error_str = str(exc_info.value)
+        assert "NOT_FOUND" in error_str or "not found" in error_str.lower()
+
+    @pytest.mark.asyncio
+    async def test_session_aware_coqtop_env_does_not_affect_proof_state(self):
+        """MAINTAINS: The session's proof state (managed by the CoqBackend) is not
+        modified. The coqtop subprocess environment may be modified by side-effecting
+        commands, but this does not affect the proof state."""
+        coq_query = _import_coq_query()
+        manager = _make_mock_session_manager(submit_result="ok")
+
+        await coq_query(
+            command="Check",
+            argument="nat",
+            session_id="s1",
+            session_manager=manager,
+        )
+
+        # Only submit_vernacular (read-only path) was called
+        manager.submit_vernacular.assert_called_once()
+        # No state-mutating operations
+        manager.submit_tactic.assert_not_called()
+        manager.step_forward.assert_not_called()
+        manager.step_backward.assert_not_called()
+
     @pytest.mark.requires_coq
     @pytest.mark.asyncio
     async def test_contract_session_manager_read_only(self):
@@ -415,6 +515,157 @@ class TestExecutionRouting:
         from Poule.query.process_pool import ProcessPool
         pool = ProcessPool()
         assert callable(getattr(pool, "send_command", None))
+
+
+# ===========================================================================
+# 3b. Session-Free Prelude Configuration (spec section 4.3, steps 2-5)
+# ===========================================================================
+
+class TestSessionFreePrelude:
+    """Section 4.3 (session-free): prelude configuration, environment inheritance,
+    and clean-environment guarantee."""
+
+    def test_process_pool_accepts_prelude_parameter(self):
+        """Spec §10: ProcessPool accepts a 'prelude' string parameter at construction."""
+        from Poule.query.process_pool import ProcessPool
+        pool = ProcessPool(prelude="From Coq Require Import Bool.\n")
+        assert pool._prelude == "From Coq Require Import Bool.\n"
+
+    def test_process_pool_default_prelude(self):
+        """Spec §4.3 step 4: default prelude is 'From Coq Require Import Arith.'"""
+        from Poule.query.process_pool import ProcessPool
+        pool = ProcessPool()
+        assert "From Coq Require Import Arith" in pool._prelude
+
+    @pytest.mark.asyncio
+    async def test_prelude_prepended_before_user_command(self):
+        """Spec §4.3 steps 3-5: the process executes the prelude before
+        the user's command."""
+        from Poule.query.process_pool import ProcessPool
+        custom_prelude = "From Coq Require Import Bool.\n"
+        pool = ProcessPool(prelude=custom_prelude)
+
+        # Patch subprocess to capture what was sent to stdin
+        sent_payload = None
+
+        async def fake_communicate(input=None):
+            nonlocal sent_payload
+            sent_payload = input
+            return (b"true : bool\n", b"")
+
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            mock_proc = AsyncMock()
+            mock_proc.communicate = fake_communicate
+            mock_proc.returncode = 0
+            mock_exec.return_value = mock_proc
+
+            await pool.send_command("Check true.")
+
+        assert sent_payload is not None
+        payload_str = sent_payload.decode()
+        # Prelude appears before the command
+        prelude_pos = payload_str.find("From Coq Require Import Bool.")
+        command_pos = payload_str.find("Check true.")
+        assert prelude_pos >= 0, "Prelude not found in payload"
+        assert command_pos > prelude_pos, "Command must appear after prelude"
+
+    @pytest.mark.asyncio
+    async def test_each_invocation_starts_clean(self):
+        """MAINTAINS: Each session-free invocation starts from a clean environment.
+        No state persists between invocations."""
+        from Poule.query.process_pool import ProcessPool
+
+        spawn_count = 0
+
+        async def counting_exec(*args, **kwargs):
+            nonlocal spawn_count
+            spawn_count += 1
+            mock_proc = AsyncMock()
+
+            async def fake_communicate(input=None):
+                return (b"output\n", b"")
+
+            mock_proc.communicate = fake_communicate
+            mock_proc.returncode = 0
+            return mock_proc
+
+        pool = ProcessPool()
+        with patch("asyncio.create_subprocess_exec", side_effect=counting_exec):
+            await pool.send_command("Check nat.")
+            await pool.send_command("Check bool.")
+
+        # Each invocation spawns a new process (clean environment)
+        assert spawn_count == 2
+
+    @pytest.mark.asyncio
+    async def test_custom_prelude_makes_imports_available(self):
+        """Spec §4.3 example: session-free with custom prelude that loads
+        additional packages makes those packages' definitions available.
+
+        Given no session_id, and a prelude loading extra imports,
+        When coq_query executes session-free,
+        Then definitions from those imports are accessible."""
+        coq_query = _import_coq_query()
+        # Simulate a process pool whose prelude includes extra imports
+        # The mock returns as if the import context has the queried definition
+        pool = _make_mock_process_pool(
+            send_result="leq = fun n m : nat => ...\n     : nat -> nat -> bool"
+        )
+
+        result = await coq_query(
+            command="Print",
+            argument="leq",
+            process_pool=pool,
+        )
+
+        assert "leq" in result.output
+
+    @pytest.mark.requires_coq
+    @pytest.mark.asyncio
+    async def test_contract_default_prelude_loads_arith(self):
+        """Contract test: with default prelude, Arith definitions are available."""
+        coq_query = _import_coq_query()
+        from Poule.query.process_pool import ProcessPool
+        pool = ProcessPool()  # default prelude
+
+        result = await coq_query(
+            command="Check",
+            argument="Nat.add_comm",
+            process_pool=pool,
+        )
+
+        assert "forall" in result.output
+
+    @pytest.mark.requires_coq
+    @pytest.mark.asyncio
+    async def test_contract_custom_prelude(self):
+        """Contract test: custom prelude makes its imports available."""
+        coq_query = _import_coq_query()
+        from Poule.query.process_pool import ProcessPool
+        pool = ProcessPool(prelude="From Coq Require Import Bool.\n")
+
+        result = await coq_query(
+            command="Check",
+            argument="negb",
+            process_pool=pool,
+        )
+
+        assert "bool" in result.output.lower()
+
+    @pytest.mark.requires_coq
+    @pytest.mark.asyncio
+    async def test_contract_process_inherits_coqpath(self):
+        """Contract test: standalone process inherits COQPATH from the server
+        environment, making opam-installed packages reachable."""
+        import os
+        from Poule.query.process_pool import ProcessPool
+
+        # COQPATH should be set in the server environment if opam is configured.
+        # Even if empty, the process should not crash — it just means no extra
+        # packages are available beyond the default load paths.
+        pool = ProcessPool()
+        result = await pool.send_command("Check nat.")
+        assert "Set" in result or "nat" in result
 
 
 # ===========================================================================

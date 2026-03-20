@@ -22,7 +22,7 @@ Define the vernacular query handler that, given a command name and argument, con
 |------|-----------|
 | Vernacular command | A Coq toplevel command that queries the environment without modifying it |
 | Command dispatcher | The mapping from `(command, argument)` to a Coq vernacular string |
-| Session-aware execution | Execution within an existing proof session's context (loaded files, imports, proof state) |
+| Session-aware execution | Execution within an existing proof session's import context (loaded files, imported modules) via a coqtop subprocess; local proof state (hypotheses, let-bindings) is not available |
 | Session-free execution | Execution against a short-lived or pooled Coq process with only the default global environment |
 | Query result | The structured response containing the command echo, argument echo, parsed output, and extracted warnings |
 | Output parser | The transformation from raw Coq output to the `output` and `warnings` fields of `QueryResult` |
@@ -45,7 +45,7 @@ Define the vernacular query handler that, given a command name and argument, con
 
 > **Given** `command = "Print"`, `argument = "nat"`, and `session_id = "abc123"` referencing an active session
 > **When** `coq_query` is called
-> **Then** the handler sends `Print nat.` to the session's Coq backend and returns a `QueryResult` with `output` containing the inductive definition of `nat`
+> **Then** the handler sends `Print nat.` to the session's coqtop subprocess and returns a `QueryResult` with `output` containing the inductive definition of `nat`
 
 > **Given** `command = "Eval"`, `argument = "cbv in 1 + 1"`, and no `session_id`
 > **When** `coq_query` is called
@@ -84,14 +84,14 @@ The `session_id` parameter determines the execution backend.
 #### Session-aware execution (session_id provided)
 
 1. The handler shall resolve the session via the Proof Session Manager's session registry.
-2. The handler shall submit the vernacular command string to the session's Coq backend process.
-3. The command shall execute in the session's full context: loaded files, imported modules, and the current proof state including local hypotheses and let-bindings.
+2. The handler shall submit the vernacular command string to the session via `submit_command`. The session manager routes this through a coqtop subprocess (not the session's coq-lsp backend), because coq-lsp's LSP protocol does not expose vernacular command output. See [proof-session.md](proof-session.md) §4.4.1.
+3. The command shall execute in the session's import context: loaded files and imported modules. Local proof hypotheses and let-bindings from the coq-lsp proof state are not available in the coqtop subprocess.
 
-- MAINTAINS: The session's proof state is not modified. Introspection commands are read-only.
+- MAINTAINS: The session's proof state (managed by the CoqBackend) is not modified. The coqtop subprocess environment may be modified by side-effecting commands, but this does not affect the proof state.
 
-> **Given** a proof session with hypothesis `H : a = b` in context and `command = "Check"`, `argument = "H"`
+> **Given** a proof session with `Require Import Arith.` in the file preamble and `command = "Check"`, `argument = "Nat.add_comm"`
 > **When** `coq_query` executes in session context
-> **Then** the output contains the type of `H` (i.e., `a = b`)
+> **Then** the output contains the type of `Nat.add_comm` (i.e., `forall n m : nat, n + m = m + n`)
 
 #### Session-free execution (session_id omitted)
 
@@ -173,7 +173,7 @@ Error responses use the standard MCP error format:
 
 | Property | Value |
 |----------|-------|
-| Operations used | Submit vernacular command string to session's Coq backend (read-only) |
+| Operations used | `submit_command` — routes through the session's coqtop subprocess (not the CoqBackend); see [proof-session.md](proof-session.md) §4.4.1 |
 | Concurrency | Serialized — one command at a time per session |
 | Error strategy | `SESSION_NOT_FOUND` → return error to caller. `BACKEND_CRASHED` → return error to caller. |
 | Idempotency | Introspection commands are idempotent; re-executing the same command produces the same output given the same session state. |
@@ -265,7 +265,7 @@ Response:
 coq_query(command="Print", argument="nat", session_id="abc123")
 
 Vernacular: Print nat.
-Backend: session abc123
+Backend: session abc123 (coqtop subprocess)
 
 Response:
 {
@@ -311,7 +311,7 @@ Response:
 coq_query(command="Eval", argument="cbv in 2 + 3", session_id="def456")
 
 Vernacular: Eval cbv in 2 + 3.
-Backend: session def456
+Backend: session def456 (coqtop subprocess)
 
 Response:
 {

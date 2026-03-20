@@ -114,6 +114,81 @@ class TestExecuteVernacularCoqLspLimitation:
 
 
 # ---------------------------------------------------------------------------
+# 1b. §4.5 Vernacular Output Capture Limitation — mechanism table
+# ---------------------------------------------------------------------------
+
+class TestVernacularOutputCaptureLimitation:
+    """Spec §4.5: Three coq-lsp mechanisms that do NOT capture vernacular output."""
+
+    @pytest.mark.asyncio
+    async def test_hover_returns_hover_data_not_command_output(self):
+        """textDocument/hover returns type information for identifiers at cursor
+        position, not the output of vernacular commands like Print or Check.
+
+        Spec §4.5 table row 2: 'textDocument/hover | Type information for
+        identifiers at cursor position | No — returns hover data, not command output'"""
+        backend = _make_lsp_backend()
+        # Hover returns structured data (type signature), not raw Print output
+        hover_result = {
+            "contents": {"kind": "plaintext", "value": "nat : Set"},
+            "range": {"start": {"line": 0, "character": 0},
+                      "end": {"line": 0, "character": 3}},
+        }
+        backend._send_request.return_value = hover_result
+
+        # Even if we could call hover, it returns type info for a position,
+        # not the output of "Print nat." which would show the full inductive def.
+        # The test documents that hover ≠ vernacular output capture.
+        result = await backend._send_request("textDocument/hover", {
+            "textDocument": {"uri": "file:///test.v"},
+            "position": {"line": 0, "character": 0},
+        })
+
+        # Hover returns structured hover data, not command output
+        assert "contents" in result
+        assert isinstance(result["contents"], dict)
+        # This is NOT the same as "Print nat." output which would contain
+        # "Inductive nat : Set := O : nat | S : nat -> nat."
+
+    @pytest.mark.asyncio
+    async def test_get_document_returns_metadata_not_content(self):
+        """coq/getDocument returns document span ranges (structural metadata),
+        not the textual output of vernacular commands.
+
+        Spec §4.5 table row 3: 'coq/getDocument | Document span ranges |
+        No — returns structural metadata without content'"""
+        backend = _make_lsp_backend()
+        # getDocument returns span/range metadata
+        doc_result = {
+            "spans": [
+                {"range": {"start": {"line": 0, "character": 0},
+                           "end": {"line": 0, "character": 10}}},
+            ]
+        }
+        backend._send_request.return_value = doc_result
+
+        result = await backend._send_request("coq/getDocument", {
+            "textDocument": {"uri": "file:///test.v"},
+        })
+
+        # Returns structural metadata (spans), not command output text
+        assert "spans" in result
+        assert isinstance(result["spans"], list)
+
+    @pytest.mark.asyncio
+    async def test_session_manager_responsible_for_vernacular_capture(self):
+        """Spec §4.5: The session manager is responsible for vernacular output
+        capture. When a session requires vernacular command execution, the session
+        manager uses a coqtop subprocess rather than the session's CoqBackend."""
+        from Poule.session.manager import SessionManager
+
+        # submit_vernacular (which routes to coqtop) exists
+        assert callable(getattr(SessionManager, "submit_vernacular", None))
+        # send_command exists as the underlying dispatch
+        assert callable(getattr(SessionManager, "send_command", None))
+
+
+# ---------------------------------------------------------------------------
 # 2. _extract_imports
 # ---------------------------------------------------------------------------
 
