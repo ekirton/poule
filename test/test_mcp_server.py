@@ -1150,6 +1150,39 @@ class TestDataclassSerialization:
         parsed = json.loads(result["content"][0]["text"])
         assert parsed[0]["name"] == "A"
 
+    def test_serialize_converts_sets_to_lists(self):
+        """Sets and frozensets must be converted to JSON-serializable lists."""
+        from Poule.server.handlers import _serialize
+        result = _serialize({"nodes": {"b", "a", "c"}, "count": 3})
+        assert isinstance(result["nodes"], list)
+        assert result["nodes"] == ["a", "b", "c"]  # sorted
+
+    def test_serialize_converts_int_dict_keys_to_strings(self):
+        """Dict keys that are ints must be converted to strings for JSON."""
+        from Poule.server.handlers import _serialize
+        result = _serialize({0: {"root"}, 1: {"child"}})
+        assert "0" in result
+        assert isinstance(result["0"], list)
+
+    def test_serialize_handles_nested_sets_in_dataclass(self):
+        """dataclasses.asdict preserves sets; _serialize must convert them."""
+        from Poule.analysis.impact import ImpactSet
+        from Poule.server.handlers import _serialize
+        impact = ImpactSet(
+            root="A",
+            impacted_nodes={"A", "B"},
+            edges={("A", "B")},
+            depth_map={0: {"A"}, 1: {"B"}},
+            total_depth=1,
+        )
+        result = _serialize(impact)
+        # All sets should now be lists
+        assert isinstance(result["impacted_nodes"], list)
+        assert isinstance(result["edges"], list)
+        assert isinstance(result["depth_map"]["0"], list)
+        # Should be JSON-serializable without error
+        json.dumps(result)
+
 
 # ===========================================================================
 # Proof Interaction Handlers (Spec §4.3)

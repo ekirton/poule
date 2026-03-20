@@ -817,7 +817,14 @@ class TestTraceResolution:
 
 class TestTransitiveClosure:
     def test_valid_call_with_mock_graph(self, ctx):
-        mock_result = {"root": "Nat.add_comm", "nodes": [], "edges": []}
+        from Poule.analysis.closure import TransitiveClosure
+        mock_result = TransitiveClosure(
+            root="Nat.add_comm",
+            nodes={"Nat.add_comm", "Nat.add"},
+            edges={("Nat.add_comm", "Nat.add")},
+            depth_map={0: {"Nat.add_comm"}, 1: {"Nat.add"}},
+            total_depth=1,
+        )
         with patch(
             "Poule.analysis.closure.transitive_closure",
             return_value=mock_result,
@@ -828,6 +835,10 @@ class TestTransitiveClosure:
         assert result.get("isError") is not True
         parsed = _parse_response(result)
         assert parsed["root"] == "Nat.add_comm"
+        assert isinstance(parsed["nodes"], list)
+        assert isinstance(parsed["edges"], list)
+        assert isinstance(parsed["depth_map"], dict)
+        assert all(isinstance(k, str) for k in parsed["depth_map"])
 
     def test_index_missing_when_not_ready(self, ctx):
         ctx.index_ready = False
@@ -878,7 +889,14 @@ class TestTransitiveClosure:
 
 class TestImpactAnalysis:
     def test_valid_call_with_mock_graph(self, ctx):
-        mock_result = {"root": "Nat.add_comm", "impact_set": []}
+        from Poule.analysis.impact import ImpactSet
+        mock_result = ImpactSet(
+            root="Nat.add_comm",
+            impacted_nodes={"Nat.add_comm", "Nat.add_assoc"},
+            edges={("Nat.add_comm", "Nat.add_assoc")},
+            depth_map={0: {"Nat.add_comm"}, 1: {"Nat.add_assoc"}},
+            total_depth=1,
+        )
         with patch(
             "Poule.analysis.impact.impact_analysis",
             return_value=mock_result,
@@ -887,6 +905,12 @@ class TestImpactAnalysis:
                 ctx, "impact_analysis", {"name": "Nat.add_comm"}
             )
         assert result.get("isError") is not True
+        parsed = _parse_response(result)
+        assert parsed["root"] == "Nat.add_comm"
+        assert isinstance(parsed["impacted_nodes"], list)
+        assert isinstance(parsed["edges"], list)
+        assert isinstance(parsed["depth_map"], dict)
+        assert all(isinstance(k, str) for k in parsed["depth_map"])
 
     def test_index_missing_when_not_ready(self, ctx):
         ctx.index_ready = False

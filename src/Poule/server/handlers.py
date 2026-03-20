@@ -30,11 +30,13 @@ from Poule.server.validation import (
 def _serialize(obj: Any) -> Any:
     """Convert dataclass instances to dicts for JSON serialization."""
     if is_dataclass(obj) and not isinstance(obj, type):
-        return asdict(obj)
+        return _serialize(asdict(obj))
     if isinstance(obj, list):
         return [_serialize(item) for item in obj]
+    if isinstance(obj, set | frozenset):
+        return [_serialize(item) for item in sorted(obj, key=str)]
     if isinstance(obj, dict):
-        return {k: _serialize(v) for k, v in obj.items()}
+        return {str(k): _serialize(v) for k, v in obj.items()}
     return obj
 
 
