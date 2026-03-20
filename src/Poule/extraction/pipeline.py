@@ -218,6 +218,35 @@ class PipelineWriter:
                     "relation": relation,
                 })
 
+        # Symbol-set cross-referencing (spec §4.5): generate "uses" edges
+        # from symbol-set overlap.  When declaration A's symbol_set contains
+        # the FQN of declaration B, insert edge (A, B, "uses").  This
+        # captures theorem-to-theorem relationships that Print Assumptions
+        # misses, because symbol sets reference the definitions and theorems
+        # used in the type signature.
+        for r in all_results:
+            src_id = name_to_id.get(r.name)
+            if src_id is None:
+                continue
+            symbol_set = getattr(r, "symbol_set", None)
+            if not symbol_set:
+                continue
+            for sym in symbol_set:
+                dst_id = name_to_id.get(sym)
+                if dst_id is None:
+                    continue
+                if src_id == dst_id:
+                    continue
+                edge_key = (src_id, dst_id, "uses")
+                if edge_key in seen_edges:
+                    continue
+                seen_edges.add(edge_key)
+                edges.append({
+                    "src": src_id,
+                    "dst": dst_id,
+                    "relation": "uses",
+                })
+
         if edges:
             self._writer.insert_dependencies(edges)
 

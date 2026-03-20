@@ -3,11 +3,11 @@ set -euo pipefail
 
 ALL_LIBRARIES="stdlib,mathcomp,stdpp,flocq,coquelicot,coqinterval"
 LIBRARIES="$ALL_LIBRARIES"
-OUTPUT_DIR="$HOME"
+OUTPUT_DIR="/data"
 FORCE=false
 
 usage() {
-    echo "Usage: $(basename "$0") [--libraries lib1,lib2,...] [--output-dir DIR] [--force]" >&2
+    echo "Usage: $(basename "$0") [--libraries lib1,lib2,...] [--force]" >&2
     echo "" >&2
     echo "Build per-library Coq index databases." >&2
     echo "Only rebuilds indexes whose installed library version differs" >&2
@@ -15,7 +15,6 @@ usage() {
     echo "" >&2
     echo "Options:" >&2
     echo "  --libraries   Comma-separated list of libraries (default: all 6)" >&2
-    echo "  --output-dir  Directory for output databases (default: ~)" >&2
     echo "  --force       Rebuild all indexes regardless of version" >&2
     echo "" >&2
     echo "Libraries: stdlib, mathcomp, stdpp, flocq, coquelicot, coqinterval" >&2
@@ -26,10 +25,6 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --libraries)
             LIBRARIES="$2"
-            shift 2
-            ;;
-        --output-dir)
-            OUTPUT_DIR="$2"
             shift 2
             ;;
         --force)
@@ -51,7 +46,7 @@ mkdir -p "$OUTPUT_DIR"
 IFS=',' read -ra LIB_ARRAY <<< "$LIBRARIES"
 
 # --- Seed from GitHub Releases if no index files exist ---
-# On a fresh container there are no index-*.db files in ~.  Download them
+# On a fresh container there are no index-*.db files.  Download them
 # from the published releases so that only libraries whose versions have
 # actually changed need to be rebuilt from scratch.
 
@@ -236,4 +231,12 @@ print(f'  Libraries:    {\", \".join(result[\"libraries\"])}')
 else
     echo ""
     echo "index.db is up to date."
+fi
+
+# --- Restart the MCP server if it's running ---
+
+if command -v poule-mcp &>/dev/null && poule-mcp status 2>/dev/null | grep -q running; then
+    echo ""
+    echo "Restarting MCP server..."
+    poule-mcp restart
 fi

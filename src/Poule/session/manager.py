@@ -708,7 +708,7 @@ class SessionManager:
         Returns one of: "Axiom", "Parameter", "Lemma", "Theorem",
         "Definition", "Opaque", "Transparent", etc.
         """
-        output = await self.send_command(session_id, f"About {name}.")
+        output = await self.send_command(session_id, f"About {name}.", prefer_coqtop=True)
 
         # coqtop About output examples:
         #   "classic : forall P : Prop, P \/ ~ P\n\nclassic is an axiom"

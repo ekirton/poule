@@ -26,6 +26,12 @@ _KNOWN_TACTICS = {
     "elim", "case", "generalize", "specialize",
 }
 
+# Multi-word tactic names that are valid Coq built-ins.
+# These bypass the single-identifier whitespace check.
+_MULTI_WORD_PRIMITIVES = {
+    "typeclasses eauto",
+}
+
 # Tactic category mapping for known primitives.
 _PRIMITIVE_CATEGORIES = {
     # automation
@@ -35,6 +41,7 @@ _PRIMITIVE_CATEGORIES = {
     "intuition": "automation",
     "tauto": "automation",
     "firstorder": "automation",
+    "typeclasses eauto": "automation",
     # rewriting
     "reflexivity": "rewriting",
     "symmetry": "rewriting",
@@ -299,6 +306,11 @@ async def tactic_lookup(
     """
     if not name:
         raise TacticDocError("INVALID_ARGUMENT", "Tactic name must not be empty.")
+
+    # Recognize known multi-word primitives (e.g. "typeclasses eauto")
+    # before the whitespace check rejects them.
+    if name in _MULTI_WORD_PRIMITIVES:
+        return _make_primitive_info(name)
 
     if re.search(r"\s", name):
         raise TacticDocError(

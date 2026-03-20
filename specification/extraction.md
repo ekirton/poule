@@ -41,7 +41,15 @@ The system shall define a `Backend` protocol with operations:
 
 The backend shall determine each declaration's kind during `list_declarations`. The mechanism is backend-dependent because not all backends return kind information directly from declaration listing.
 
-**coq-lsp backend:** The `Search _ inside M.` command returns `(name, type_sig)` pairs without declaration kinds. The backend shall issue an `About <name>.` Vernac command per declaration and parse the response to determine the kind. About queries for declarations within a single module may be batched into a single synthetic document with one command per line (batch size capped at 100 commands per document). The contract (one About per declaration, version-dependent parsing) is unchanged.
+**coq-lsp backend:** The `Search _ inside M.` command returns `(name, type_sig)` pairs without declaration kinds. Each result may be formatted as a single line (`name : type`) or span multiple lines when the type signature is long — coq-lsp breaks complex types across lines with indentation. The declaration listing parser shall handle both formats, extracting the name from the first line and joining continuation lines into the full type signature. The backend shall issue an `About <name>.` Vernac command per declaration and parse the response to determine the kind. About queries for declarations within a single module may be batched into a single synthetic document with one command per line (batch size capped at 100 commands per document). The contract (one About per declaration, version-dependent parsing) is unchanged.
+
+> **Given** a coq-lsp Search result with a single-line message `"foo : nat -> nat"`,
+> **When** `list_declarations` parses the result,
+> **Then** it extracts name `"foo"` and type_sig `"nat -> nat"`.
+
+> **Given** a coq-lsp Search result with a multi-line message `"bar :\n  forall (n : nat),\n  n + 0 = n"`,
+> **When** `list_declarations` parses the result,
+> **Then** it extracts name `"bar"` and type_sig `"forall (n : nat), n + 0 = n"`.
 
 The `About` response format is version-dependent:
 
@@ -248,7 +256,11 @@ All dependency edges shall use the relation values defined in the `dependencies`
 
 **Tree-based dependency extraction** (when expression tree is available): `extract_dependencies(tree)` walks `LConst` nodes to produce `"uses"` edges and reads instance metadata for `"instance_of"` edges. These are direct structural references with fully qualified names — no name resolution is needed.
 
-**Metadata-only declarations** (no expression tree): The backend's `get_dependencies(name)` provides dependency information. When the backend uses `Print Assumptions` (coq-lsp), the output represents transitive axiom dependencies, not direct term references. These edges shall be stored with relation `"uses"` as an approximation. The approximation is acceptable because `Print Assumptions` output is a superset of direct references for most declarations, and the dependency graph is navigational (not scored).
+**Metadata-only declarations** (no expression tree): The backend's `get_dependencies(name)` provides dependency information. When the backend uses `Print Assumptions` (coq-lsp), the output represents transitive axiom and type dependencies, not theorem-to-theorem proof dependencies. `Print Assumptions A` returns the axioms underlying A's proof, not the theorems A invokes — so if theorem A uses theorem B, the edge A→B is **not** captured; only the axioms beneath B appear. These edges shall be stored with relation `"uses"` as a partial approximation.
+
+**Consequence**: Reverse dependency queries (impact analysis: "what depends on theorem X?") return sparse results because theorem-to-theorem edges are absent from the `Print Assumptions` output. Forward queries (transitive closure: "what does X rest on?") return axiom-level foundations rather than theorem-level dependencies.
+
+**Symbol-set cross-referencing** (complementary source): After Pass 2 inserts `Print Assumptions` edges, the pipeline shall also generate `"uses"` edges from symbol-set overlap. When declaration A's `symbol_set` contains a reference to the FQN of declaration B, an edge (A, B, `"uses"`) shall be inserted. This captures theorem-to-theorem relationships that `Print Assumptions` misses, because symbol sets are extracted from type signatures which reference the theorems and definitions used in the statement. Edges from both sources are deduplicated by (src, dst, relation).
 
 When both sources are available for a declaration, their edges shall be merged and deduplicated.
 

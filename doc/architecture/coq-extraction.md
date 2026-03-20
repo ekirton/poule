@@ -34,13 +34,27 @@ Per-declaration processing:
   7. pretty_print_type(name)   → human-readable type signature
 
   Pass 2 (after all declarations are inserted):
-  8. extract_dependencies()   → dependency edges (uses, instance_of, ...)
+  8. For each declaration, issue Print Assumptions <name> via coq-lsp.
+     Parse the response to extract the names of axioms, definitions,
+     and types that this declaration transitively depends on.
+     Resolve each name to its declaration ID in the index.
+     Insert (src, dst, "uses") edges into the dependencies table.
   │
   ▼
 SQLite database (see storage.md)
   Write: declarations, dependencies, symbols, wl_vectors, symbol_freq,
          declarations_fts, index_meta
 ```
+
+### Dependency extraction limitations
+
+`Print Assumptions` returns the set of axioms, opaque constants, and section variables that a declaration transitively depends on. It does **not** return theorem-to-theorem dependencies — if theorem A uses theorem B in its proof, `Print Assumptions A` reports the axioms underlying B, not B itself. This means the `dependencies` table captures type-level and axiom-level forward edges but not the theorem-level "uses" relationships needed for impact analysis.
+
+Consequence: `impact_analysis` and `visualize_dependencies` can traverse forward edges (what axioms/types a declaration rests on) but reverse traversal (what depends on a given theorem) returns sparse results because theorem-to-theorem edges are absent.
+
+To achieve the dependency edges described in the [library-indexing](../features/library-indexing.md) feature specification — including "what uses it" — the extraction pipeline needs a complementary mechanism that captures theorem-to-theorem dependencies. Options include:
+1. **coq-dpdgraph integration**: Run `dpdgraph` on the compiled library to produce a complete theorem-level dependency graph (see [deep-dependency-analysis](deep-dependency-analysis.md)).
+2. **Cross-referencing symbol sets**: If declaration A's symbol set contains a reference to declaration B, insert a "uses" edge from A to B. This can be computed post-hoc from the existing symbol index without additional Coq queries.
 
 ### Fully qualified name derivation
 
@@ -95,13 +109,13 @@ The `constr_tree` BLOB format is defined in [storage.md](storage.md). See the st
 All declarations from the six Tier 0 libraries (see [extraction-library-support.md](../features/extraction-library-support.md)):
 
 - **Coq standard library** (stdlib)
-- **MathComp**
+- **MathComp** — the core hierarchy: `rocq-mathcomp-boot`, `rocq-mathcomp-order`, `rocq-mathcomp-algebra`, `rocq-mathcomp-fingroup`, `rocq-mathcomp-solvable`, `rocq-mathcomp-field`, `rocq-mathcomp-character`
 - **stdpp**
 - **Flocq**
 - **Coquelicot**
 - **CoqInterval**
 
-Each library is indexed into a per-library SQLite database distinguished by module path. See [index-build-script.md](index-build-script.md) for the per-library build pipeline.
+Each library is indexed into a per-library SQLite database distinguished by module path. The `discover_libraries("mathcomp")` function scans all `.vo` files under `user-contrib/mathcomp/`, so the MathComp index automatically includes whatever packages are installed — the Dockerfile must install the full package set listed above. See [index-build-script.md](index-build-script.md) for the per-library build pipeline.
 
 ### Phase 2
 
@@ -135,7 +149,9 @@ The feature specification ([extraction-library-support.md](../features/extractio
 
 Declarations are read from compiled `.vo` files via coq-lsp. coq-lsp is the sole supported extraction backend (see [library-indexing.md](../features/library-indexing.md) for design rationale).
 
-The `Search _ inside M.` command returns textual `name : type_signature` pairs without kernel terms. To produce structural data (expression trees, symbol sets, WL histograms), the pipeline parses type signature strings into `ConstrNode` trees using a pure-Python text parser (`TypeExprParser`). This parser is used at both index time and query time for consistent structural matching.
+The `Search _ inside M.` command returns textual `name : type_signature` pairs without kernel terms. Each result may be a single line (`name : type`) or span multiple lines when the type signature is long — coq-lsp formats complex types with line breaks and indentation. The declaration listing parser must handle both single-line and multi-line results, extracting the declaration name from the first line and joining continuation lines into the full type signature.
+
+To produce structural data (expression trees, symbol sets, WL histograms), the pipeline parses type signature strings into `ConstrNode` trees using a pure-Python text parser (`TypeExprParser`). This parser is used at both index time and query time for consistent structural matching.
 
 coq-lsp does not return declaration kinds directly. The backend issues a separate `About <name>.` query per declaration to determine kind, with queries batched into shared documents (≤100 per document) to reduce round-trip overhead.
 

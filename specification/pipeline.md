@@ -33,7 +33,7 @@ The system shall define a `PipelineContext` that holds:
 | Field | Type | Loaded when |
 |-------|------|------------|
 | `reader` | `IndexReader` | At context creation |
-| `wl_histograms` | `dict[int, dict[str, int]]` | At context creation (from `reader.load_wl_histograms()`) |
+| `wl_histograms` | `dict[int, dict[str, int]]` | At context creation (h-selected from `reader.load_wl_histograms()`) |
 | `inverted_index` | `dict[str, set[int]]` | At context creation (from `reader.load_inverted_index()`) |
 | `symbol_frequencies` | `dict[str, int]` | At context creation (from `reader.load_symbol_frequencies()`) |
 | `declaration_symbols` | `dict[int, set[str]]` | At context creation (derived from inverted index) |
@@ -47,6 +47,8 @@ The system shall define a `PipelineContext` that holds:
 
 - REQUIRES: `db_path` points to a valid index database.
 - ENSURES: Opens `IndexReader`, loads all in-memory data, builds the suffix index, returns a ready `PipelineContext`. Parser is not started until needed. Neural channel is initialized if a model checkpoint is available, embeddings exist in the database, and the stored model hash matches the checkpoint — otherwise `neural_encoder` and `embedding_index` are null (neural channel unavailable). See [neural-retrieval.md](neural-retrieval.md) §4.4 for availability conditions.
+
+**WL histogram h-selection**: `reader.load_wl_histograms()` returns `decl_id → {h → histogram}` (see [storage.md](storage.md) §4.3). `create_context` shall select `h=3` from each declaration's nested map to produce the flat `decl_id → histogram` structure required by `wl_screen`. If a declaration has no h=3 entry, it is omitted from `wl_histograms`.
 
 **Suffix index construction**: For each FQN key in `inverted_index`, generate all proper dot-separated suffixes (e.g., `Coq.Init.Nat.add` → `Init.Nat.add`, `Nat.add`, `add`). Map each suffix to the list of FQNs it matches. Ambiguous suffixes (matching multiple FQNs) retain all matches — they are expanded at query time to maximize recall.
 

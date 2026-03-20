@@ -26,10 +26,10 @@ class TestContractSessionManager:
         session_id = await manager.open_session("test_contract")
         try:
             await manager.send_command(
-                session_id, "From Coq Require Import PeanoNat."
+                session_id, "From Coq Require Import PeanoNat.", prefer_coqtop=True,
             )
             output = await manager.send_command(
-                session_id, "Print Assumptions Nat.add_0_r."
+                session_id, "Print Assumptions Nat.add_0_r.", prefer_coqtop=True,
             )
             assert "Closed under the global context" in output
         finally:
@@ -43,12 +43,17 @@ class TestContractSessionManager:
         session_id = await manager.open_session("test_contract")
         try:
             # Load Classical and define a simple theorem
-            await manager.send_command(session_id, "Require Import Coq.Logic.Classical_Prop.")
+            await manager.send_command(
+                session_id, "Require Import Coq.Logic.Classical_Prop.", prefer_coqtop=True,
+            )
             await manager.send_command(
                 session_id,
                 "Theorem test_em : forall P : Prop, P \\/ ~ P. Proof. apply classic. Qed.",
+                prefer_coqtop=True,
             )
-            output = await manager.send_command(session_id, "Print Assumptions test_em.")
+            output = await manager.send_command(
+                session_id, "Print Assumptions test_em.", prefer_coqtop=True,
+            )
             assert "classic" in output
             assert " : " in output
         finally:
@@ -61,7 +66,9 @@ class TestContractSessionManager:
         manager = SessionManager()
         session_id = await manager.open_session("test_contract")
         try:
-            await manager.send_command(session_id, "Require Import Coq.Logic.Classical_Prop.")
+            await manager.send_command(
+                session_id, "Require Import Coq.Logic.Classical_Prop.", prefer_coqtop=True,
+            )
             kind = await manager.query_declaration_kind(
                 session_id, "Coq.Logic.Classical_Prop.classic",
             )
@@ -79,6 +86,7 @@ class TestContractSessionManager:
             await manager.send_command(
                 session_id,
                 "Lemma trivial_lemma : True. Proof. exact I. Qed.",
+                prefer_coqtop=True,
             )
             kind = await manager.query_declaration_kind(session_id, "trivial_lemma")
             assert kind == "Opaque"
@@ -92,7 +100,9 @@ class TestContractSessionManager:
         manager = SessionManager()
         session_id = await manager.open_session("test_contract")
         try:
-            output = await manager.send_command(session_id, "Print Module Coq.Init.Nat.")
+            output = await manager.send_command(
+                session_id, "Print Module Coq.Init.Nat.", prefer_coqtop=True,
+            )
             # Should contain at least some declaration keywords
             assert "Theorem" in output or "Lemma" in output or "Definition" in output or "Fixpoint" in output
         finally:

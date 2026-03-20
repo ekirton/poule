@@ -424,8 +424,22 @@ class TestTacticLookup:
     # -- Multi-word input validation (spec 4.1) --
 
     @pytest.mark.asyncio
-    async def test_multi_word_name_raises_invalid_argument(self):
-        """Multi-word input is rejected with INVALID_ARGUMENT before querying Coq."""
+    async def test_multi_word_primitive_typeclasses_eauto(self):
+        """Known multi-word primitive 'typeclasses eauto' returns primitive info
+        without issuing a Coq query (spec 4.1)."""
+        tactic_lookup = _import_lookup()
+        coq_query = _make_mock_coq_query()
+        result = await tactic_lookup("typeclasses eauto", coq_query=coq_query)
+        assert result.kind == "primitive"
+        assert result.category == "automation"
+        assert result.body is None
+        assert result.name == "typeclasses eauto"
+        # coq_query should NOT have been called — resolved from known primitives
+        coq_query.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unknown_multi_word_name_raises_invalid_argument(self):
+        """Unknown multi-word input is rejected with INVALID_ARGUMENT before querying Coq."""
         tactic_lookup = _import_lookup()
         from Poule.tactics.lookup import TacticDocError
         coq_query = _make_mock_coq_query()
@@ -689,6 +703,61 @@ class TestTacticComparison:
             assert isinstance(hint, SelectionHint)
             assert hint.tactic is not None
             assert isinstance(hint.prefer_when, list)
+
+    @pytest.mark.asyncio
+    async def test_multi_word_primitive_in_comparison(self):
+        """'typeclasses eauto' is accepted alongside single-word tactics (spec 4.3)."""
+        tactic_compare = _import_compare()
+        coq_query = _make_mock_coq_query(responses={
+            ("Print", "Ltac auto"): "Error: auto is not an Ltac definition",
+            ("Print", "Ltac eauto"): "Error: eauto is not an Ltac definition",
+        })
+        result = await tactic_compare(
+            ["auto", "eauto", "typeclasses eauto"], coq_query=coq_query,
+        )
+        assert len(result.tactics) == 3
+        names = {t.name for t in result.tactics}
+        assert "typeclasses eauto" in names
+        # 3 tactics => 3 pairwise diffs (C(3,2) = 3)
+        assert len(result.pairwise_differences) == 3
+        assert len(result.selection_guidance) == 3
+        assert result.not_found == []
+
+    @pytest.mark.asyncio
+    async def test_multi_word_primitive_pairwise_diffs(self):
+        """Pairwise diffs include substantive differences for 'typeclasses eauto' pairs."""
+        tactic_compare = _import_compare()
+        coq_query = _make_mock_coq_query(responses={
+            ("Print", "Ltac auto"): "Error: auto is not an Ltac definition",
+            ("Print", "Ltac eauto"): "Error: eauto is not an Ltac definition",
+        })
+        result = await tactic_compare(
+            ["auto", "eauto", "typeclasses eauto"], coq_query=coq_query,
+        )
+        # Find the auto vs typeclasses eauto diff
+        tc_diffs = [
+            d for d in result.pairwise_differences
+            if {d.tactic_a, d.tactic_b} == {"auto", "typeclasses eauto"}
+        ]
+        assert len(tc_diffs) == 1
+        assert len(tc_diffs[0].differences) >= 1
+        # Should mention typeclass_instances database
+        diff_text = " ".join(tc_diffs[0].differences)
+        assert "typeclass" in diff_text.lower()
+
+    @pytest.mark.asyncio
+    async def test_multi_word_primitive_selection_guidance(self):
+        """Selection guidance includes prefer_when entries for 'typeclasses eauto'."""
+        tactic_compare = _import_compare()
+        coq_query = _make_mock_coq_query(responses={
+            ("Print", "Ltac auto"): "Error: auto is not an Ltac definition",
+        })
+        result = await tactic_compare(
+            ["auto", "typeclasses eauto"], coq_query=coq_query,
+        )
+        tc_hints = [h for h in result.selection_guidance if h.tactic == "typeclasses eauto"]
+        assert len(tc_hints) == 1
+        assert len(tc_hints[0].prefer_when) >= 1
 
     @pytest.mark.asyncio
     async def test_ltac_comparison_detects_shared_references(self):

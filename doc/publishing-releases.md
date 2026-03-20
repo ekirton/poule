@@ -35,22 +35,15 @@ Publish a new release when any of these change:
 
 3. Update pinned versions in `Dockerfile` (do not commit yet), exit the container, and run `poule-dev` to rebuild with the new versions.
 
-4. Build per-library indexes:
+4. Build per-library indexes (writes to `/data/` and auto-restarts the MCP server):
 
 ```bash
 ./scripts/build-indexes.sh
 ```
 
-5. Point the MCP server at the newly built index and restart it:
+5. **Decision gate.** Integration tests run automatically during the build, but verify the results yourself — check that proofs compile, indexes look correct, and nothing regressed. Decide whether to proceed with the version bump or roll back.
 
-```bash
-export POULE_MCP_DB=~/index.db
-poule-mcp restart
-```
-
-6. **Decision gate.** Integration tests run automatically during the build, but verify the results yourself — check that proofs compile, indexes look correct, and nothing regressed. Decide whether to proceed with the version bump or roll back.
-
-7. Publish releases (must precede the PR — the Docker build downloads the index from these releases):
+6. Publish releases (must precede the PR — the Docker build downloads the index from these releases):
 
 ```bash
 ./scripts/publish-indexes.sh
@@ -58,7 +51,7 @@ poule-mcp restart
 ./scripts/publish-indexes.sh --model models/neural-premise-selector.onnx
 ```
 
-8. Create a branch, commit the `Dockerfile` changes, push, and open a PR with auto-merge. The CI/CD pipeline will build a new container image with the updated index baked in.
+7. Create a branch, commit the `Dockerfile` changes, push, and open a PR with auto-merge. The CI/CD pipeline will build a new container image with the updated index baked in.
 
 ## Release assets
 

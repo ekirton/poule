@@ -25,6 +25,15 @@ _PRIMITIVE_SHARED: dict[frozenset, list[str]] = {
         "proof search using hint databases",
         "backtracking",
     ],
+    frozenset({"auto", "typeclasses eauto"}): [
+        "proof search",
+        "backtracking",
+    ],
+    frozenset({"eauto", "typeclasses eauto"}): [
+        "proof search using hint databases",
+        "backtracking",
+        "existential variable instantiation",
+    ],
     frozenset({"auto", "trivial"}): [
         "proof search using hint databases",
     ],
@@ -49,6 +58,14 @@ _PRIMITIVE_DIFFS: dict[frozenset, list[str]] = {
     frozenset({"auto", "eauto"}): [
         "eauto supports existential variable instantiation; auto does not",
         "eauto may use Resolve hints with existential parameters; auto requires fully instantiated hints",
+    ],
+    frozenset({"auto", "typeclasses eauto"}): [
+        "typeclasses eauto searches the typeclass_instances database by default; auto uses core",
+        "typeclasses eauto supports existential variable instantiation; auto does not",
+    ],
+    frozenset({"eauto", "typeclasses eauto"}): [
+        "typeclasses eauto searches the typeclass_instances database by default; eauto uses core",
+        "typeclasses eauto uses a different search strategy optimized for typeclass resolution",
     ],
     frozenset({"auto", "trivial"}): [
         "trivial does not perform backtracking; auto does",
@@ -75,6 +92,7 @@ _PRIMITIVE_DIFFS: dict[frozenset, list[str]] = {
 _PRIMITIVE_PREFER_WHEN: dict[str, list[str]] = {
     "auto": ["all hint arguments are fully determined", "lower search cost is desired"],
     "eauto": ["the goal requires existential variable instantiation", "Resolve hints have uninstantiated parameters"],
+    "typeclasses eauto": ["the goal requires typeclass instance resolution", "the typeclass_instances hint database should be searched"],
     "trivial": ["the goal can be closed by a cost-0 hint without backtracking"],
     "intuition": ["the goal contains non-propositional subterms", "partial proof automation is acceptable"],
     "tauto": ["the goal is purely propositional"],

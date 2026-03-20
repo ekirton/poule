@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
+import re
+
 from Poule.auditing.errors import AuditError
 from Poule.auditing.types import ParsedDependency, ParsedOutput
+
+# coqtop prepends a REPL prompt like "Rocq < " or "Coq < " to output lines.
+_PROMPT_RE = re.compile(r"^(?:Rocq|Coq)\s*<\s*")
+
+
+def _strip_prompt(text: str) -> str:
+    """Strip REPL prompt prefix from each line of coqtop output."""
+    lines = text.split("\n")
+    return "\n".join(_PROMPT_RE.sub("", line) for line in lines)
 
 
 def parse_print_assumptions(output: str) -> ParsedOutput:
@@ -17,7 +28,7 @@ def parse_print_assumptions(output: str) -> ParsedOutput:
     if not output or not output.strip():
         raise AuditError("PARSE_ERROR", "Empty Print Assumptions output.")
 
-    stripped = output.strip()
+    stripped = _strip_prompt(output).strip()
 
     # Closed theorem (Coq may wrap the line, e.g. "Closed under the global\n  context")
     if " ".join(stripped.split()) == "Closed under the global context":

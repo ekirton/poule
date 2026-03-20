@@ -42,7 +42,7 @@ async def audit_assumptions(
 
     try:
         output = await session_manager.send_command(
-            session_id, f"Print Assumptions {name}."
+            session_id, f"Print Assumptions {name}.", prefer_coqtop=True,
         )
     except AuditError:
         raise
@@ -148,7 +148,7 @@ async def audit_module(
     # Enumerate module declarations
     try:
         module_output = await session_manager.send_command(
-            session_id, f"Print Module {module}."
+            session_id, f"Print Module {module}.", prefer_coqtop=True,
         )
     except AuditError:
         raise

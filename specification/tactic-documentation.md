@@ -34,8 +34,8 @@ Define the Tactic Documentation component that retrieves, parses, and structures
 
 #### tactic_lookup(name, session_id?)
 
-- REQUIRES: `name` is a non-empty string containing no whitespace characters. When `session_id` is provided, it references an active proof session in the Proof Session Manager.
-- ENSURES: When `name` contains whitespace, returns an `INVALID_ARGUMENT` error without issuing a Coq query. Otherwise, issues `coq_query("Print", "Ltac <name>", session_id)`. When `coq_query` succeeds, parses the raw output into a TacticInfo record. When `coq_query` raises a `QueryError` whose message contains `"not an Ltac definition"` or `"not a user defined tactic"`, the lookup intercepts the error and returns TacticInfo with `kind = "primitive"` and `body = null`. When `coq_query` raises any other `QueryError`, the lookup re-raises. When the tactic is found as an Ltac definition, returns TacticInfo with `kind = "ltac"`, `qualified_name`, `body`, and extracted references. When the name is not found, returns a `NOT_FOUND` error.
+- REQUIRES: `name` is a non-empty string. When `session_id` is provided, it references an active proof session in the Proof Session Manager.
+- ENSURES: When `name` matches a known multi-word primitive (e.g. `"typeclasses eauto"`), returns TacticInfo with `kind = "primitive"` without issuing a Coq query. When `name` contains whitespace and is not a known multi-word primitive, returns an `INVALID_ARGUMENT` error without issuing a Coq query. Otherwise, issues `coq_query("Print", "Ltac <name>", session_id)`. When `coq_query` succeeds, parses the raw output into a TacticInfo record. When `coq_query` raises a `QueryError` whose message contains `"not an Ltac definition"` or `"not a user defined tactic"`, the lookup intercepts the error and returns TacticInfo with `kind = "primitive"` and `body = null`. When `coq_query` raises any other `QueryError`, the lookup re-raises. When the tactic is found as an Ltac definition, returns TacticInfo with `kind = "ltac"`, `qualified_name`, `body`, and extracted references. When the name is not found, returns a `NOT_FOUND` error.
 - MAINTAINS: The underlying proof session state is not modified by the lookup.
 
 > **Given** a tactic name `"my_tactic"` defined as `Ltac my_tactic := auto; try reflexivity`
@@ -54,7 +54,11 @@ Define the Tactic Documentation component that retrieves, parses, and structures
 > **When** `tactic_lookup("nonexistent_tactic")` is called
 > **Then** a `NOT_FOUND` error is returned with message `Tactic "nonexistent_tactic" not found in the current environment.`
 
-> **Given** a multi-word input `"dependent destruction"`
+> **Given** the known multi-word primitive `"typeclasses eauto"`
+> **When** `tactic_lookup("typeclasses eauto")` is called
+> **Then** a TacticInfo is returned with `kind = "primitive"`, `body = null`, and `category = "automation"` without issuing a Coq query
+
+> **Given** an unknown multi-word input `"dependent destruction"`
 > **When** `tactic_lookup("dependent destruction")` is called
 > **Then** an `INVALID_ARGUMENT` error is returned with message `Tactic name must be a single identifier (no whitespace). Got: "dependent destruction".`
 
@@ -350,7 +354,7 @@ The parser shall group entries by type and prepend a HintSummary with counts per
 | Condition | Error code | Message |
 |-----------|-----------|---------|
 | Empty tactic name | `INVALID_ARGUMENT` | `Tactic name must not be empty.` |
-| Tactic name contains whitespace | `INVALID_ARGUMENT` | `Tactic name must be a single identifier (no whitespace). Got: "<name>".` |
+| Tactic name contains whitespace and is not a known multi-word primitive | `INVALID_ARGUMENT` | `Tactic name must be a single identifier (no whitespace). Got: "<name>".` |
 | Empty database name | `INVALID_ARGUMENT` | `Hint database name must not be empty.` |
 | Empty constant name | `INVALID_ARGUMENT` | `Constant name must not be empty.` |
 | Fewer than two names for comparison | `INVALID_ARGUMENT` | `Comparison requires at least two tactic names.` |
