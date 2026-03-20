@@ -37,20 +37,30 @@ Define the training pipeline that produces neural encoder model checkpoints from
 
 #### Pair extraction
 
+Each ExtractionStep contains the proof state (goals, hypotheses) *after* the step's tactic was applied, plus the premises used by that tactic. Step 0 is the initial state with no tactic. The training pair for a tactic at step k uses the proof state from step k-1 (the state before the tactic) paired with the premises from step k:
+
+```
 For each ExtractionRecord in the JSONL files:
-```
-For each step in record.steps:
-    state_text = step.state_before (pretty-printed string)
-    premises = step.premises (list of fully qualified names)
-    If len(premises) > 0:
-        Emit (state_text, premises)
+    For step_index k = 1 to len(record.steps) - 1:
+        state_text = serialize_goals(record.steps[k-1].goals)
+        premises = [p.name for p in record.steps[k].premises if p.kind != "hypothesis"]
+        If len(premises) > 0:
+            Emit (state_text, premises)
 ```
 
-Steps with empty premise lists shall be skipped — they provide no training signal.
+**Proof state serialization** (`serialize_goals`): The goal list shall be serialized to a single text string. For each goal, format as: all hypotheses (each as `name : type`), then the goal type, separated by newlines. Multiple goals are separated by a blank line. This produces deterministic, human-readable text suitable as encoder input.
 
-> **Given** an ExtractionRecord with 5 steps, 3 of which have non-empty premise lists
+**Hypothesis filtering**: Premises with `kind == "hypothesis"` shall be excluded from `premises_used` because local hypotheses are not entries in the premise corpus and cannot be retrieved. Steps where all premises are local hypotheses (empty `premises_used` after filtering) shall be skipped.
+
+Steps with empty premise lists (e.g., `reflexivity`, `assumption`) shall also be skipped — they provide no training signal.
+
+> **Given** an ExtractionRecord with 6 steps (step 0 = initial, steps 1–5 = tactics), where steps 1, 3, 4 have non-empty global premises after hypothesis filtering
 > **When** pairs are extracted
-> **Then** 3 training pairs are emitted
+> **Then** 3 training pairs are emitted, each pairing the goals from the previous step with the global premises from the current step
+
+> **Given** an ExtractionStep at index 2 whose premises are all `kind: "hypothesis"`
+> **When** pairs are extracted for this step
+> **Then** this step is skipped (no training pair emitted)
 
 #### Train/validation/test split
 
@@ -251,7 +261,7 @@ When `relative_improvement < 0.15`, the report shall include a warning: `"Neural
 |-------|------|-----------|
 | `total_pairs` | integer | Total `(state, premises)` pairs with non-empty premise lists |
 | `empty_premise_pairs` | integer | Steps with empty premise lists (skipped) |
-| `malformed_pairs` | integer | Steps with missing or invalid `state_before` or `premises` fields |
+| `malformed_pairs` | integer | Steps with missing or invalid `goals` or `premises` fields |
 | `unique_premises` | integer | Distinct premise names across all pairs |
 | `unique_states` | integer | Distinct proof state texts across all pairs |
 | `top_premises` | list of (name, count) | 10 most frequently referenced premises |
