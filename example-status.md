@@ -161,6 +161,6 @@ Each prompt from `examples.md` was executed against the Poule MCP tools and eval
 3. **list_instances returns empty** — instance enumeration for Morphisms.Proper returns empty list despite typeclass being available
 
 ### Missing Index Coverage
-4. **Reverse dependency edges sparse** — impact_analysis returns only root node for fundamental stdlib lemmas like Nat.add_comm; forward edges (uses) exist but reverse edges (used_by) are not populated
+4. ~~**Reverse dependency edges sparse**~~ — FIXED: root cause was that `resolve_and_insert_dependencies` only inserted edges from `Print Assumptions` (axioms) and tree-based `LConst` extraction (type-level constants), missing theorem-to-theorem edges. Added symbol-set cross-referencing per spec §4.5: when declaration A's `symbol_set` contains the FQN of declaration B, a `"uses"` edge is now inserted
 5. **Some library lemmas not extracted** — bpow_ge_0 (Flocq), intermediate_value (Coquelicot) missing from index despite their libraries being indexed; likely extraction depth limitation
 6. **MathComp ssralg not indexed** — only mathcomp.boot.* and mathcomp.order.* present; GRing.Ring and algebra modules missing
