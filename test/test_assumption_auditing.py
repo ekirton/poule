@@ -199,6 +199,14 @@ class TestOutputParsing:
         assert result.axioms == []
         assert result.opaque_dependencies == []
 
+    def test_closed_theorem_output_multiline(self):
+        """Coq may line-wrap 'Closed under the global\\n  context'; parser must still recognise it."""
+        parse = _import_parser()
+        result = parse("Closed under the global\n  context")
+        assert result.is_closed is True
+        assert result.axioms == []
+        assert result.opaque_dependencies == []
+
     def test_two_dependency_lines(self):
         """Given two dependency lines, extract name and type for each."""
         parse = _import_parser()

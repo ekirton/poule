@@ -19,8 +19,8 @@ def parse_print_assumptions(output: str) -> ParsedOutput:
 
     stripped = output.strip()
 
-    # Closed theorem
-    if stripped == "Closed under the global context":
+    # Closed theorem (Coq may wrap the line, e.g. "Closed under the global\n  context")
+    if " ".join(stripped.split()) == "Closed under the global context":
         return ParsedOutput(is_closed=True, dependencies=[])
 
     # Parse dependency lines
