@@ -16,11 +16,13 @@ Three tiers of library support, reflecting increasing extraction difficulty:
 
 **Tier 0 (P0): Controlled, high-confidence**
 - Coq standard library: ≥ 95% extraction success rate
-- MathComp: ≥ 90% extraction success rate
+- MathComp (boot, order, algebra, fingroup, solvable, field, character): ≥ 90% extraction success rate
 - stdpp: ≥ 90% extraction success rate
 - Flocq: ≥ 95% extraction success rate
 - Coquelicot: ≥ 95% extraction success rate
 - CoqInterval: ≥ 90% extraction success rate
+
+The MathComp target includes the core component hierarchy installed by `rocq-mathcomp-ssreflect`, `rocq-mathcomp-algebra`, `rocq-mathcomp-fingroup`, `rocq-mathcomp-solvable`, `rocq-mathcomp-field`, and `rocq-mathcomp-character`. These packages provide the ssreflect, algebra, group theory, and finite field libraries that constitute "MathComp" as referenced elsewhere in this document.
 
 **Tier 1 (P1): Validated opam-installable projects**
 - Standard-Ltac projects beyond the Tier 0 set: validated extraction, success rate reported
