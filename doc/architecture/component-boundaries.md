@@ -32,7 +32,8 @@ System-level view of all components, their boundaries, and the dependency graph.
 | Compatibility Analysis | Dependency scanning, opam metadata resolution, constraint parsing, conflict detection, explanation building, resolution suggestion | [compatibility-analysis.md](compatibility-analysis.md) |
 | Notation Inspection | Notation lookup, scope inspection, precedence/associativity extraction, ambiguity resolution | [notation-inspection.md](notation-inspection.md) |
 | Tactic Documentation | Tactic lookup, comparison, contextual suggestion, hint database inspection | [tactic-documentation.md](tactic-documentation.md) |
-| Nightly Re-index Automation | Upstream version detection, per-library re-extraction, release publication, cron-friendly host launcher | [nightly-reindex.md](nightly-reindex.md) |
+| Convoy Pattern Analyzer | Dependent-destruction diagnosis, technique selection, revert-order computation, convoy/Equations boilerplate generation | [convoy-pattern-assistant.md](convoy-pattern-assistant.md) |
+| Setoid Rewrite Analyzer | Setoid rewrite error parsing, missing Proper instance identification, instance existence checking, signature generation, binder-rewrite detection | [setoid-rewriting-assistant.md](setoid-rewriting-assistant.md) |
 | Claude Code / LLM | Intent interpretation, query formulation, result filtering, explanation | External (not owned by this project) |
 
 ### Cross-Cutting Concerns
@@ -369,8 +370,8 @@ The Neural Training Pipeline is a batch-mode component invoked via CLI. It reads
 | [data-models/extraction-types.md](data-models/extraction-types.md) | [specification/data-structures.md](../../specification/data-structures.md) §4.8 |
 | [proof-search-engine.md](proof-search-engine.md) | specification/proof-search-engine.md (pending) |
 | [fill-admits-orchestrator.md](fill-admits-orchestrator.md) | specification/fill-admits-orchestrator.md (pending) |
-| [neural-retrieval.md](neural-retrieval.md) | specification/neural-retrieval.md (pending) |
-| [neural-training.md](neural-training.md) | specification/neural-training.md (pending) |
+| [neural-retrieval.md](neural-retrieval.md) | [specification/neural-retrieval.md](../../specification/neural-retrieval.md) |
+| [neural-training.md](neural-training.md) | [specification/neural-training.md](../../specification/neural-training.md) |
 | [hammer-automation.md](hammer-automation.md) | [specification/hammer-automation.md](../../specification/hammer-automation.md) |
 | [vernacular-introspection.md](vernacular-introspection.md) | [specification/vernacular-introspection.md](../../specification/vernacular-introspection.md) |
 | [assumption-auditing.md](assumption-auditing.md) | [specification/assumption-auditing.md](../../specification/assumption-auditing.md) |
@@ -384,4 +385,5 @@ The Neural Training Pipeline is a batch-mode component invoked via CLI. It reads
 | [compatibility-analysis.md](compatibility-analysis.md) | [specification/compatibility-analysis.md](../../specification/compatibility-analysis.md) |
 | [notation-inspection.md](notation-inspection.md) | [specification/notation-inspection.md](../../specification/notation-inspection.md) |
 | [tactic-documentation.md](tactic-documentation.md) | [specification/tactic-documentation.md](../../specification/tactic-documentation.md) |
-| [nightly-reindex.md](nightly-reindex.md) | [specification/nightly-reindex.md](../../specification/nightly-reindex.md) |
+| [convoy-pattern-assistant.md](convoy-pattern-assistant.md) | specification/convoy-pattern-assistant.md (pending) |
+| [setoid-rewriting-assistant.md](setoid-rewriting-assistant.md) | specification/setoid-rewriting-assistant.md (pending) |

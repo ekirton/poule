@@ -35,6 +35,7 @@ Derived from [doc/requirements/training-data-extraction.md](../training-data-ext
 - GIVEN a list of Coq project directories WHEN the extraction command is run with the list THEN it processes each project and produces a unified dataset
 - GIVEN a multi-project extraction WHEN the output is inspected THEN each record includes project-level metadata identifying which project it came from
 - GIVEN a multi-project extraction WHEN one project fails entirely THEN the remaining projects are still extracted
+- GIVEN the Coq standard library, MathComp, and at least two additional Coq projects WHEN a multi-project extraction completes THEN the total extracted theorem count is ≥ 100,000
 
 **Traces to:** R3-P0-9, R3-P0-10
 
@@ -213,6 +214,7 @@ Derived from [doc/requirements/training-data-extraction.md](../training-data-ext
 **Acceptance criteria:**
 - GIVEN the Coq standard library WHEN extraction is run THEN ≥ 95% of provable theorems produce successful proof trace records
 - GIVEN the extraction output WHEN theorem names are inspected THEN they are fully qualified and match the standard library's module structure
+- GIVEN the Coq standard library WHEN extraction is run on a single machine without GPU THEN extraction completes in under 1 hour
 
 **Traces to:** R3-P0-7
 

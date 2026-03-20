@@ -3,7 +3,8 @@
 Tests are written BEFORE implementation. They will fail with ImportError
 until the production modules exist under src/poule/neural/training/.
 
-Covers: TrainingDataLoader (JSONL parsing, pair extraction, file-level split),
+Covers: TrainingDataLoader (JSONL parsing, pair extraction from ExtractionRecord
+goals/premises, hypothesis filtering, file-level split), serialize_goals,
 hard negative sampling, BiEncoderTrainer (masked contrastive loss, early stopping,
 checkpoint format), fine-tuning, RetrievalEvaluator (evaluate, compare, thresholds),
 ModelQuantizer (ONNX export, validation), TrainingDataValidator (warning conditions),
@@ -24,7 +25,11 @@ import pytest
 # Imports from production code (TDD — will fail until implemented)
 # ---------------------------------------------------------------------------
 
-from Poule.neural.training.data import TrainingDataLoader, TrainingDataset
+from Poule.neural.training.data import (
+    TrainingDataLoader,
+    TrainingDataset,
+    serialize_goals,
+)
 from Poule.neural.training.negatives import sample_hard_negatives
 from Poule.neural.training.trainer import BiEncoderTrainer
 from Poule.neural.training.evaluator import RetrievalEvaluator, EvaluationReport, ComparisonReport
@@ -52,20 +57,68 @@ def _write_jsonl(path, records):
             f.write(json.dumps(record) + "\n")
 
 
+def _make_goal(goal_type, hypotheses=None):
+    """Create a Goal dict matching the ExtractionStep schema."""
+    return {
+        "index": 0,
+        "type": goal_type,
+        "hypotheses": hypotheses or [],
+    }
+
+
+def _make_hypothesis(name, hyp_type, body=None):
+    """Create a Hypothesis dict."""
+    return {"name": name, "type": hyp_type, "body": body}
+
+
+def _make_premise(name, kind="lemma"):
+    """Create a Premise dict with name and kind."""
+    return {"name": name, "kind": kind}
+
+
+def _make_step(step_index, tactic, goals, premises=None):
+    """Create an ExtractionStep dict matching the data model.
+
+    goals: list of Goal dicts (from _make_goal)
+    premises: list of Premise dicts (from _make_premise), defaults to []
+    """
+    return {
+        "step_index": step_index,
+        "tactic": tactic,
+        "goals": goals,
+        "focused_goal_index": 0 if goals else None,
+        "premises": premises or [],
+    }
+
+
 def _make_extraction_record(source_file, steps):
     """Create a minimal ExtractionRecord dict for testing."""
     return {
+        "schema_version": 1,
+        "record_type": "proof_trace",
+        "theorem_name": f"{source_file}.test_thm",
         "source_file": source_file,
+        "project_id": "test-project",
+        "total_steps": len(steps) - 1,  # N tactics for N+1 steps
         "steps": steps,
     }
 
 
-def _make_step(state_before, premises):
-    """Create a minimal step dict."""
-    return {
-        "state_before": state_before,
-        "premises": premises,
-    }
+def _make_simple_proof(source_file, initial_goal, tactic_steps):
+    """Create a complete proof record with initial state + tactic steps.
+
+    tactic_steps: list of (tactic_text, goal_after, premises_list)
+    where premises_list is [(name, kind), ...]
+    """
+    steps = [
+        _make_step(0, None, [_make_goal(initial_goal)]),
+    ]
+    for i, (tactic, goal_after, premises) in enumerate(tactic_steps, 1):
+        premise_dicts = [_make_premise(n, k) for n, k in premises]
+        steps.append(
+            _make_step(i, tactic, [_make_goal(goal_after)], premise_dicts)
+        )
+    return _make_extraction_record(source_file, steps)
 
 
 def _make_minimal_index_db(db_path, declarations=None):
@@ -90,49 +143,115 @@ def _make_minimal_index_db(db_path, declarations=None):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 1. TrainingDataLoader — Pair Extraction
+# 1. serialize_goals — Proof State Text Serialization
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestSerializeGoals:
+    """spec §4.1: serialize_goals converts Goal objects to text for encoder input."""
+
+    def test_single_goal_no_hypotheses(self):
+        """A single goal with no hypotheses serializes to just the goal type."""
+        goals = [_make_goal("forall n : nat, n + 0 = n")]
+        result = serialize_goals(goals)
+        assert "forall n : nat, n + 0 = n" in result
+
+    def test_single_goal_with_hypotheses(self):
+        """Hypotheses are serialized as 'name : type' before the goal."""
+        goals = [_make_goal(
+            "n + 0 = n",
+            [_make_hypothesis("n", "nat"), _make_hypothesis("m", "nat")]
+        )]
+        result = serialize_goals(goals)
+        assert "n : nat" in result
+        assert "m : nat" in result
+        assert "n + 0 = n" in result
+
+    def test_multiple_goals_separated(self):
+        """Multiple goals are separated (by blank line or delimiter)."""
+        goals = [
+            _make_goal("n + 0 = n"),
+            _make_goal("m + 0 = m"),
+        ]
+        result = serialize_goals(goals)
+        assert "n + 0 = n" in result
+        assert "m + 0 = m" in result
+
+    def test_deterministic(self):
+        """Same goals produce identical text."""
+        goals = [_make_goal("n = n", [_make_hypothesis("n", "nat")])]
+        assert serialize_goals(goals) == serialize_goals(goals)
+
+    def test_empty_goals_returns_empty_string(self):
+        """Empty goal list produces empty string."""
+        assert serialize_goals([]) == ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 2. TrainingDataLoader — Pair Extraction (Step Pairing)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestPairExtraction:
-    """spec §4.1: Pair extraction from ExtractionRecords."""
+    """spec §4.1: Pair extraction from ExtractionRecords.
 
-    def test_extracts_pairs_from_steps_with_premises(self, tmp_path):
-        """spec §4.1: Steps with non-empty premise lists emit training pairs."""
-        jsonl_path = tmp_path / "data.jsonl"
-        record = _make_extraction_record(
+    Training pairs use goals from step k-1 paired with premises from step k.
+    """
+
+    def test_pairs_previous_step_goals_with_current_step_premises(self, tmp_path):
+        """spec §4.1: proof_state = steps[k-1].goals, premises = steps[k].premises.
+
+        Given a 3-step proof (step 0 = initial, steps 1-2 = tactics):
+        - Step 0: initial goals = "forall n : nat, n + 0 = n"
+        - Step 1: tactic "intros n.", goals after = "n + 0 = n", premises = [Nat.add_0_r]
+        - Step 2: tactic "apply Nat.add_comm.", goals after = [], premises = [Nat.add_comm]
+
+        Pair for step 1: (serialize(step[0].goals), step[1].premises) = ("forall n...", [Nat.add_0_r])
+        Pair for step 2: (serialize(step[1].goals), step[2].premises) = ("n + 0 = n", [Nat.add_comm])
+        """
+        record = _make_simple_proof(
             "Coq.Init.Nat",
+            "forall n : nat, n + 0 = n",
             [
-                _make_step("goal 1", ["Nat.add_comm", "Nat.add_assoc"]),
-                _make_step("goal 2", []),  # empty — skipped
-                _make_step("goal 3", ["Nat.mul_comm"]),
+                ("intros n.", "n + 0 = n", [("Nat.add_0_r", "lemma")]),
+                ("apply Nat.add_comm.", "", [("Nat.add_comm", "lemma")]),
             ],
         )
+        jsonl_path = tmp_path / "data.jsonl"
         _write_jsonl(jsonl_path, [record])
 
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, [
-            (1, "Nat.add_comm", "stmt1", "Coq.Init.Nat"),
-            (2, "Nat.add_assoc", "stmt2", "Coq.Init.Nat"),
-            (3, "Nat.mul_comm", "stmt3", "Coq.Init.Nat"),
+            (1, "Nat.add_0_r", "stmt1", "Coq.Init.Nat"),
+            (2, "Nat.add_comm", "stmt2", "Coq.Init.Nat"),
         ])
 
         dataset = TrainingDataLoader.load([jsonl_path], db_path)
-        # 5 steps, 2 with non-empty premises → 2 training pairs
         all_pairs = dataset.train + dataset.val + dataset.test
-        # Given/When/Then: 3 steps, 2 with non-empty premises → 2 pairs
+
         assert len(all_pairs) == 2
+
+        # Pair 1: state before step 1 = step 0's goals
+        state_1, premises_1 = all_pairs[0]
+        assert "forall n : nat, n + 0 = n" in state_1
+        assert premises_1 == ["Nat.add_0_r"]
+
+        # Pair 2: state before step 2 = step 1's goals
+        state_2, premises_2 = all_pairs[1]
+        assert "n + 0 = n" in state_2
+        assert premises_2 == ["Nat.add_comm"]
 
     def test_skips_steps_with_empty_premises(self, tmp_path):
         """spec §4.1: Steps with empty premise lists shall be skipped."""
-        jsonl_path = tmp_path / "data.jsonl"
-        record = _make_extraction_record(
+        record = _make_simple_proof(
             "Coq.Init.Nat",
+            "forall n : nat, n = n",
             [
-                _make_step("goal 1", []),
-                _make_step("goal 2", []),
+                ("intros n.", "n = n", []),  # reflexivity — no premises
+                ("reflexivity.", "", []),
             ],
         )
+        jsonl_path = tmp_path / "data.jsonl"
         _write_jsonl(jsonl_path, [record])
 
         db_path = tmp_path / "index.db"
@@ -142,33 +261,41 @@ class TestPairExtraction:
         all_pairs = dataset.train + dataset.val + dataset.test
         assert len(all_pairs) == 0
 
-    def test_pair_contains_state_and_premises(self, tmp_path):
-        """spec §4.1: Each pair is (state_text, premises_used_names)."""
-        jsonl_path = tmp_path / "data.jsonl"
+    def test_step_0_is_never_used_as_source_of_premises(self, tmp_path):
+        """spec §4.1: Step 0 has no tactic and no premises — only used as state source."""
         record = _make_extraction_record(
             "Coq.Init.Nat",
-            [_make_step("forall n : nat, n + 0 = n", ["Nat.add_0_r"])],
+            [
+                _make_step(0, None, [_make_goal("initial goal")]),
+                _make_step(1, "apply P.", [_make_goal("subgoal")],
+                           [_make_premise("P", "lemma")]),
+            ],
         )
+        jsonl_path = tmp_path / "data.jsonl"
         _write_jsonl(jsonl_path, [record])
 
         db_path = tmp_path / "index.db"
-        _make_minimal_index_db(db_path, [(1, "Nat.add_0_r", "stmt", "Coq.Init.Nat")])
+        _make_minimal_index_db(db_path, [(1, "P", "stmt", "mod")])
 
         dataset = TrainingDataLoader.load([jsonl_path], db_path)
         all_pairs = dataset.train + dataset.val + dataset.test
+        # Only 1 pair: (step[0].goals, step[1].premises)
+        assert len(all_pairs) == 1
         state, premises = all_pairs[0]
-        assert state == "forall n : nat, n + 0 = n"
-        assert premises == ["Nat.add_0_r"]
+        assert "initial goal" in state
+        assert premises == ["P"]
 
     def test_handles_multiple_jsonl_files(self, tmp_path):
         """spec §4.1: load accepts a list of JSONL paths."""
         file1 = tmp_path / "a.jsonl"
         file2 = tmp_path / "b.jsonl"
         _write_jsonl(file1, [
-            _make_extraction_record("FileA", [_make_step("s1", ["P1"])]),
+            _make_simple_proof("FileA", "goal_a",
+                               [("t1.", "g1", [("P1", "lemma")])]),
         ])
         _write_jsonl(file2, [
-            _make_extraction_record("FileB", [_make_step("s2", ["P2"])]),
+            _make_simple_proof("FileB", "goal_b",
+                               [("t2.", "g2", [("P2", "lemma")])]),
         ])
 
         db_path = tmp_path / "index.db"
@@ -181,9 +308,119 @@ class TestPairExtraction:
         all_pairs = dataset.train + dataset.val + dataset.test
         assert len(all_pairs) == 2
 
+    def test_gwt_example_from_spec(self, tmp_path):
+        """spec §4.1 GWT: 6 steps (0=initial, 1-5=tactics), steps 1,3,4 have global premises.
+
+        Given an ExtractionRecord with 6 steps, steps 1, 3, 4 have non-empty
+        global premises after hypothesis filtering
+        When pairs are extracted
+        Then 3 training pairs are emitted
+        """
+        steps = [
+            _make_step(0, None, [_make_goal("initial")]),
+            _make_step(1, "t1.", [_make_goal("g1")], [_make_premise("P1", "lemma")]),
+            _make_step(2, "t2.", [_make_goal("g2")], []),  # empty
+            _make_step(3, "t3.", [_make_goal("g3")], [_make_premise("P3", "lemma")]),
+            _make_step(4, "t4.", [_make_goal("g4")], [_make_premise("P4", "definition")]),
+            _make_step(5, "t5.", [_make_goal("g5")], []),  # empty
+        ]
+        record = _make_extraction_record("Coq.Init.Nat", steps)
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [record])
+
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [
+            (1, "P1", "s1", "mod"), (3, "P3", "s3", "mod"), (4, "P4", "s4", "mod"),
+        ])
+
+        dataset = TrainingDataLoader.load([jsonl_path], db_path)
+        all_pairs = dataset.train + dataset.val + dataset.test
+        assert len(all_pairs) == 3
+
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 2. TrainingDataLoader — File-Level Split
+# 3. TrainingDataLoader — Hypothesis Filtering
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestHypothesisFiltering:
+    """spec §4.1: Premises with kind == 'hypothesis' shall be excluded."""
+
+    def test_filters_out_hypothesis_kind_premises(self, tmp_path):
+        """spec §4.1: Local hypotheses are excluded from premises_used."""
+        record = _make_simple_proof(
+            "Coq.Init.Nat",
+            "forall n : nat, n + 0 = n",
+            [
+                ("rewrite H.", "subgoal", [
+                    ("Nat.add_comm", "lemma"),
+                    ("H", "hypothesis"),  # should be filtered
+                ]),
+            ],
+        )
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [record])
+
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [
+            (1, "Nat.add_comm", "stmt", "Coq.Init.Nat"),
+        ])
+
+        dataset = TrainingDataLoader.load([jsonl_path], db_path)
+        all_pairs = dataset.train + dataset.val + dataset.test
+        assert len(all_pairs) == 1
+        _, premises = all_pairs[0]
+        assert premises == ["Nat.add_comm"]
+        assert "H" not in premises
+
+    def test_skips_steps_where_all_premises_are_hypotheses(self, tmp_path):
+        """spec §4.1 GWT: Step with only hypothesis premises is skipped."""
+        record = _make_simple_proof(
+            "Coq.Init.Nat",
+            "forall n : nat, n = n",
+            [
+                ("exact H.", "done", [
+                    ("H", "hypothesis"),
+                    ("H2", "hypothesis"),
+                ]),
+            ],
+        )
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [record])
+
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path)
+
+        dataset = TrainingDataLoader.load([jsonl_path], db_path)
+        all_pairs = dataset.train + dataset.val + dataset.test
+        assert len(all_pairs) == 0
+
+    def test_keeps_non_hypothesis_premise_kinds(self, tmp_path):
+        """Premises of kind lemma, definition, constructor are kept."""
+        record = _make_simple_proof(
+            "Coq.Init.Nat",
+            "goal",
+            [
+                ("t1.", "g1", [("L", "lemma"), ("D", "definition"), ("C", "constructor")]),
+            ],
+        )
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [record])
+
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [
+            (1, "L", "s1", "m"), (2, "D", "s2", "m"), (3, "C", "s3", "m"),
+        ])
+
+        dataset = TrainingDataLoader.load([jsonl_path], db_path)
+        all_pairs = dataset.train + dataset.val + dataset.test
+        assert len(all_pairs) == 1
+        _, premises = all_pairs[0]
+        assert set(premises) == {"L", "D", "C"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 4. TrainingDataLoader — File-Level Split
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -191,20 +428,14 @@ class TestFileLevelSplit:
     """spec §4.1: Deterministic train/val/test split by source file position."""
 
     def test_split_positions_for_10_files(self, tmp_path):
-        """spec §4.1: position % 10 == 8 → val, == 9 → test, else → train.
-
-        Given 10 files sorted lexicographically (file_00..file_09),
-        file_08 → val, file_09 → test, rest → train.
-        """
+        """spec §4.1: position % 10 == 8 → val, == 9 → test, else → train."""
         jsonl_path = tmp_path / "data.jsonl"
         records = []
         for i in range(10):
-            records.append(
-                _make_extraction_record(
-                    f"file_{i:02d}",
-                    [_make_step(f"state_{i}", [f"premise_{i}"])],
-                )
-            )
+            records.append(_make_simple_proof(
+                f"file_{i:02d}", f"goal_{i}",
+                [(f"t{i}.", f"g{i}", [(f"premise_{i}", "lemma")])],
+            ))
         _write_jsonl(jsonl_path, records)
 
         db_path = tmp_path / "index.db"
@@ -213,8 +444,7 @@ class TestFileLevelSplit:
 
         dataset = TrainingDataLoader.load([jsonl_path], db_path)
 
-        # Files sorted lexicographically: file_00..file_09
-        # position 8 → val, position 9 → test, 0-7 → train
+        # Files sorted: file_00..file_09; position 8→val, 9→test, 0-7→train
         assert len(dataset.train) == 8
         assert len(dataset.val) == 1
         assert len(dataset.test) == 1
@@ -224,12 +454,10 @@ class TestFileLevelSplit:
         jsonl_path = tmp_path / "data.jsonl"
         records = []
         for i in range(100):
-            records.append(
-                _make_extraction_record(
-                    f"file_{i:03d}",
-                    [_make_step(f"state_{i}", [f"premise_{i}"])],
-                )
-            )
+            records.append(_make_simple_proof(
+                f"file_{i:03d}", f"goal_{i}",
+                [(f"t{i}.", f"g{i}", [(f"premise_{i}", "lemma")])],
+            ))
         _write_jsonl(jsonl_path, records)
 
         db_path = tmp_path / "index.db"
@@ -238,7 +466,6 @@ class TestFileLevelSplit:
 
         dataset = TrainingDataLoader.load([jsonl_path], db_path)
 
-        # 10 val files (pos 8,18,...,98), 10 test files (pos 9,19,...,99), 80 train
         assert len(dataset.train) == 80
         assert len(dataset.val) == 10
         assert len(dataset.test) == 10
@@ -248,12 +475,14 @@ class TestFileLevelSplit:
         jsonl_path = tmp_path / "data.jsonl"
         records = []
         for i in range(20):
-            # Multiple steps per file
-            steps = [
-                _make_step(f"state_{i}_a", [f"premise_{i}"]),
-                _make_step(f"state_{i}_b", [f"premise_{i}"]),
-            ]
-            records.append(_make_extraction_record(f"file_{i:02d}", steps))
+            # Multiple tactic steps per proof
+            records.append(_make_simple_proof(
+                f"file_{i:02d}", f"goal_{i}",
+                [
+                    (f"t{i}a.", f"ga_{i}", [(f"premise_{i}", "lemma")]),
+                    (f"t{i}b.", f"gb_{i}", [(f"premise_{i}", "lemma")]),
+                ],
+            ))
         _write_jsonl(jsonl_path, records)
 
         db_path = tmp_path / "index.db"
@@ -274,7 +503,8 @@ class TestFileLevelSplit:
         """Split should be identical across two calls with the same data."""
         jsonl_path = tmp_path / "data.jsonl"
         records = [
-            _make_extraction_record(f"file_{i:02d}", [_make_step(f"s{i}", [f"p{i}"])])
+            _make_simple_proof(f"file_{i:02d}", f"g{i}",
+                               [(f"t{i}.", f"ga{i}", [(f"p{i}", "lemma")])])
             for i in range(15)
         ]
         _write_jsonl(jsonl_path, records)
@@ -292,7 +522,7 @@ class TestFileLevelSplit:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 3. Hard Negative Sampling
+# 5. Hard Negative Sampling
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -313,7 +543,6 @@ class TestHardNegativeSampling:
         positive = {"A", "B"}
         accessible = {"A", "B", "C"}
         result = sample_hard_negatives("state", positive, accessible, k=5)
-        # Only "C" is available
         assert len(result) == 1
         assert result == ["C"] or set(result) == {"C"}
 
@@ -336,7 +565,7 @@ class TestHardNegativeSampling:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 4. BiEncoderTrainer — Hyperparameters
+# 6. BiEncoderTrainer — Hyperparameters
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -366,7 +595,7 @@ class TestBiEncoderTrainerHyperparams:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 5. BiEncoderTrainer — Early Stopping
+# 7. BiEncoderTrainer — Early Stopping
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -412,7 +641,7 @@ class TestEarlyStopping:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 6. BiEncoderTrainer — Checkpoint Format
+# 8. BiEncoderTrainer — Checkpoint Format
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -443,7 +672,7 @@ class TestCheckpointFormat:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 7. Fine-Tuning
+# 9. Fine-Tuning
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -471,7 +700,7 @@ class TestFineTuning:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 8. RetrievalEvaluator — Evaluation Report
+# 10. RetrievalEvaluator — Evaluation Report
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -525,7 +754,7 @@ class TestEvaluationReport:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 9. RetrievalEvaluator — Comparison Report
+# 11. RetrievalEvaluator — Comparison Report
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -611,7 +840,7 @@ class TestComparisonReport:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 10. ModelQuantizer
+# 12. ModelQuantizer
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -628,34 +857,43 @@ class TestModelQuantizer:
 
     def test_quantization_error_on_high_cosine_distance(self):
         """spec §4.6: If max cosine distance >= 0.02, raise QuantizationError."""
-        # QuantizationError should carry the distance value
         err = QuantizationError(max_distance=0.025)
         assert err.max_distance == 0.025
         assert "0.02" in str(err) or "distance" in str(err).lower()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 11. TrainingDataValidator
+# 13. TrainingDataValidator
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestTrainingDataValidator:
-    """spec §4.7: TrainingDataValidator warning conditions."""
+    """spec §4.7: TrainingDataValidator warning conditions.
+
+    The validator scans ExtractionRecords for training data quality.
+    It reads the goals field (not state_before) from each step.
+    """
+
+    def _make_validator_record(self, source_file, step_data):
+        """Create an ExtractionRecord for validator testing.
+
+        step_data: list of (goals_list, premises_list)
+        where goals_list is list of Goal dicts, premises_list is list of Premise dicts.
+        """
+        steps = [_make_step(0, None, [_make_goal("initial")])]
+        for i, (goals, premises) in enumerate(step_data, 1):
+            steps.append(_make_step(i, f"t{i}.", goals, premises))
+        return _make_extraction_record(source_file, steps)
 
     def test_report_fields(self, tmp_path):
         """spec §4.7: ValidationReport has all specified fields."""
         jsonl_path = tmp_path / "data.jsonl"
-        records = [
-            _make_extraction_record(
-                "file_a",
-                [
-                    _make_step("s1", ["P1", "P2"]),
-                    _make_step("s2", []),
-                    _make_step("s3", ["P1"]),
-                ],
-            )
-        ]
-        _write_jsonl(jsonl_path, records)
+        record = self._make_validator_record("file_a", [
+            ([_make_goal("g1")], [_make_premise("P1"), _make_premise("P2")]),
+            ([_make_goal("g2")], []),  # empty premises
+            ([_make_goal("g3")], [_make_premise("P1")]),
+        ])
+        _write_jsonl(jsonl_path, [record])
 
         report = TrainingDataValidator.validate([jsonl_path])
 
@@ -674,9 +912,13 @@ class TestTrainingDataValidator:
         2 / 11 ≈ 18% > 10%.
         """
         jsonl_path = tmp_path / "data.jsonl"
-        steps = [_make_step(f"s{i}", [f"P{i}"]) for i in range(9)]
-        steps += [_make_step("empty1", []), _make_step("empty2", [])]
-        records = [_make_extraction_record("file_a", steps)]
+        step_data = [
+            ([_make_goal(f"g{i}")], [_make_premise(f"P{i}")]) for i in range(9)
+        ] + [
+            ([_make_goal("empty1")], []),
+            ([_make_goal("empty2")], []),
+        ]
+        records = [self._make_validator_record("file_a", step_data)]
         _write_jsonl(jsonl_path, records)
 
         report = TrainingDataValidator.validate([jsonl_path])
@@ -685,10 +927,10 @@ class TestTrainingDataValidator:
     def test_no_warning_when_empty_below_threshold(self, tmp_path):
         """No warning when empty rate <= 10%."""
         jsonl_path = tmp_path / "data.jsonl"
-        steps = [_make_step(f"s{i}", [f"P{i}"]) for i in range(95)]
-        steps += [_make_step("empty1", [])]
-        # 1 / 96 ≈ 1% < 10%
-        records = [_make_extraction_record("file_a", steps)]
+        step_data = [
+            ([_make_goal(f"g{i}")], [_make_premise(f"P{i}")]) for i in range(95)
+        ] + [([_make_goal("empty1")], [])]
+        records = [self._make_validator_record("file_a", step_data)]
         _write_jsonl(jsonl_path, records)
 
         report = TrainingDataValidator.validate([jsonl_path])
@@ -697,11 +939,11 @@ class TestTrainingDataValidator:
     def test_warning_malformed_pairs(self, tmp_path):
         """spec §4.7: Warning when malformed_pairs > 0."""
         jsonl_path = tmp_path / "data.jsonl"
-        # Write a valid record + an invalid JSON line
+        record = self._make_validator_record("file_a", [
+            ([_make_goal("g1")], [_make_premise("P1")]),
+        ])
         with open(jsonl_path, "w") as f:
-            f.write(json.dumps(_make_extraction_record(
-                "file_a", [_make_step("s1", ["P1"])]
-            )) + "\n")
+            f.write(json.dumps(record) + "\n")
             f.write("not valid json\n")
 
         report = TrainingDataValidator.validate([jsonl_path])
@@ -712,8 +954,9 @@ class TestTrainingDataValidator:
         """spec §4.7: Warning when total_pairs < 5000."""
         jsonl_path = tmp_path / "data.jsonl"
         records = [
-            _make_extraction_record("file_a", [_make_step(f"s{i}", [f"P{i}"])])
-            for i in range(100)
+            self._make_validator_record(f"file_{i}", [
+                ([_make_goal(f"g{i}")], [_make_premise(f"P{i}")]),
+            ]) for i in range(100)
         ]
         _write_jsonl(jsonl_path, records)
 
@@ -723,13 +966,10 @@ class TestTrainingDataValidator:
     def test_warning_too_few_unique_premises(self, tmp_path):
         """spec §4.7: Warning when unique_premises < 1000."""
         jsonl_path = tmp_path / "data.jsonl"
-        # All steps reference the same small set of premises
         records = [
-            _make_extraction_record(
-                f"file_{i}",
-                [_make_step(f"s{i}", ["CommonPremise"])],
-            )
-            for i in range(100)
+            self._make_validator_record(f"file_{i}", [
+                ([_make_goal(f"g{i}")], [_make_premise("CommonPremise")]),
+            ]) for i in range(100)
         ]
         _write_jsonl(jsonl_path, records)
 
@@ -740,18 +980,15 @@ class TestTrainingDataValidator:
         """spec §4.7: Warning when any premise > 5% of all occurrences."""
         jsonl_path = tmp_path / "data.jsonl"
         records = []
-        # Create 100 steps: 10 reference "DominantPremise" (10% > 5%)
         for i in range(100):
             if i < 10:
-                premises = ["DominantPremise"]
+                premises = [_make_premise("DominantPremise")]
             else:
-                premises = [f"premise_{i}"]
-            records.append(
-                _make_extraction_record(
-                    f"file_{i:03d}",
-                    [_make_step(f"s{i}", premises)],
-                )
-            )
+                premises = [_make_premise(f"premise_{i}")]
+            records.append(self._make_validator_record(
+                f"file_{i:03d}",
+                [([_make_goal(f"g{i}")], premises)],
+            ))
         _write_jsonl(jsonl_path, records)
 
         report = TrainingDataValidator.validate([jsonl_path])
@@ -762,17 +999,14 @@ class TestTrainingDataValidator:
         jsonl_path = tmp_path / "data.jsonl"
         records = []
         for i in range(50):
-            records.append(
-                _make_extraction_record(
-                    f"file_{i:03d}",
-                    [_make_step(f"s{i}", [f"premise_{i % 15}"])],
-                )
-            )
+            records.append(self._make_validator_record(
+                f"file_{i:03d}",
+                [([_make_goal(f"g{i}")], [_make_premise(f"premise_{i % 15}")])],
+            ))
         _write_jsonl(jsonl_path, records)
 
         report = TrainingDataValidator.validate([jsonl_path])
         assert len(report.top_premises) <= 10
-        # Each entry is (name, count)
         for name, count in report.top_premises:
             assert isinstance(name, str)
             assert isinstance(count, int)
@@ -780,7 +1014,7 @@ class TestTrainingDataValidator:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 12. Error Hierarchy
+# 14. Error Hierarchy
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -822,7 +1056,7 @@ class TestNeuralTrainingErrors:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 13. Insufficient Data Guard
+# 15. Insufficient Data Guard
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -831,9 +1065,8 @@ class TestInsufficientDataGuard:
 
     def test_train_raises_on_too_few_pairs(self, tmp_path):
         """spec §4.3: REQUIRES dataset with at least 1,000 training pairs."""
-        # Create a dataset with only 10 training pairs
         dataset = TrainingDataset(
-            train=[(_make_step(f"s{i}", [f"p{i}"]) ) for i in range(10)],
+            train=[("state", ["premise"]) for _ in range(10)],
             val=[],
             test=[],
             premise_corpus={},
