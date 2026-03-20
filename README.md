@@ -38,6 +38,21 @@ Six Coq libraries are available as prebuilt indexes: **stdlib**, **MathComp**, *
 - Extract full proof traces with per-step premise annotations
 - Batch tactic submission and concurrent sessions
 
+### Proof Profiling
+
+- Profile individual proofs or entire files — per-tactic timing ranked from slowest to fastest
+- Separate `Qed` kernel re-checking time from tactic execution time
+- Identify bottlenecks with natural-language explanations and concrete optimization suggestions
+- Ltac call-tree profiling for complex custom tactics
+- Compare timing between runs for regression detection
+- Project-wide profiling with ranked summaries of slowest files and lemmas
+
+### Proof Assistants
+
+- **Auto/eauto trace explanation** — diagnose why `auto` or `eauto` failed to solve a goal: which hints were tried, why each was rejected, and what to do instead
+- **Convoy pattern assistant** — detect dependent pattern matching failures, recommend repair techniques (`revert`-before-`destruct`, `dependent destruction`, convoy pattern, Equations `depelim`), generate boilerplate, and warn about axiom implications
+- **Setoid rewriting assistant** — diagnose `setoid_rewrite` failures, identify missing `Proper` instances, generate `Instance Proper ...` declarations with correct `respectful` signatures, and suggest `setoid_rewrite` when `rewrite` fails under binders
+
 ### Visualization
 
 - Proof state, proof tree, dependency subgraph, and step-by-step sequence diagrams
@@ -123,6 +138,27 @@ For example, you can ask Claude things like:
 - *"Step through the proof of `add_comm` in `examples/arith.v` and explain each tactic"*
 - *"Try applying `intros` then `induction n` in my current proof session"*
 
+**Profiling — find and fix performance bottlenecks:**
+- *"Profile the proof of `ring_morph` in `src/Algebra.v` — what's making it slow?"*
+- *"Profile `src/Core.v` and show me the slowest lemmas"*
+- *"Why does `Qed` take 30 seconds on this proof? Is it the tactics or the kernel re-checking?"*
+- *"Compare timing before and after my optimization"*
+
+**Debugging automation — understand why tactics fail:**
+- *"Why doesn't `auto` solve this goal? The lemma is right there in the hint database"*
+- *"Why wasn't `bpow_ge_0` used by `auto`? I registered it as a hint"*
+- *"Compare `auto`, `eauto`, and `typeclasses eauto` on my current goal"*
+
+**Dependent pattern matching — fix `destruct` failures:**
+- *"I got 'Abstracting over ... leads to an ill-typed term' — what went wrong?"*
+- *"`destruct` lost the equality between my index and the constructor — how do I fix this?"*
+- *"Generate the convoy pattern boilerplate for this match"*
+
+**Setoid rewriting — fix `Proper` constraint errors:**
+- *"Why does `setoid_rewrite` fail with 'Unable to satisfy Proper constraint'?"*
+- *"Generate the `Proper` instance I need for `union` with `eq_set`"*
+- *"`rewrite` can't find the subterm inside this `forall` — what do I do?"*
+
 **Dependencies — understand how lemmas connect:**
 - *"What lemmas does `Nat.add_comm` depend on?"*
 - *"Which lemmas use `Nat.add_0_r`?"*
@@ -158,6 +194,8 @@ For the full list of skills and their details, see [Skills Reference](doc/SKILLS
 |----------|--------------------|
 | **Search** | Find lemmas by name, type signature, structural similarity, or symbol usage; navigate dependencies; browse modules |
 | **Proof interaction** | Open interactive proof sessions, observe goal states, submit tactics, step through proofs, extract traces with premise annotations |
+| **Profiling** | Profile proofs and files for per-tactic timing, separate Qed from tactic time, explain bottlenecks, suggest optimizations, compare runs for regressions |
+| **Proof assistants** | Diagnose `auto`/`eauto` hint failures, fix dependent pattern matching (`destruct`/convoy pattern), resolve `setoid_rewrite` `Proper` constraint errors |
 | **Visualization** | Render proof states, proof trees, dependency graphs, and step-by-step proof evolution as Mermaid diagrams — written to `proof-diagram.html` in your project directory for browser viewing |
 | **Skills** | Compound agentic workflows: formalization, proof compression, explanation, linting, repair, migration, compatibility analysis, error diagnosis, scaffolding |
 

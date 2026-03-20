@@ -232,6 +232,42 @@ Visualize the proof tree for app_nil_r in examples/lists.v
 Render the step-by-step proof evolution of modus_ponens in examples/logic.v
 ```
 
+**Diagnose dependent pattern matching failures:**
+```
+I got "Abstracting over the terms ... leads to a term which is ill-typed" — what does this mean?
+```
+```
+destruct on my Fin n hypothesis lost the equality between n and S m — how do I fix this?
+```
+```
+I need an axiom-free way to do dependent destruction on this indexed type
+```
+
+**Get convoy pattern assistance:**
+```
+Which hypotheses do I need to revert before destructing x?
+```
+```
+Generate the convoy pattern match term with the correct return clause for this match
+```
+```
+Explain the convoy pattern — why doesn't Coq automatically refine hypothesis types during case analysis?
+```
+
+**Fix setoid rewriting errors:**
+```
+setoid_rewrite fails with "Unable to satisfy the following constraints" — which Proper instance am I missing?
+```
+```
+Generate the Instance Proper declaration I need for my union function with eq_set
+```
+```
+rewrite can't find the subterm inside this forall — what should I do instead?
+```
+```
+Explain what Proper (eq ==> eq_set ==> eq_set) union means in plain English
+```
+
 ---
 
 ## 5. Refactoring and Proof Engineering
@@ -292,12 +328,34 @@ What Coq packages are currently installed?
 
 ## 7. Debugging and Diagnosing Unexpected Behavior
 
-**Understand why auto doesn't solve a goal:**
+**Diagnose why auto/eauto failed:**
 ```
-Why doesn't auto solve this? What hints is it trying?
+Why doesn't auto solve this goal? Show me which hints were tried and why each was rejected
 ```
+```
+Why wasn't bpow_ge_0 used by auto? I registered it with Hint Resolve
+```
+```
+auto fails but eauto succeeds — what's the difference on this goal?
+```
+```
+What databases and transparency settings are in effect for my auto invocation?
+```
+
+**Compare automation variants:**
+```
+Compare auto, eauto, and typeclasses eauto on my current goal — which succeeds and why?
+```
+```
+auto solved the goal but used the wrong lemma — show me the proof path it took and why it preferred that hint
+```
+
+**Inspect hint databases:**
 ```
 Inspect the core hint database to see if my lemma is registered
+```
+```
+What hints are in scope for this goal's head symbol?
 ```
 
 **Trace typeclass resolution:**
@@ -316,5 +374,50 @@ Why does apply Z.add_le_mono fail here?
 **Compare tactic behavior:**
 ```
 Compare simpl vs cbn vs lazy — why does simpl unfold too much here?
+```
+
+---
+
+## 8. Performance and Profiling
+
+Identify and fix proof performance bottlenecks without manually instrumenting code.
+
+**Profile a specific proof:**
+```
+Profile the proof of ring_morph in src/Algebra.v — which tactic is the bottleneck?
+```
+```
+Why is Qed taking 30 seconds on this proof? Is it the tactics or the kernel re-checking?
+```
+
+**Profile an entire file:**
+```
+Profile src/Core.v and show me the top 5 slowest lemmas
+```
+```
+Which sentences in this file take the most compilation time?
+```
+
+**Get optimization suggestions:**
+```
+simpl in * is taking 15 seconds — why is it slow and what should I use instead?
+```
+```
+Typeclass resolution is the bottleneck — how do I speed it up?
+```
+
+**Profile Ltac tactics:**
+```
+Show me the Ltac call-tree breakdown for my_custom_tactic — which sub-tactic is expensive?
+```
+
+**Compare timing before and after:**
+```
+Compare profiling results before and after my optimization — did anything regress?
+```
+
+**Project-wide profiling:**
+```
+Profile all files in my project and show me the slowest files and lemmas
 ```
 
