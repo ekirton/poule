@@ -67,7 +67,6 @@ This feature provides:
 
 It does **not** provide:
 
-- Nightly automation or version change detection
 - User-facing download or merge changes
 - Neural model building or publishing (handled separately)
 - Support for libraries beyond the 6 listed

@@ -223,21 +223,6 @@ The container mounts two host directories:
 
 The libraries mount persists per-library index files and the merged index across container restarts.
 
-## Developer Automation
-
-### Nightly re-index
-
-A maintainer-facing script checks for new upstream library versions, re-extracts changed libraries, and publishes updated index assets. The script:
-
-1. Updates the package manager's repository information
-2. Compares each library's installed version against the last-published version
-3. For each library with a new version: re-extracts to produce `index-{library}.db`
-4. Publishes a new release with all per-library assets and an updated manifest
-
-### Cron launcher
-
-A host-side script invokes the nightly re-index inside a container, suitable for cron scheduling. It runs the dev image with the appropriate mounts and executes the re-index script, exiting with the script's exit code.
-
 ## Publish Workflow
 
 The maintainer publishes releases via a shell script that:

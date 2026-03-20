@@ -70,6 +70,5 @@ No comparable project provides automated per-library index building and publishi
 
 **Out of scope:**
 - User-facing download client changes (owned by modular-index-distribution)
-- Nightly automation / version change detection (separate initiative)
 - Neural model training or export
 - Index merging (owned by download client)
