@@ -371,8 +371,8 @@ The Neural Training Pipeline is a batch-mode component invoked via CLI. It reads
 | [data-models/extraction-types.md](data-models/extraction-types.md) | [specification/data-structures.md](../../specification/data-structures.md) §4.8 |
 | [proof-search-engine.md](proof-search-engine.md) | specification/proof-search-engine.md (pending) |
 | [fill-admits-orchestrator.md](fill-admits-orchestrator.md) | specification/fill-admits-orchestrator.md (pending) |
-| [neural-retrieval.md](neural-retrieval.md) | specification/neural-retrieval.md (pending) |
-| [neural-training.md](neural-training.md) | specification/neural-training.md (pending) |
+| [neural-retrieval.md](neural-retrieval.md) | [specification/neural-retrieval.md](../../specification/neural-retrieval.md) |
+| [neural-training.md](neural-training.md) | [specification/neural-training.md](../../specification/neural-training.md) |
 | [hammer-automation.md](hammer-automation.md) | [specification/hammer-automation.md](../../specification/hammer-automation.md) |
 | [vernacular-introspection.md](vernacular-introspection.md) | [specification/vernacular-introspection.md](../../specification/vernacular-introspection.md) |
 | [assumption-auditing.md](assumption-auditing.md) | [specification/assumption-auditing.md](../../specification/assumption-auditing.md) |

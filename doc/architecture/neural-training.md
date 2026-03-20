@@ -50,18 +50,22 @@ Evaluation Report            Comparison Report
 
 The training pipeline consumes JSON Lines files produced by the Training Data Extraction pipeline. Each line is an ExtractionRecord containing per-step proof states and premise annotations.
 
-The data loader extracts `(proof_state, premises_used)` pairs:
+The data loader extracts `(proof_state, premises_used)` pairs from the ExtractionRecord's step sequence. Each ExtractionStep contains the proof state (goals and hypotheses) *after* the step's tactic was applied, plus the premises used by that tactic. Step 0 is the initial state with no tactic. The training pair for a tactic at step k uses the proof state from step k-1 (the state *before* the tactic) and the premises from step k:
 
 ```
 For each ExtractionRecord:
-  For each step in the proof trace:
-    proof_state = step.state_before  (serialized as pretty-printed text)
-    premises_used = step.premises    (list of fully qualified premise names)
+  For step_index k = 1 to len(steps) - 1:
+    proof_state = serialize_goals(steps[k-1].goals)   (pretty-printed text of goals and hypotheses)
+    premises_used = [p.name for p in steps[k].premises if p.kind != "hypothesis"]
     If premises_used is non-empty:
       Emit (proof_state, premises_used) pair
 ```
 
-Steps with empty premise lists (e.g., `reflexivity`, `assumption`) are skipped — they provide no training signal for retrieval.
+**Proof state serialization**: The structured goal list (Goal objects with type and hypotheses) is serialized to a single text string by pretty-printing each goal's type and hypotheses, joined by newlines. This produces the same pretty-printed Coq text format that the encoder was designed to consume.
+
+**Hypothesis filtering**: Local hypotheses (`kind: "hypothesis"`) are excluded from `premises_used` because they are proof-internal bindings that do not correspond to entries in the premise corpus (the SQLite declarations table). Including them would produce positive labels that can never be retrieved, degrading training quality.
+
+Steps where all premises are local hypotheses (empty `premises_used` after filtering) are skipped — they provide no training signal for retrieval. Steps with no premises at all (e.g., `reflexivity`, `assumption`) are also skipped.
 
 ### Train/Validation/Test Split
 
