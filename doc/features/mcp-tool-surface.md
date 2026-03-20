@@ -24,7 +24,7 @@ Find declarations structurally similar to a given Coq expression. Discovers lemm
 
 ### search_by_symbols
 
-Find declarations sharing constant/inductive/constructor symbols with the query. Catches cases where structural shape differs but the same mathematical objects appear.
+Find declarations sharing constant/inductive/constructor symbols with the query. Catches cases where structural shape differs but the same mathematical objects appear. Accepts symbol names at any level of qualification — short names like `Nat.add`, partial qualifications like `Init.Nat.add`, or fully qualified kernel names like `Coq.Init.Nat.add` — and resolves them against the index before matching.
 
 ### get_lemma
 

@@ -239,6 +239,55 @@ class PipelineWriter:
 
 
 # ---------------------------------------------------------------------------
+# Symbol FQN resolution
+# ---------------------------------------------------------------------------
+
+
+def resolve_symbols(
+    raw_symbols: set[str],
+    backend: Any,
+    cache: dict[str, str | list[str] | None] | None = None,
+) -> set[str]:
+    """Resolve short display names to FQNs via backend Locate queries.
+
+    Parameters
+    ----------
+    raw_symbols:
+        Set of short symbol names extracted from an expression tree.
+    backend:
+        The extraction backend (must have a ``locate`` method).
+    cache:
+        Optional shared cache ``short_name → result`` to avoid redundant
+        queries across declarations within the same indexing run.
+
+    Returns a set of fully qualified kernel names.  Unresolvable names
+    are included as-is.
+    """
+    if not raw_symbols:
+        return set()
+
+    if cache is None:
+        cache = {}
+
+    resolved: set[str] = set()
+    for sym in raw_symbols:
+        if sym in cache:
+            cached = cache[sym]
+        else:
+            cached = backend.locate(sym)
+            cache[sym] = cached
+
+        if cached is None:
+            resolved.add(sym)
+        elif isinstance(cached, list):
+            resolved.update(cached)
+        else:
+            resolved.add(cached)
+
+    return resolved
+
+
+# ---------------------------------------------------------------------------
 # Stubs / factory functions (patched in tests)
 # ---------------------------------------------------------------------------
 
@@ -264,6 +313,7 @@ def process_declaration(
     *,
     statement: str | None = None,
     dependency_names: list[tuple[str, str]] | None = None,
+    resolve_cache: dict[str, str | list[str] | None] | None = None,
 ) -> DeclarationResult | None:
     """Process a single declaration through the normalization pipeline.
 
@@ -278,6 +328,8 @@ def process_declaration(
     dependency_names:
         Pre-fetched dependency pairs from batched queries.  Falls back to
         ``backend.get_dependencies(name)`` if ``None``.
+    resolve_cache:
+        Shared cache for symbol FQN resolution across declarations.
     """
     from Poule.channels.const_jaccard import extract_consts
     from Poule.channels.wl_kernel import wl_histogram
@@ -321,6 +373,18 @@ def process_declaration(
                     "Text-based normalization failed for %s, storing partial result",
                     name, exc_info=True,
                 )
+
+    # Resolve short display names to FQNs if backend supports locate()
+    if symbol_set and hasattr(backend, "locate"):
+        try:
+            symbol_set = list(resolve_symbols(
+                set(symbol_set), backend, cache=resolve_cache,
+            ))
+        except Exception:
+            logger.debug(
+                "Symbol FQN resolution failed for %s, keeping short names",
+                name, exc_info=True,
+            )
 
     # Type expression: prefer constr_t["type_signature"] from Search output
     type_expr = None

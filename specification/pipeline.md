@@ -38,6 +38,7 @@ The system shall define a `PipelineContext` that holds:
 | `symbol_frequencies` | `dict[str, int]` | At context creation (from `reader.load_symbol_frequencies()`) |
 | `declaration_symbols` | `dict[int, set[str]]` | At context creation (derived from inverted index) |
 | `declaration_node_counts` | `dict[int, int]` | At context creation (from declarations table) |
+| `suffix_index` | `dict[str, list[str]]` | At context creation (derived from inverted index keys) |
 | `parser` | `CoqParser` | Lazily on first structural/type query |
 | `neural_encoder` | `NeuralEncoder` or null | At context creation (if model checkpoint available) |
 | `embedding_index` | `EmbeddingIndex` or null | At context creation (if embeddings available and model hash matches) |
@@ -45,7 +46,9 @@ The system shall define a `PipelineContext` that holds:
 #### create_context(db_path)
 
 - REQUIRES: `db_path` points to a valid index database.
-- ENSURES: Opens `IndexReader`, loads all in-memory data, returns a ready `PipelineContext`. Parser is not started until needed. Neural channel is initialized if a model checkpoint is available, embeddings exist in the database, and the stored model hash matches the checkpoint — otherwise `neural_encoder` and `embedding_index` are null (neural channel unavailable). See [neural-retrieval.md](neural-retrieval.md) §4.4 for availability conditions.
+- ENSURES: Opens `IndexReader`, loads all in-memory data, builds the suffix index, returns a ready `PipelineContext`. Parser is not started until needed. Neural channel is initialized if a model checkpoint is available, embeddings exist in the database, and the stored model hash matches the checkpoint — otherwise `neural_encoder` and `embedding_index` are null (neural channel unavailable). See [neural-retrieval.md](neural-retrieval.md) §4.4 for availability conditions.
+
+**Suffix index construction**: For each FQN key in `inverted_index`, generate all proper dot-separated suffixes (e.g., `Coq.Init.Nat.add` → `Init.Nat.add`, `Nat.add`, `add`). Map each suffix to the list of FQNs it matches. Ambiguous suffixes (matching multiple FQNs) retain all matches — they are expanded at query time to maximize recall.
 
 ### 4.2 CoqParser Protocol
 
@@ -98,12 +101,35 @@ Note: `extract_consts` at query time is equivalent to the MePo channel's `extrac
 
 #### search_by_symbols(ctx, symbols, limit)
 
-- REQUIRES: `ctx` is a valid `PipelineContext`. `symbols` is a non-empty list of fully qualified symbol names. `limit` is in [1, 200].
+- REQUIRES: `ctx` is a valid `PipelineContext`. `symbols` is a non-empty list of symbol name strings (at any qualification level — short, partial, or fully qualified). `limit` is in [1, 200].
 - ENSURES: Returns up to `limit` `SearchResult` items ranked by MePo relevance.
 
 Algorithm:
-1. `mepo_select(set(symbols), ctx.inverted_index, ctx.symbol_frequencies, ctx.declaration_symbols, p=0.6, c=2.4, max_rounds=5)` → ranked results
-2. Take top `limit`, construct `SearchResult` objects
+1. Resolve each symbol to FQN(s) via `resolve_query_symbols(ctx, symbols)` (see §4.5.1) → resolved FQN set
+2. `mepo_select(resolved_set, ctx.inverted_index, ctx.symbol_frequencies, ctx.declaration_symbols, p=0.6, c=2.4, max_rounds=5)` → ranked results
+3. Take top `limit`, construct `SearchResult` objects
+
+#### 4.5.1 resolve_query_symbols(ctx, symbols)
+
+- REQUIRES: `ctx` has a populated `inverted_index` and `suffix_index`. `symbols` is a non-empty list of strings.
+- ENSURES: Returns a set of FQN strings suitable for passing to `mepo_select`.
+
+Resolution per symbol:
+1. **Exact match**: If the symbol is an exact key in `ctx.inverted_index`, use it directly (it is already an FQN).
+2. **Suffix match**: Otherwise, look up the symbol in `ctx.suffix_index`. If found, expand to all matching FQNs.
+3. **Passthrough**: If the symbol matches neither the inverted index nor the suffix index, include it as-is. MePo handles unknown symbols gracefully (they simply match no declarations in the inverted index lookup).
+
+> **Given** `symbols = ["Nat.add", "Nat.mul"]` and the index contains FQNs `Coq.Init.Nat.add` and `Coq.Init.Nat.mul`,
+> **When** `resolve_query_symbols` is called,
+> **Then** `"Nat.add"` resolves to `"Coq.Init.Nat.add"` and `"Nat.mul"` resolves to `"Coq.Init.Nat.mul"` via suffix match. The resolved set is `{"Coq.Init.Nat.add", "Coq.Init.Nat.mul"}`.
+
+> **Given** `symbols = ["Coq.Init.Nat.add"]` (already fully qualified),
+> **When** `resolve_query_symbols` is called,
+> **Then** `"Coq.Init.Nat.add"` is an exact key in the inverted index and is used directly.
+
+> **Given** `symbols = ["add"]` where `"add"` matches `Coq.Init.Nat.add`, `Coq.NArith.BinNat.N.add`, and `Coq.ZArith.BinInt.Z.add`,
+> **When** `resolve_query_symbols` is called,
+> **Then** all three FQNs are included in the resolved set.
 
 ### 4.6 search_by_name
 

@@ -66,10 +66,18 @@ Note: `extract_symbols` at query time is equivalent to `extract_consts` (const-j
 ### search_by_symbols
 
 ```
-1. Accept a symbol list directly from the caller
-2. Run MePo iterative selection (p=0.6, c=2.4, max_rounds=5)
-3. Return ranked results
+1. Accept a symbol list directly from the caller (names at any qualification level)
+2. Resolve each symbol to FQN(s):
+   a. If the name is an exact key in the inverted index → use directly
+   b. Otherwise, suffix-match against all FQN keys in the inverted index
+      (e.g., "Nat.add" matches "Coq.Init.Nat.add")
+   c. Ambiguous names (matching multiple FQNs) expand to all matches
+   d. Names matching zero FQNs are passed through as-is (MePo handles missing symbols gracefully)
+3. Run MePo iterative selection with resolved FQN set (p=0.6, c=2.4, max_rounds=5)
+4. Return ranked results
 ```
+
+**Suffix index**: At server startup, build a reverse lookup from suffixes to FQNs using the inverted index keys. For each FQN like `Coq.Init.Nat.add`, index all proper suffixes: `Init.Nat.add`, `Nat.add`, `add`. If a suffix maps to multiple FQNs, store all of them (do not discard ambiguous suffixes — expand to the full set at query time to maximize recall).
 
 Note: Const Jaccard refinement for `search_by_symbols` is deferred to Phase 2.
 
@@ -111,6 +119,7 @@ Iterative breadth-first selection with inverse-frequency weighting:
 - Parameters: p=0.6, c=2.4, max_rounds=5
 - **Batch expansion**: Symbol set expansion is batch — the working symbol set `S` is updated only after all candidates in a round are evaluated, not during iteration within a round
 - **Missing symbol handling**: If a query-time symbol is not found in `symbol_freq` (i.e., it does not appear in any indexed declaration), treat its frequency as 1. This applies only to query-time symbols; declaration symbols are guaranteed to be in `symbol_freq` by the indexing invariant.
+- **FQN assumption**: The inverted index, `symbol_freq` table, and `declaration_symbols` map all use fully qualified kernel names as keys (see [coq-extraction.md](coq-extraction.md#symbol-fqn-resolution)). Query symbols must be resolved to FQNs before being passed to `mepo_select`. For `search_by_type`, this happens automatically via `extract_consts` on the normalized tree (which contains the same short names as the index — internal consistency). For `search_by_symbols`, the caller-provided names are resolved via the suffix index (see query processing above).
 
 **Constructor-to-inductive mapping**: `LConstruct` nodes store the parent inductive type's FQN as their name plus a zero-based constructor index (see [expression-tree.md](data-models/expression-tree.md)). All constructors of the same inductive type contribute the same symbol name (the parent inductive FQN). This mapping happens at tree construction time (coq-normalization), not at symbol extraction time — no additional mapping is needed during `extract_symbols`.
 

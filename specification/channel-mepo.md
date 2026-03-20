@@ -20,9 +20,9 @@ Define the MePo channel that selects declarations based on weighted symbol overl
 
 | Term | Definition |
 |------|-----------|
-| Symbol set | The set of fully qualified constant, inductive, and constructor names appearing in a declaration's expression tree |
-| Working set | The set of symbols used to score candidates; starts as the query's symbol set and expands each round |
-| Inverted index | A map from symbol → set of declaration IDs containing that symbol |
+| Symbol set | The set of fully qualified kernel names (constants, inductives, constructors) appearing in a declaration's expression tree. Stored as FQNs after resolution (see [extraction.md](extraction.md) §4.4.1). |
+| Working set | The set of symbols used to score candidates; starts as the query's symbol set (pre-resolved to FQNs by the pipeline) and expands each round |
+| Inverted index | A map from FQN symbol → set of declaration IDs containing that symbol |
 
 ## 4. Behavioral Requirements
 
@@ -52,7 +52,7 @@ relevance = overlap / total  (0.0 if total == 0)
 
 #### mepo_select(query_symbols, inverted_index, symbol_frequencies, declaration_symbols, p, c, max_rounds)
 
-- REQUIRES: `query_symbols` is a non-empty set of symbol names. `inverted_index` maps symbol → set of decl_ids. `symbol_frequencies` maps symbol → freq. `declaration_symbols` maps decl_id → symbol set. Parameters: `p=0.6`, `c=2.4`, `max_rounds=5`.
+- REQUIRES: `query_symbols` is a non-empty set of FQN symbol names (pre-resolved by the calling pipeline function; see [pipeline.md](pipeline.md) §4.5.1). `inverted_index` maps FQN symbol → set of decl_ids. `symbol_frequencies` maps FQN symbol → freq. `declaration_symbols` maps decl_id → FQN symbol set. Parameters: `p=0.6`, `c=2.4`, `max_rounds=5`.
 - ENSURES: Returns a list of `(decl_id, relevance_score)` pairs, ordered by relevance descending.
 
 Algorithm:
@@ -110,9 +110,9 @@ Then: `1.0 + 2.0 / log2(1001) ≈ 1.0 + 0.2 = 1.2`
 
 ### Iterative expansion
 
-Given: Query symbols = `{Nat.add, Nat.mul}`, threshold `p=0.6`
+Given: Query symbols = `{Coq.Init.Nat.add, Coq.Init.Nat.mul}` (pre-resolved from user input `["Nat.add", "Nat.mul"]` by the pipeline), threshold `p=0.6`
 
-Round 1 (t=0.6): Finds declarations containing `Nat.add` or `Nat.mul`, selects those with relevance ≥ 0.6. Adds their symbols to S.
+Round 1 (t=0.6): Finds declarations containing `Coq.Init.Nat.add` or `Coq.Init.Nat.mul`, selects those with relevance ≥ 0.6. Adds their symbols to S.
 
 Round 2 (t=0.25): Broader working set finds more candidates at the lower threshold.
 

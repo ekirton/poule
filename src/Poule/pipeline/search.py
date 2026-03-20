@@ -44,13 +44,34 @@ def search_by_name(ctx: Any, pattern: str, limit: int) -> list[Any]:
     return results[:limit]
 
 
+def resolve_query_symbols(ctx: Any, symbols: list[str]) -> set[str]:
+    """Resolve symbol names to FQNs using the suffix index.
+
+    Resolution per symbol:
+    1. Exact match in inverted_index → use directly.
+    2. Suffix match via suffix_index → expand to all matching FQNs.
+    3. No match → include as-is (passthrough).
+    """
+    resolved: set[str] = set()
+    for sym in symbols:
+        if sym in ctx.inverted_index:
+            resolved.add(sym)
+        elif sym in ctx.suffix_index:
+            resolved.update(ctx.suffix_index[sym])
+        else:
+            resolved.add(sym)
+    return resolved
+
+
 def search_by_symbols(ctx: Any, symbols: list[str], limit: int) -> list[Any]:
     """Search declarations by symbol names using MePo relevance.
 
+    Resolves short/partial names to FQNs before matching.
     Returns up to *limit* SearchResult items ranked by MePo relevance.
     """
+    resolved = resolve_query_symbols(ctx, symbols)
     results = mepo_select(
-        set(symbols),
+        resolved,
         ctx.inverted_index,
         ctx.symbol_frequencies,
         ctx.declaration_symbols,

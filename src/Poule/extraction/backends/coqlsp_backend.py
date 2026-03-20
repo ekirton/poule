@@ -745,6 +745,72 @@ class CoqLspBackend:
             return None
         return "\n".join(texts).strip() or None
 
+    # Patterns for parsing Locate output
+    _LOCATE_CATEGORIES = frozenset({"Constant", "Inductive", "Constructor"})
+    # Pattern to extract FQN from notation body: Notation "x + y" := (Nat.add x y)
+    _NOTATION_BODY_RE = __import__("re").compile(
+        r'Notation\b.*?:=\s*\((\S+)'
+    )
+
+    def locate(self, name: str) -> str | list[str] | None:
+        """Resolve a short name to its FQN(s) via ``Locate``.
+
+        Returns a single FQN string, a list of FQNs (ambiguous), or None.
+        """
+        self._ensure_alive()
+
+        # Infix operators need quoted form: Locate "+".
+        if name and not name[0].isalpha() and not name.startswith("_"):
+            query = f'Locate "{name}".'
+        else:
+            query = f"Locate {name}."
+
+        diags, messages = self._run_vernac_query(query)
+
+        # Error diagnostics → unresolvable
+        if any(d.get("severity") == 1 for d in diags):
+            return None
+
+        # Parse response lines
+        fqns: list[str] = []
+        notation_fqns: list[str] = []
+        for msg in messages:
+            text = msg.get("text", "")
+            for line in text.splitlines():
+                line = line.strip()
+                parts = line.split(None, 1)
+                if len(parts) == 2 and parts[0] in self._LOCATE_CATEGORIES:
+                    fqns.append(parts[1])
+                elif line.startswith("Notation"):
+                    # Extract the head symbol from notation body
+                    m = self._NOTATION_BODY_RE.match(line)
+                    if m:
+                        head = m.group(1)
+                        # Only keep qualified names (contain a dot)
+                        if "." in head:
+                            notation_fqns.append(head)
+
+        # Prefer Constant/Inductive/Constructor over Notation
+        if fqns:
+            if len(fqns) == 1:
+                return fqns[0]
+            return fqns
+
+        # Fall back to notation-derived FQNs
+        if notation_fqns:
+            # Deduplicate while preserving order
+            seen: set[str] = set()
+            unique: list[str] = []
+            for f in notation_fqns:
+                if f not in seen:
+                    seen.add(f)
+                    unique.append(f)
+            if len(unique) == 1:
+                return unique[0]
+            return unique
+
+        return None
+
     def get_dependencies(
         self, name: str
     ) -> list[tuple[str, str]]:

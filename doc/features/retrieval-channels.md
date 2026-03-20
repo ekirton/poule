@@ -16,6 +16,8 @@ Captures the shape of mathematical expressions. Two lemmas about the same proper
 
 Finds declarations that reference the same mathematical objects (constants, inductives, constructors) as the query. Catches cases where structural shape differs but the same definitions appear. Rare symbols are weighted more heavily than common ones to improve discrimination.
 
+The index stores symbols as fully qualified kernel names. At query time, user-provided symbol names are resolved before matching: short names (e.g., `Nat.add`) and partial qualifications (e.g., `Init.Nat.add`) are expanded to their FQNs (e.g., `Coq.Init.Nat.add`) by suffix matching against the indexed symbol vocabulary. Ambiguous short names that match multiple FQNs are expanded to all matches, broadening recall.
+
 ### Lexical Channel
 
 Full-text search over declaration names, pretty-printed statements, and module paths. Handles the most common case — the user searches by a name fragment or keyword. Also provides a fallback when structural and symbolic channels miss.

@@ -20,6 +20,8 @@ Derived from [doc/requirements/semantic-lemma-search.md](../semantic-lemma-searc
 - GIVEN the indexing command is running WHEN no GPU, external API keys, or network access are available THEN the command completes successfully
 - GIVEN the indexing command is running WHEN extraction of an individual declaration fails THEN the error is logged and the remaining declarations continue to be indexed
 - GIVEN the indexing completes WHEN the database is inspected THEN it contains declarations, dependencies, symbols, and all data required by the retrieval channels
+- GIVEN the indexing completes WHEN the `symbol_freq` table is inspected THEN it contains a non-zero number of entries with fully qualified kernel names
+- GIVEN the indexing completes WHEN a declaration with a parseable type expression is inspected THEN its `symbol_set` is non-empty
 - GIVEN the indexing completes WHEN the database is inspected THEN it contains a recorded index schema version
 
 ### 1.2 Index MathComp
@@ -180,6 +182,10 @@ Derived from [doc/requirements/semantic-lemma-search.md](../semantic-lemma-searc
 - GIVEN an indexed library WHEN `search_by_symbols` is called with an array of symbol names THEN the backend retrieves declarations containing those symbols
 - GIVEN retrieved results WHEN results are ranked THEN rare symbols are weighted more heavily
 - GIVEN ranked results WHEN the response is returned THEN results are ordered by relevance score
+- GIVEN a short symbol name (e.g., `Nat.add`) WHEN `search_by_symbols` is called THEN the name is resolved to its fully qualified kernel name (e.g., `Coq.Init.Nat.add`) before matching against the index
+- GIVEN a partially qualified name (e.g., `Init.Nat.add`) WHEN `search_by_symbols` is called THEN the name is resolved by suffix match against indexed FQNs
+- GIVEN a fully qualified name (e.g., `Coq.Init.Nat.add`) WHEN `search_by_symbols` is called THEN it is matched directly against the index without further resolution
+- GIVEN an ambiguous short name that matches multiple FQNs WHEN `search_by_symbols` is called THEN all matching FQNs are included in the query
 
 ### 2.6 Get Lemma Details
 
@@ -283,6 +289,22 @@ Derived from [doc/requirements/semantic-lemma-search.md](../semantic-lemma-searc
 - GIVEN normalization WHEN applied THEN it handles at minimum: application form, type casts, universe annotations, projections, and notation expansion
 - GIVEN a declaration with section-local names WHEN it is indexed THEN names are fully qualified
 - GIVEN a query expression at search time WHEN it is processed THEN the same normalization is applied as at indexing time
+
+### 4.2 Symbol FQN Resolution During Indexing
+
+**As a** developer relying on symbol-based search,
+**I want** symbols extracted from declarations to be stored as fully qualified kernel names,
+**so that** symbol search works reliably regardless of how the extraction backend represents names.
+
+**Priority:** P0
+**Stability:** Stable
+
+**Acceptance criteria:**
+- GIVEN a declaration whose type mentions `nat` (a short display name) WHEN it is indexed THEN the symbol set stores `Coq.Init.Datatypes.nat` (the fully qualified kernel name)
+- GIVEN a declaration whose type mentions infix `+` (desugared from `Nat.add`) WHEN it is indexed THEN the symbol set stores the FQN of the underlying constant (e.g., `Coq.Init.Nat.add`)
+- GIVEN a declaration extracted via the metadata-only path (coq-lsp Search output with type signature text) WHEN it is indexed THEN its symbol set is populated by parsing the type signature, normalizing the tree, extracting constants, and resolving each to its FQN
+- GIVEN the indexing completes WHEN the `symbol_freq` table is inspected THEN it contains entries keyed by FQN, not short display names
+- GIVEN a symbol that cannot be resolved to an FQN (e.g., a user-defined name not in the environment) WHEN it is indexed THEN it is stored as-is without discarding
 
 ---
 

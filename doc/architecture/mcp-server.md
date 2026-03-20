@@ -23,8 +23,10 @@ search_by_structure(
 ) → SearchResult[]
 
 // Symbol search: find declarations sharing symbols with the query
+// Accepts names at any qualification level (short, partial, or fully qualified);
+// resolved to FQNs by the retrieval pipeline before matching.
 search_by_symbols(
-  symbols: string[],   // constant/inductive names
+  symbols: string[],   // constant/inductive names (any qualification level)
   limit: number = 50
 ) → SearchResult[]
 

@@ -63,8 +63,8 @@ In the standard container deployment the server runs in SSE mode as a background
 
 #### search_by_symbols(symbols, limit=50)
 
-- REQUIRES: `symbols` is a non-empty list of strings. `limit` is clamped to [1, 200].
-- ENSURES: Returns `SearchResult[]` ranked by MePo relevance.
+- REQUIRES: `symbols` is a non-empty list of symbol name strings (at any qualification level — short names like `Nat.add`, partial qualifications like `Init.Nat.add`, or fully qualified kernel names like `Coq.Init.Nat.add`). `limit` is clamped to [1, 200].
+- ENSURES: Returns `SearchResult[]` ranked by MePo relevance. Symbol names are resolved to FQNs by the pipeline before matching.
 - Delegates to: `pipeline.search_by_symbols(ctx, symbols, limit)`
 
 #### get_lemma(name)

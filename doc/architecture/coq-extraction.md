@@ -26,8 +26,10 @@ Per-declaration processing:
      (parse failure → partial result stored, declaration reachable only via name/FTS search)
   2. coq_normalize(constr_node)→ normalized ExprTree (constr_to_tree + recompute_depths + assign_node_ids)
   3. cse_normalize(tree)       → CSE-reduced tree (recomputes depths + node_ids after)
-  4. extract_symbols(tree)     → symbol set {constants, inductives, constructors}
-  5. wl_histogram(tree, h=3)   → WL kernel vector for structural screening (Phase 1 computes h=3 only)
+  4. extract_symbols(tree)     → raw symbol set {short display names from parsed text}
+  5. resolve_symbols(raw_set)  → FQN symbol set {fully qualified kernel names via Locate queries}
+     (unresolvable names kept as-is; ambiguous names resolved to all matching FQNs)
+  6. wl_histogram(tree, h=3)   → WL kernel vector for structural screening (Phase 1 computes h=3 only)
   6. pretty_print(name)        → human-readable statement
   7. pretty_print_type(name)   → human-readable type signature
 
@@ -160,7 +162,27 @@ cse_normalize(tree) → CSE-reduced tree
 extract_symbols(tree), wl_histogram(tree, h=3)
 ```
 
-The text parser produces `Const("nat")` rather than the kernel-precise `Ind("Coq.Init.Datatypes.nat")`. This is less precise than kernel terms, but since both index-time and query-time parsing use the same parser, WL histograms and symbol sets are internally consistent and structural matching works correctly.
+The text parser initially produces short display names — `Const("nat")` rather than the kernel-precise `Ind("Coq.Init.Datatypes.nat")`. A post-extraction symbol resolution step resolves these short names to fully qualified kernel names using batched coq-lsp `Locate` queries (see Symbol FQN Resolution below). This ensures the symbol index uses canonical FQNs, which is essential for the MePo Symbol Overlap channel to match user queries like `Nat.add` against the correct index entries. WL histograms and structural matching continue to use the parser's display-name labels, which are internally consistent between index time and query time.
+
+## Symbol FQN Resolution
+
+The `TypeExprParser` produces short display names (`nat`, `+`, `list`, `eq`) because it parses textual type signatures, not kernel terms. These short names must be resolved to fully qualified kernel names (`Coq.Init.Datatypes.nat`, `Coq.Init.Nat.add`, `Coq.Init.Datatypes.list`, `Coq.Init.Logic.eq`) before being stored in the symbol index.
+
+### Resolution mechanism
+
+After `extract_symbols(tree)` produces a raw symbol set of short names, a resolution step maps each to its FQN:
+
+1. **Batch `Locate` queries**: Issue coq-lsp `Locate <name>.` queries for each unique short name in the extraction batch. The `Locate` command returns the FQN and object kind (Constant, Inductive, Constructor). Queries are batched into shared documents (≤100 per document) to reduce round-trip overhead, following the same batching pattern as kind detection.
+
+2. **Cache**: Maintain a `short_name → FQN` lookup table for the duration of the indexing run. Most short names recur across thousands of declarations (e.g., `nat` appears in ~40% of stdlib declarations), so the cache eliminates redundant queries. The cache is keyed by the exact short name string.
+
+3. **Infix operator resolution**: Infix operators parsed as `Const("+")`, `Const("*")`, `Const("<")`, etc. are resolved via `Locate` like any other name. Coq's `Locate "+"` returns the underlying constant (e.g., `Coq.Init.Nat.add`). Operators that resolve to multiple notations are expanded to all matching FQNs.
+
+4. **Fallback**: Names that cannot be resolved (e.g., `Locate` returns an error or the name is user-defined and not in the Coq environment) are stored as-is in the symbol set. This preserves information without discarding unresolvable names.
+
+### Invariant
+
+After resolution, the `symbol_set` column in `declarations` and the `symbol_freq` table both use FQNs as keys. The MePo inverted index built from `symbol_set` is therefore keyed by FQN, ensuring that query-time symbol resolution (see [retrieval-pipeline.md](retrieval-pipeline.md)) can match user-provided names at any qualification level.
 
 ## Error Handling
 

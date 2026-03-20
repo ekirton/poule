@@ -42,7 +42,7 @@ Universe parameters (marked `_`) are present in the intermediate representation 
 | `Fix`/`CoFix` | Coq's `Fix(rec_index, (names, types, bodies))` carries extra data | The parser backend destructures the tuple, delivering `(idx, bodies)` to `constr_to_tree()`. Types and names are discarded. `LFix(idx)` has `len(bodies)` children. |
 | `Int`/`Float` | Primitive literals | Map to `LPrimitive(value)` leaf nodes |
 | Notation | Surface syntax (`x + y`) differs from kernel term (`Nat.add x y`) | No action — coq-lsp/SerAPI extraction yields kernel terms. REQUIRES: input is a kernel-level `Constr.t` term with all notations expanded. |
-| Name qualification | Same definition referenced by short, partial, or fully qualified name | Always use fully qualified canonical names. Names are pre-resolved to canonical FQNs during extraction (eager resolution), before reaching `constr_to_tree()`. The `ConstrNode` intermediate representation carries pre-resolved FQNs. |
+| Name qualification | Same definition referenced by short, partial, or fully qualified name | Always use fully qualified canonical names. When the backend provides kernel terms, names are pre-resolved to canonical FQNs during extraction (eager resolution), before reaching `constr_to_tree()`. When the backend provides type signature text (coq-lsp path), the `TypeExprParser` produces short display names; these are resolved to FQNs in a post-extraction step via batched `Locate` queries (see [coq-extraction.md](coq-extraction.md#symbol-fqn-resolution)). |
 | Section variables | Open-section definitions have free variables; closed form adds binders | Index only closed (post-section) forms from `.vo` files |
 
 ### Direct Mappings (no transform needed)

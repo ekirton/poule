@@ -14,7 +14,7 @@ For each declaration in a Coq library:
 - Kind (lemma, theorem, definition, instance, ...)
 - Pretty-printed statement and type (for display and full-text search)
 - Structural representation (for structural and type-based search)
-- Symbol set (constants, inductives, constructors referenced, for symbol-based search)
+- Symbol set (fully qualified kernel names of constants, inductives, and constructors referenced, for symbol-based search)
 - Dependency edges (what this declaration uses, what uses it)
 
 ## Phased Scope
@@ -78,4 +78,8 @@ SerAPI (coq-serapi) provides deeper access to Coq kernel terms but is version-lo
 
 ### Why text-based type parsing over kernel terms
 
-coq-lsp does not expose Constr.t kernel terms — it returns type signatures as text strings. Rather than requiring an additional heavy tool (SerAPI) solely for kernel term access, the system parses these text strings into the same ConstrNode intermediate representation. The text parser produces `Const("nat")` rather than the kernel-precise `Ind("Coq.Init.Datatypes.nat")`, but since both index-time and query-time parsing use the same parser, the structural representations are internally consistent and structural matching works correctly. This tradeoff — consistency over precision — avoids external process dependencies at both index time and query time.
+coq-lsp does not expose Constr.t kernel terms — it returns type signatures as text strings. Rather than requiring an additional heavy tool (SerAPI) solely for kernel term access, the system parses these text strings into the same ConstrNode intermediate representation.
+
+The text parser initially produces short display names (`Const("nat")`, `Const("+")`) rather than kernel-precise FQNs (`Ind("Coq.Init.Datatypes.nat")`, `Const("Coq.Init.Nat.add")`). A post-parsing symbol resolution step maps these short names to their fully qualified kernel names using coq-lsp `Locate` queries. This ensures that the symbol index uses canonical FQNs, which is essential for the Symbol Overlap retrieval channel to match user queries like `Nat.add` against the correct index entries. Names that cannot be resolved (e.g., user-defined names not in the Coq environment) are stored as-is.
+
+Since both index-time and query-time parsing use the same parser and resolution pipeline, structural representations remain internally consistent.

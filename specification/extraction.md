@@ -114,6 +114,37 @@ Backends that do not return fully qualified names directly (e.g., coq-lsp `Searc
 - REQUIRES: `name` is a fully qualified declaration name.
 - ENSURES: Returns a list of `(target_name, relation)` pairs.
 
+#### locate(name)
+
+- REQUIRES: `name` is a short display name or infix operator string (e.g., `"nat"`, `"+"`, `"list"`).
+- ENSURES: Returns the resolution result:
+  - A single FQN string when the name resolves unambiguously (e.g., `"Coq.Init.Datatypes.nat"`).
+  - A list of FQN strings when the name is ambiguous (e.g., `[\"Coq.Init.Nat.add\", \"Coq.ZArith.BinInt.Z.add\"]`).
+  - `None` when the name cannot be resolved (e.g., user-defined name not in the Coq environment).
+
+**coq-lsp backend:** Issues a `Locate <name>.` Vernac command (or `Locate "<op>".` for infix operators). Parses the response to extract the FQN(s). `Locate` queries may be batched into shared synthetic documents (≤100 commands per document) following the same pattern as kind detection (§4.1.1). The response format is version-dependent:
+
+| Response pattern | Interpretation |
+|-----------------|---------------|
+| `Constant <fqn>` | Single FQN; return `<fqn>` |
+| `Inductive <fqn>` | Single FQN; return `<fqn>` |
+| `Constructor <fqn>` | Single FQN; return `<fqn>` |
+| `Notation <path>` | Skip — notations are not indexable symbols |
+| Multiple `Constant`/`Inductive`/`Constructor` lines | Ambiguous; return list of all FQNs |
+| Error or `"<name> not a defined object"` | Unresolvable; return `None` |
+
+> **Given** a Coq environment where `nat` is defined,
+> **When** `locate("nat")` is called,
+> **Then** it returns `"Coq.Init.Datatypes.nat"`.
+
+> **Given** a Coq environment where `+` resolves to `Nat.add`,
+> **When** `locate("+")` is called,
+> **Then** it returns `"Coq.Init.Nat.add"`.
+
+> **Given** a name `my_custom_def` not in the Coq environment,
+> **When** `locate("my_custom_def")` is called,
+> **Then** it returns `None`.
+
 #### detect_version()
 
 - ENSURES: Returns the Coq/Rocq version string (e.g., `"8.19"`).
@@ -156,17 +187,49 @@ The pipeline shall NOT store raw filesystem paths (e.g., `/Users/.../PeanoNat.vo
 
 For each declaration extracted from a `.vo` file:
 
-1. When `constr_t` contains kernel term data (i.e., is not a metadata dict): Parse `Constr.t` → `ConstrNode` (backend-specific; produces pre-resolved FQNs). When `constr_t` is metadata-only (a dict with `type_signature` field), parse the `type_signature` text via `TypeExprParser` → `ConstrNode`, then proceed with steps 2–5 using the parsed node. If parsing fails, fall back to a partial result with no tree, empty symbol set, empty WL vector, and `node_count` = 1. Parse failures are logged but do not abort the declaration.
+1. When `constr_t` contains kernel term data (i.e., is not a metadata dict): Parse `Constr.t` → `ConstrNode` (backend-specific; produces pre-resolved FQNs). When `constr_t` is metadata-only (a dict with `type_signature` field), parse the `type_signature` text via `TypeExprParser` → `ConstrNode`, then proceed with steps 2–6 using the parsed node. If parsing fails, fall back to a partial result with no tree, empty symbol set, empty WL vector, and `node_count` = 1. Parse failures are logged but do not abort the declaration.
 2. `coq_normalize(constr_node)` → normalized `ExprTree`
 3. `cse_normalize(tree)` → CSE-reduced tree (recomputes depths, node_ids, node_count)
-4. `extract_consts(tree)` → symbol set
-5. `wl_histogram(tree, h=3)` → WL vector (Phase 1 computes h=3 only)
-6. `pretty_print(name)` → statement
-7. Type expression: derived from the Search output `type_signature` field in `constr_t` when available; falls back to `pretty_print_type(name)` otherwise (nullable)
+4. `extract_consts(tree)` → raw symbol set (short display names from parsed text)
+5. `resolve_symbols(raw_set, backend)` → FQN symbol set (see §4.4.1). The `backend` parameter provides the `locate()` method for `Locate` queries. A shared resolution cache is passed across declarations to avoid redundant queries.
+6. `wl_histogram(tree, h=3)` → WL vector (Phase 1 computes h=3 only)
+7. `pretty_print(name)` → statement
+8. Type expression: derived from the Search output `type_signature` field in `constr_t` when available; falls back to `pretty_print_type(name)` otherwise (nullable)
 
 The declaration row, WL vector, and declaration data are co-inserted in the same batch transaction (batch size: 1000 declarations).
 
 **Individual declaration failure**: When normalization or extraction fails for a single declaration, log the declaration name and error, then continue to the next declaration. The index is usable with partial coverage.
+
+#### 4.4.1 Symbol FQN Resolution
+
+When extraction uses the text-based path (coq-lsp `Search` output parsed by `TypeExprParser`), `extract_consts` produces short display names (e.g., `nat`, `+`, `list`, `eq`). These shall be resolved to fully qualified kernel names before storage.
+
+#### resolve_symbols(raw_symbols, backend, cache=None)
+
+- REQUIRES: `raw_symbols` is a set of symbol name strings extracted from an expression tree. `backend` has a `locate(name)` method (§4.1). `cache` is an optional `dict[str, str | list[str] | None]` shared across declarations within an indexing run.
+- ENSURES: Returns a set of fully qualified kernel names. Each short name is resolved via `backend.locate()`. Unresolvable names are included as-is.
+
+Resolution mechanism:
+
+1. **Locate query**: For each unique short name not already in the resolution cache, issue a coq-lsp `Locate <name>.` query. `Locate` returns the FQN and object kind (Constant, Inductive, Constructor). Infix operators are queried as `Locate "<op>".` (e.g., `Locate "+".`).
+
+2. **Caching**: Maintain a `short_name → FQN` lookup table for the duration of the indexing run. The cache is keyed by the exact short name string. Most short names recur across thousands of declarations, so the cache eliminates redundant queries.
+
+3. **Batch processing**: `Locate` queries shall be batched into shared synthetic documents (≤100 commands per document), following the same batching pattern as kind detection (§4.1.1), to reduce document lifecycle overhead.
+
+4. **Ambiguous names**: When `Locate` returns multiple matches (e.g., `Locate "+"` may resolve to both `Nat.add` and `Z.add`), all matching FQNs shall be included in the symbol set.
+
+5. **Fallback**: When `Locate` returns an error or no result, the short name is stored as-is in the symbol set. This preserves information without discarding unresolvable names.
+
+MAINTAINS: After resolution, the `symbol_set` column in `declarations` and the `symbol_freq` table (§4.6) both use FQNs as keys. The MePo inverted index built from `symbol_set` is keyed by FQN.
+
+> **Given** a declaration with type `forall n m : nat, n + m = m + n` parsed via `TypeExprParser`,
+> **When** `extract_consts` produces `{"nat", "+", "="}` and `resolve_symbols` is called,
+> **Then** `Locate nat.` returns `Coq.Init.Datatypes.nat`, `Locate "+".` returns `Coq.Init.Nat.add`, `Locate "=".` returns `Coq.Init.Logic.eq`, and the stored symbol set is `{"Coq.Init.Datatypes.nat", "Coq.Init.Nat.add", "Coq.Init.Logic.eq"}`.
+
+> **Given** a declaration containing the symbol `my_custom_def` not in the Coq environment,
+> **When** `Locate my_custom_def.` returns an error,
+> **Then** the symbol `my_custom_def` is stored as-is in the symbol set.
 
 **Declaration deduplication**: When multiple `.vo` files contain the same fully qualified declaration name (e.g., via module re-exports), the pipeline shall keep the first occurrence and skip subsequent duplicates. Duplicates are detected after collection and before Pass 1 processing.
 

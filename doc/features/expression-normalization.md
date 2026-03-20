@@ -25,11 +25,16 @@ Without normalization, structurally identical queries return different results d
 | N-ary application | Currified to binary form |
 | Type casts | Stripped |
 | Universe annotations | Erased |
-| Name qualification | Fully qualified canonical names |
+| Name qualification | Fully qualified canonical kernel names |
+| Symbol names | Short display names resolved to FQNs via `Locate` |
 | Section variables | Only closed (post-section) forms indexed |
 | Repeated subexpressions | Replaced with shared variables (CSE) |
 
 Notation is not an issue — extraction from compiled `.vo` files yields kernel terms, which are already notation-free.
+
+### Symbol FQN resolution
+
+When type signatures are parsed from text (the coq-lsp extraction path), the parser produces short display names like `nat`, `+`, `list`. These are resolved to their fully qualified kernel names (e.g., `Coq.Init.Datatypes.nat`, `Coq.Init.Nat.add`, `Coq.Init.Datatypes.list`) during indexing. This resolution ensures that the Symbol Overlap retrieval channel uses canonical identifiers, so user queries using any level of qualification — `Nat.add`, `Init.Nat.add`, or `Coq.Init.Nat.add` — match the same index entries. Names that cannot be resolved are stored as-is to avoid discarding information.
 
 ## Consistency Invariant
 
