@@ -1,19 +1,19 @@
 """TDD tests for the Convoy Pattern Assistant (specification/convoy-pattern-assistant.md).
 
 Tests are written BEFORE implementation. They will fail with ImportError
-until src/poule/convoy/ modules exist.
+until src/Poule/convoy/ modules exist.
 
 Spec: specification/convoy-pattern-assistant.md
 Architecture: doc/architecture/convoy-pattern-assistant.md
 
 Import paths under test:
-  poule.convoy.analyzer       (diagnose_destruct)
-  poule.convoy.types          (DestructDiagnosis, DependencyReport, IndexInfo,
+  Poule.convoy.analyzer       (diagnose_destruct)
+  Poule.convoy.types          (DestructDiagnosis, DependencyReport, IndexInfo,
                                DependentHypothesis, TechniqueRecommendation,
                                Technique, GeneratedCode)
-  poule.convoy.scanner        (DependencyScanner)
-  poule.convoy.selector       (TechniqueSelector)
-  poule.convoy.generator      (BoilerplateGenerator)
+  Poule.convoy.scanner        (DependencyScanner)
+  Poule.convoy.selector       (TechniqueSelector)
+  Poule.convoy.generator      (BoilerplateGenerator)
 """
 
 from unittest.mock import AsyncMock
@@ -27,13 +27,13 @@ import pytest
 
 
 def _import_analyzer():
-    from poule.convoy.analyzer import diagnose_destruct
+    from Poule.convoy.analyzer import diagnose_destruct
 
     return (diagnose_destruct,)
 
 
 def _import_types():
-    from poule.convoy.types import (
+    from Poule.convoy.types import (
         DependencyReport,
         DependentHypothesis,
         DestructDiagnosis,
@@ -55,19 +55,19 @@ def _import_types():
 
 
 def _import_scanner():
-    from poule.convoy.scanner import DependencyScanner
+    from Poule.convoy.scanner import DependencyScanner
 
     return (DependencyScanner,)
 
 
 def _import_selector():
-    from poule.convoy.selector import TechniqueSelector
+    from Poule.convoy.selector import TechniqueSelector
 
     return (TechniqueSelector,)
 
 
 def _import_generator():
-    from poule.convoy.generator import BoilerplateGenerator
+    from Poule.convoy.generator import BoilerplateGenerator
 
     return (BoilerplateGenerator,)
 
