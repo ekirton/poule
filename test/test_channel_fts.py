@@ -117,6 +117,51 @@ class TestFtsQuerySpecialCharEscaping:
         result = fts_query("Coq.foo(bar)")
         assert '"foo(bar)"' in result
 
+    @pytest.mark.parametrize(
+        "char",
+        ["*", '"', "(", ")", "+", "-", ":", "^", "{", "}", ",", "="],
+        ids=lambda c: f"char_{ord(c):02x}",
+    )
+    def test_every_special_char_quoted(self, char):
+        """Every FTS5 special character must cause its token to be quoted."""
+        token = f"foo{char}bar"
+        result = fts_query(token)
+        assert f'"{token}"' in result
+
+    def test_comma_in_fallback_path(self):
+        """Comma in a whitespace-split (fallback) query must be quoted.
+
+        Coq type expressions hit the fallback path: 'forall (A : Type), ...'
+        produces tokens like 'Type),' which must be quoted.
+        """
+        result = fts_query("Type), list")
+        # 'Type),' contains both ')' and ',' — must be quoted
+        assert '"Type),"' in result
+        assert "list" in result
+
+    def test_equals_in_fallback_path(self):
+        """Equals sign in a whitespace-split query must be quoted.
+
+        Coq equality expressions like 'A = B' produce a bare '=' token.
+        """
+        result = fts_query("A = B")
+        assert '"="' in result
+
+    def test_coq_type_expression_all_specials_quoted(self):
+        """Full Coq type expression: every token with a special char is quoted."""
+        result = fts_query("forall (A : Type), list A -> nat")
+        # No unquoted special characters should survive outside of quotes
+        tokens = result.split(" OR ")
+        for token in tokens:
+            stripped = token.strip()
+            if stripped.startswith('"') and stripped.endswith('"'):
+                continue  # quoted — safe
+            # Unquoted tokens must contain no special characters
+            for ch in '*"()+\\-:^{},=':
+                assert ch not in stripped, (
+                    f"Unquoted token {stripped!r} contains special char {ch!r}"
+                )
+
 
 # ---------------------------------------------------------------------------
 # fts_query / fts_search: Empty query

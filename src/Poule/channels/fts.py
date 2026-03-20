@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 from Poule.models.responses import SearchResult
 
 # FTS5 special characters that require quoting
-_FTS5_SPECIAL = re.compile(r'[*"()+\-:^{}]')
+_FTS5_SPECIAL = re.compile(r'[*"()+\-:^{},=]')
 
 _TOKEN_LIMIT = 20
 
