@@ -15,30 +15,25 @@
 set -euo pipefail
 
 LIBRARIES="stdlib mathcomp stdpp flocq coquelicot coqinterval"
-INPUT_DIR="$HOME"
+INPUT_DIR="/data"
 MODEL_PATH=""
 TAG_LIBRARIES="index-libraries"
 TAG_MERGED="index-merged"
 
 usage() {
-    echo "Usage: $0 [--input-dir DIR] [--model MODEL_PATH]"
+    echo "Usage: $0 [--model MODEL_PATH]"
     echo
     echo "Publish index databases as two GitHub Releases:"
     echo "  ${TAG_LIBRARIES}  — per-library index-*.db files + manifest"
     echo "  ${TAG_MERGED}     — merged index.db + manifest (+ optional ONNX model)"
     echo
     echo "Options:"
-    echo "  --input-dir DIR      Directory containing index*.db files (default: ~)"
     echo "  --model MODEL_PATH   Also upload an ONNX model file (to merged release)"
     exit 1
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --input-dir)
-            INPUT_DIR="$2"
-            shift 2
-            ;;
         --model)
             if [[ $# -lt 2 ]]; then
                 echo "Error: --model requires a path argument." >&2
