@@ -57,6 +57,8 @@ This initiative wraps Coq's tactic introspection capabilities into MCP tools tha
 | R-P0-2 | Given a tactic name, provide a plain-language explanation of the tactic's behavior, including what it does, what types of goals it applies to, and common use cases |
 | R-P0-3 | Given two or more tactic names, produce a structured comparison covering: behavior differences, performance characteristics, applicability overlap, and guidance on when to prefer each |
 | R-P0-4 | Expose tactic documentation tools as MCP tools compatible with Claude Code (stdio transport) |
+| R-P0-5 | Tactic lookup must return structured metadata for all built-in primitive tactics (apply, destruct, simpl, etc.) — not only for Ltac-defined tactics. When Coq reports that a name is not an Ltac definition, the tool returns a valid result with kind "primitive" rather than propagating an error. |
+| R-P0-6 | Tactic lookup must reject multi-word input (names containing whitespace) with a clear error message, since Coq's `Print Ltac` accepts only single identifiers |
 
 ### P1 — Should Have
 

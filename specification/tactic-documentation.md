@@ -34,8 +34,8 @@ Define the Tactic Documentation component that retrieves, parses, and structures
 
 #### tactic_lookup(name, session_id?)
 
-- REQUIRES: `name` is a non-empty string. When `session_id` is provided, it references an active proof session in the Proof Session Manager.
-- ENSURES: Issues `coq_query("Print", "Ltac <name>", session_id)`. Parses the raw output into a TacticInfo record. When the tactic is found, returns TacticInfo with `kind = "ltac"`, `qualified_name`, `body`, and extracted references. When the name exists but is not an Ltac definition, returns TacticInfo with `kind = "primitive"` or `kind = "ltac2"` and `body = null`. When the name is not found, returns a `NOT_FOUND` error.
+- REQUIRES: `name` is a non-empty string containing no whitespace characters. When `session_id` is provided, it references an active proof session in the Proof Session Manager.
+- ENSURES: When `name` contains whitespace, returns an `INVALID_ARGUMENT` error without issuing a Coq query. Otherwise, issues `coq_query("Print", "Ltac <name>", session_id)`. When `coq_query` succeeds, parses the raw output into a TacticInfo record. When `coq_query` raises a `QueryError` whose message contains `"not an Ltac definition"` or `"not a user defined tactic"`, the lookup intercepts the error and returns TacticInfo with `kind = "primitive"` and `body = null`. When `coq_query` raises any other `QueryError`, the lookup re-raises. When the tactic is found as an Ltac definition, returns TacticInfo with `kind = "ltac"`, `qualified_name`, `body`, and extracted references. When the name is not found, returns a `NOT_FOUND` error.
 - MAINTAINS: The underlying proof session state is not modified by the lookup.
 
 > **Given** a tactic name `"my_tactic"` defined as `Ltac my_tactic := auto; try reflexivity`
@@ -43,12 +43,20 @@ Define the Tactic Documentation component that retrieves, parses, and structures
 > **Then** a TacticInfo is returned with `kind = "ltac"`, `body = "auto; try reflexivity"`, `referenced_tactics = ["auto", "reflexivity"]`, and `is_recursive = false`
 
 > **Given** the name `"intro"` which is a primitive tactic
-> **When** `tactic_lookup("intro")` is called
-> **Then** a TacticInfo is returned with `kind = "primitive"`, `body = null`, and `qualified_name = null`
+> **When** `tactic_lookup("intro")` is called and Coq returns `"Error: intro is not an Ltac definition"`
+> **Then** the lookup intercepts the QueryError and returns a TacticInfo with `kind = "primitive"`, `body = null`, `qualified_name = null`, and `category = "introduction"`
+
+> **Given** the name `"apply"` which is a primitive tactic
+> **When** `tactic_lookup("apply")` is called and Coq returns `"Error: apply is not a user defined tactic"`
+> **Then** the lookup intercepts the QueryError and returns a TacticInfo with `kind = "primitive"`, `body = null`, and `category = "rewriting"`
 
 > **Given** the name `"nonexistent_tactic"` which does not exist in the current environment
 > **When** `tactic_lookup("nonexistent_tactic")` is called
 > **Then** a `NOT_FOUND` error is returned with message `Tactic "nonexistent_tactic" not found in the current environment.`
+
+> **Given** a multi-word input `"dependent destruction"`
+> **When** `tactic_lookup("dependent destruction")` is called
+> **Then** an `INVALID_ARGUMENT` error is returned with message `Tactic name must be a single identifier (no whitespace). Got: "dependent destruction".`
 
 #### Ltac Output Parsing
 
@@ -342,6 +350,7 @@ The parser shall group entries by type and prepend a HintSummary with counts per
 | Condition | Error code | Message |
 |-----------|-----------|---------|
 | Empty tactic name | `INVALID_ARGUMENT` | `Tactic name must not be empty.` |
+| Tactic name contains whitespace | `INVALID_ARGUMENT` | `Tactic name must be a single identifier (no whitespace). Got: "<name>".` |
 | Empty database name | `INVALID_ARGUMENT` | `Hint database name must not be empty.` |
 | Empty constant name | `INVALID_ARGUMENT` | `Constant name must not be empty.` |
 | Fewer than two names for comparison | `INVALID_ARGUMENT` | `Comparison requires at least two tactic names.` |
@@ -371,7 +380,7 @@ The parser shall group entries by type and prepend a HintSummary with counts per
 
 | Condition | Behavior |
 |-----------|----------|
-| Tactic is not Ltac but exists (primitive/Ltac2) | Normal response: TacticInfo with `kind = "primitive"` or `"ltac2"`, `body = null` |
+| Tactic is not Ltac but exists (primitive/Ltac2) | Normal response: TacticInfo with `kind = "primitive"` or `"ltac2"`, `body = null`. The lookup intercepts the `QueryError` raised by `coq_query` when Coq's error message contains `"not an Ltac definition"` or `"not a user defined tactic"`. |
 | Comparison with mix of found and not-found names (>= 2 found) | Normal response: comparison of found tactics with `not_found` field listing missing names |
 | Hint database with zero entries | Normal response: HintDatabase with empty `entries`, all summary counts = 0, `truncated = false` |
 | Recursive Ltac tactic | Normal response: TacticInfo with `is_recursive = true` |

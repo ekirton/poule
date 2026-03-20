@@ -335,6 +335,158 @@ class TestTacticLookup:
         assert result.body is None
         assert result.kind in ("primitive", "ltac2")
 
+    # -- QueryError interception for primitives (spec 4.1) --
+
+    @pytest.mark.asyncio
+    async def test_query_error_not_ltac_definition_returns_primitive(self):
+        """When coq_query raises QueryError with 'not an Ltac definition',
+        tactic_lookup intercepts and returns kind='primitive'."""
+        tactic_lookup = _import_lookup()
+        from Poule.query.handler import QueryError
+        (TacticInfo, _, _, _, _, _, _, _, _) = _import_types()
+        coq_query = _make_mock_coq_query(errors={
+            ("Print", "Ltac intro"): QueryError(
+                "PARSE_ERROR",
+                "Failed to parse: intro is not an Ltac definition",
+            ),
+        })
+        result = await tactic_lookup("intro", coq_query=coq_query)
+        assert isinstance(result, TacticInfo)
+        assert result.kind == "primitive"
+        assert result.body is None
+        assert result.category == "introduction"
+
+    @pytest.mark.asyncio
+    async def test_query_error_not_user_defined_tactic_returns_primitive(self):
+        """When coq_query raises QueryError with 'not a user defined tactic',
+        tactic_lookup intercepts and returns kind='primitive'."""
+        tactic_lookup = _import_lookup()
+        from Poule.query.handler import QueryError
+        (TacticInfo, _, _, _, _, _, _, _, _) = _import_types()
+        coq_query = _make_mock_coq_query(errors={
+            ("Print", "Ltac apply"): QueryError(
+                "PARSE_ERROR",
+                "Failed to parse: apply is not a user defined tactic",
+            ),
+        })
+        result = await tactic_lookup("apply", coq_query=coq_query)
+        assert isinstance(result, TacticInfo)
+        assert result.kind == "primitive"
+        assert result.body is None
+        assert result.category == "rewriting"
+
+    @pytest.mark.asyncio
+    async def test_query_error_non_primitive_re_raised(self):
+        """When coq_query raises QueryError that is NOT a primitive-detection
+        pattern, tactic_lookup re-raises."""
+        tactic_lookup = _import_lookup()
+        from Poule.query.handler import QueryError
+        coq_query = _make_mock_coq_query(errors={
+            ("Print", "Ltac something"): QueryError(
+                "TIMEOUT",
+                "Computation exceeded time limit.",
+            ),
+        })
+        with pytest.raises(QueryError) as exc_info:
+            await tactic_lookup("something", coq_query=coq_query)
+        assert exc_info.value.code == "TIMEOUT"
+
+    @pytest.mark.asyncio
+    async def test_query_error_eapply_returns_primitive(self):
+        """eapply triggers QueryError interception and returns primitive with category."""
+        tactic_lookup = _import_lookup()
+        from Poule.query.handler import QueryError
+        coq_query = _make_mock_coq_query(errors={
+            ("Print", "Ltac eapply"): QueryError(
+                "PARSE_ERROR",
+                "Failed to parse: eapply is not a user defined tactic",
+            ),
+        })
+        result = await tactic_lookup("eapply", coq_query=coq_query)
+        assert result.kind == "primitive"
+        assert result.category == "rewriting"
+
+    @pytest.mark.asyncio
+    async def test_query_error_setoid_rewrite_returns_primitive(self):
+        """setoid_rewrite triggers QueryError interception and returns primitive."""
+        tactic_lookup = _import_lookup()
+        from Poule.query.handler import QueryError
+        coq_query = _make_mock_coq_query(errors={
+            ("Print", "Ltac setoid_rewrite"): QueryError(
+                "PARSE_ERROR",
+                "Failed to parse: setoid_rewrite is not a user defined tactic",
+            ),
+        })
+        result = await tactic_lookup("setoid_rewrite", coq_query=coq_query)
+        assert result.kind == "primitive"
+        assert result.category == "rewriting"
+
+    # -- Multi-word input validation (spec 4.1) --
+
+    @pytest.mark.asyncio
+    async def test_multi_word_name_raises_invalid_argument(self):
+        """Multi-word input is rejected with INVALID_ARGUMENT before querying Coq."""
+        tactic_lookup = _import_lookup()
+        from Poule.tactics.lookup import TacticDocError
+        coq_query = _make_mock_coq_query()
+        with pytest.raises(TacticDocError) as exc_info:
+            await tactic_lookup("dependent destruction", coq_query=coq_query)
+        assert exc_info.value.code == "INVALID_ARGUMENT"
+        assert "dependent destruction" in exc_info.value.message
+        # coq_query should NOT have been called
+        coq_query.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_multi_word_convoy_pattern_raises_invalid_argument(self):
+        """'convoy pattern' (a proof technique, not a tactic) is rejected."""
+        tactic_lookup = _import_lookup()
+        from Poule.tactics.lookup import TacticDocError
+        coq_query = _make_mock_coq_query()
+        with pytest.raises(TacticDocError) as exc_info:
+            await tactic_lookup("convoy pattern", coq_query=coq_query)
+        assert exc_info.value.code == "INVALID_ARGUMENT"
+        coq_query.assert_not_called()
+
+    # -- Expanded primitive categories (spec 4.1) --
+
+    @pytest.mark.asyncio
+    async def test_expanded_primitive_categories(self):
+        """All commonly used primitives return a non-null category."""
+        tactic_lookup = _import_lookup()
+        from Poule.query.handler import QueryError
+
+        expected_categories = {
+            "eapply": "rewriting",
+            "eexact": "rewriting",
+            "setoid_rewrite": "rewriting",
+            "cbv": "rewriting",
+            "compute": "rewriting",
+            "hnf": "rewriting",
+            "red": "rewriting",
+            "discriminate": "equality",
+            "injection": "equality",
+            "f_equal": "equality",
+            "assert": "context_management",
+            "pose": "context_management",
+            "set": "context_management",
+            "remember": "context_management",
+            "clear": "context_management",
+            "generalize": "context_management",
+            "specialize": "context_management",
+        }
+        for name, expected_cat in expected_categories.items():
+            coq_query = _make_mock_coq_query(errors={
+                ("Print", f"Ltac {name}"): QueryError(
+                    "PARSE_ERROR",
+                    f"Failed to parse: {name} is not a user defined tactic",
+                ),
+            })
+            result = await tactic_lookup(name, coq_query=coq_query)
+            assert result.kind == "primitive", f"{name} should be primitive"
+            assert result.category == expected_cat, (
+                f"{name}: expected category '{expected_cat}', got '{result.category}'"
+            )
+
 
 # ===========================================================================
 # 2. Strategy Inspection -- section 4.2

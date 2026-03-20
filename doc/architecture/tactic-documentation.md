@@ -69,6 +69,25 @@ This reuse means the Tactic Documentation Handler inherits session-aware vs sess
 
 Given a tactic name, the lookup retrieves the tactic's definition and produces a `TacticInfo` record.
 
+### Input Validation
+
+The lookup validates the tactic name before issuing a Coq query:
+
+- **Empty name**: rejected with `INVALID_ARGUMENT`.
+- **Multi-word name** (contains whitespace): rejected with `INVALID_ARGUMENT`. Coq's `Print Ltac` accepts only single identifiers; passing multi-word input produces a malformed vernacular command. Multi-word tactic notations (e.g., `dependent destruction`) and proof techniques (e.g., `convoy pattern`) cannot be introspected via `Print Ltac`.
+
+### Error Interception for Primitive Tactics
+
+The Vernacular Query Handler (`coq_query`) raises a `QueryError` when Coq's output contains `Error:`. For primitive tactics, Coq returns errors like `"Error: apply is not an Ltac definition"` or `"Error: apply is not a user defined tactic"` (wording varies by Coq version). The Query Handler classifies these as `PARSE_ERROR` because they do not match any specific error pattern.
+
+The Tactic Lookup must intercept this `QueryError` and inspect the error message for primitive-detection patterns (`"not an Ltac definition"` or `"not a user defined tactic"`). When either pattern is detected, the lookup returns a `TacticInfo` with `kind = "primitive"` and `body = null` — the same result the Ltac Parser would produce if it received the raw output directly. All other `QueryError` instances are re-raised.
+
+This interception is necessary because `coq_query` treats all `Error:` output as errors and raises before the Ltac Parser runs. Without interception, every primitive tactic lookup fails with a `PARSE_ERROR` — the parser's primitive-handling logic is unreachable.
+
+### Primitive Category Table
+
+The lookup maintains a mapping from known primitive tactic names to their functional categories. This table covers all commonly used Coq built-in tactics across rewriting, case analysis, automation, introduction, arithmetic, control flow, context management, and equality reasoning categories. Tactics not in the table receive `category = null`.
+
 ### Ltac Output Parsing
 
 The Ltac Parser processes the `output` field of `QueryResult` returned by `coq_query("Print", "Ltac <name>")`.
@@ -76,7 +95,7 @@ The Ltac Parser processes the `output` field of `QueryResult` returned by `coq_q
 Coq's `Print Ltac` output follows one of these shapes:
 
 1. **Ltac definition found**: The output begins with `Ltac <qualified_name> :=` followed by the tactic body, which may span multiple lines and contain nested `match goal`, `try`, `repeat`, and other combinators.
-2. **Not an Ltac tactic**: Coq returns an error indicating the name is not an Ltac definition. This covers primitive tactics (`intro`, `apply`, `rewrite`) and Ltac2 tactics.
+2. **Not an Ltac tactic**: Coq returns an error indicating the name is not an Ltac definition. This covers primitive tactics (`intro`, `apply`, `rewrite`) and Ltac2 tactics. In production, this case is handled by the error interception layer above; the parser handles it as a fallback for cases where `coq_query` does not raise.
 3. **Name not found**: Coq returns an error indicating the name does not exist in the current environment.
 
 The parser extracts:

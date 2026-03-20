@@ -28,22 +28,36 @@ _KNOWN_TACTICS = {
 
 # Tactic category mapping for known primitives.
 _PRIMITIVE_CATEGORIES = {
+    # automation
     "auto": "automation",
     "eauto": "automation",
     "trivial": "automation",
     "intuition": "automation",
     "tauto": "automation",
     "firstorder": "automation",
+    # rewriting
     "reflexivity": "rewriting",
     "symmetry": "rewriting",
     "transitivity": "rewriting",
     "congruence": "rewriting",
     "rewrite": "rewriting",
     "apply": "rewriting",
+    "eapply": "rewriting",
     "exact": "rewriting",
+    "eexact": "rewriting",
     "assumption": "rewriting",
+    "unfold": "rewriting",
+    "simpl": "rewriting",
+    "cbn": "rewriting",
+    "cbv": "rewriting",
+    "compute": "rewriting",
+    "hnf": "rewriting",
+    "red": "rewriting",
+    "setoid_rewrite": "rewriting",
+    # introduction
     "intro": "introduction",
     "intros": "introduction",
+    # case analysis
     "destruct": "case_analysis",
     "induction": "case_analysis",
     "inversion": "case_analysis",
@@ -55,14 +69,36 @@ _PRIMITIVE_CATEGORIES = {
     "constructor": "case_analysis",
     "exists": "case_analysis",
     "eexists": "case_analysis",
-    "unfold": "rewriting",
-    "simpl": "rewriting",
-    "cbn": "rewriting",
+    # arithmetic
     "lia": "arithmetic",
     "omega": "arithmetic",
     "ring": "arithmetic",
     "field": "arithmetic",
+    # equality
+    "discriminate": "equality",
+    "injection": "equality",
+    "f_equal": "equality",
+    # context management
+    "assert": "context_management",
+    "pose": "context_management",
+    "set": "context_management",
+    "remember": "context_management",
+    "clear": "context_management",
+    "generalize": "context_management",
+    "specialize": "context_management",
+    # control flow
+    "try": "control",
+    "repeat": "control",
+    "progress": "control",
+    "fail": "control",
+    "idtac": "control",
 }
+
+# Patterns in QueryError messages that indicate a primitive tactic.
+_PRIMITIVE_ERROR_PATTERNS = (
+    "not an ltac definition",
+    "not a user defined tactic",
+)
 
 
 class TacticDocError(Exception):
@@ -231,6 +267,27 @@ def _parse_strategy_output(constant_name: str, output: str) -> list[StrategyEntr
     return entries
 
 
+def _is_primitive_error(message: str) -> bool:
+    """Check if a QueryError message indicates a primitive (non-Ltac) tactic."""
+    msg_lower = message.lower()
+    return any(pat in msg_lower for pat in _PRIMITIVE_ERROR_PATTERNS)
+
+
+def _make_primitive_info(name: str) -> TacticInfo:
+    """Build a TacticInfo for a primitive tactic."""
+    return TacticInfo(
+        name=name,
+        qualified_name=None,
+        kind="primitive",
+        category=_PRIMITIVE_CATEGORIES.get(name),
+        body=None,
+        is_recursive=False,
+        referenced_tactics=[],
+        referenced_constants=[],
+        strategy_entries=[],
+    )
+
+
 async def tactic_lookup(
     name: str,
     session_id: Optional[str] = None,
@@ -243,6 +300,12 @@ async def tactic_lookup(
     if not name:
         raise TacticDocError("INVALID_ARGUMENT", "Tactic name must not be empty.")
 
+    if re.search(r"\s", name):
+        raise TacticDocError(
+            "INVALID_ARGUMENT",
+            f'Tactic name must be a single identifier (no whitespace). Got: "{name}".',
+        )
+
     if coq_query is None:
         from Poule.query.handler import coq_query as _coq_query
         from Poule.query.process_pool import ProcessPool
@@ -254,7 +317,17 @@ async def tactic_lookup(
                 command, argument, session_id=session_id, process_pool=_pool,
             )
 
-    result = await coq_query("Print", f"Ltac {name}", session_id=session_id)
+    try:
+        result = await coq_query("Print", f"Ltac {name}", session_id=session_id)
+    except Exception as exc:
+        # Intercept QueryError for primitive tactics: coq_query raises when
+        # Coq output contains "Error:", but for primitives the error message
+        # is "not an Ltac definition" or "not a user defined tactic".
+        if hasattr(exc, "code") and hasattr(exc, "message"):
+            if _is_primitive_error(exc.message):
+                return _make_primitive_info(name)
+        raise
+
     return _parse_ltac_output(name, result.output)
 
 

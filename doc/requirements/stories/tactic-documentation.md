@@ -19,8 +19,10 @@ Derived from [doc/requirements/tactic-documentation.md](../tactic-documentation.
 - GIVEN a valid tactic name WHEN the tactic lookup tool is invoked THEN it returns the Ltac definition as produced by `Print Ltac` in the running Coq session
 - GIVEN a tactic name that does not exist in the current session WHEN the tool is invoked THEN it returns a clear error indicating the tactic was not found
 - GIVEN an Ltac2 tactic or a primitive tactic with no Ltac definition WHEN the tool is invoked THEN it returns an appropriate message indicating the tactic is not defined in Ltac
+- GIVEN a built-in primitive tactic name (e.g., `apply`, `destruct`, `simpl`, `setoid_rewrite`) WHEN the tactic lookup tool is invoked and Coq returns an error such as "not an Ltac definition" or "not a user defined tactic" THEN the tool returns a valid TacticInfo with `kind = "primitive"`, `body = null`, and the appropriate `category` — not an error
+- GIVEN a multi-word input containing whitespace (e.g., "convoy pattern", "dependent destruction") WHEN the tactic lookup tool is invoked THEN it returns an `INVALID_ARGUMENT` error indicating that tactic names must be single identifiers
 
-**Traces to:** R-P0-1
+**Traces to:** R-P0-1, R-P0-5, R-P0-6
 
 ### 1.2 Explain a Tactic
 

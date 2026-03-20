@@ -20,6 +20,10 @@ The resources that exist — the Coq reference manual, community wiki, scattered
 
 Given a tactic name, retrieve its definition from the running Coq session. For Ltac tactics this returns the source as Coq itself reports it via `Print Ltac`; for primitive tactics or Ltac2 tactics with no Ltac definition, it reports that clearly rather than failing silently. The lookup works for both standard library tactics and project-local definitions, so users see exactly what their session knows about a tactic — not a stale reference page, but the live definition.
 
+Primitive tactics — `apply`, `destruct`, `simpl`, `cbn`, `eapply`, `setoid_rewrite`, and the full set of Coq built-ins — are returned as valid results with their functional category (rewriting, case analysis, automation, etc.), not as errors. The tool intercepts the Coq error that `Print Ltac` produces for non-Ltac names and translates it into a structured `kind = "primitive"` response. This ensures that the LLM receives usable metadata for every tactic the user asks about, regardless of how Coq implements it internally.
+
+Multi-word inputs (e.g., "convoy pattern", "dependent destruction") are rejected with a clear error, since `Print Ltac` accepts only single Coq identifiers. The LLM is expected to recognize that these are proof techniques or tactic notations and address the user's question from general knowledge rather than attempting introspection.
+
 ### Tactic Explanation
 
 Given a tactic name, produce a plain-language explanation of what the tactic does, what types of goals it applies to, and when to reach for it. For project-local tactics, the explanation is grounded in the actual Ltac definition retrieved from the session, not solely in general knowledge. For tactics with optional arguments or variants (e.g., `rewrite ->` vs. `rewrite <-` vs. `rewrite ... in ...`), the explanation covers the key invocation patterns. The result is a description a newcomer can act on immediately, without needing to read Ltac syntax or trace through Coq internals.
