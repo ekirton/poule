@@ -1,4 +1,9 @@
-"""Pre-training data quality validation."""
+"""Pre-training data quality validation.
+
+Validates ExtractionRecord JSONL files for training data quality.
+Uses the goals field from ExtractionStep (not state_before) and
+structured premises with name+kind fields.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,8 @@ import json
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from Poule.neural.training.data import serialize_goals
 
 
 @dataclass
@@ -44,22 +51,43 @@ class TrainingDataValidator:
                         malformed_pairs += 1
                         continue
 
-                    steps = record.get("steps", [])
-                    for step in steps:
-                        state = step.get("state_before")
-                        premises = step.get("premises")
+                    # Skip non-proof records
+                    if record.get("record_type") not in ("proof_trace", None):
+                        continue
 
-                        if state is None or premises is None:
+                    steps = record.get("steps", [])
+
+                    # Process pairs: goals from step k-1, premises from step k
+                    for k in range(1, len(steps)):
+                        prev_step = steps[k - 1]
+                        curr_step = steps[k]
+
+                        # Check for required fields
+                        prev_goals = prev_step.get("goals")
+                        raw_premises = curr_step.get("premises")
+
+                        if prev_goals is None or raw_premises is None:
                             malformed_pairs += 1
                             continue
 
-                        if len(premises) == 0:
+                        # Extract premise names (handle both structured and plain formats)
+                        premise_names = []
+                        for p in raw_premises:
+                            if isinstance(p, dict):
+                                name = p.get("name")
+                                if name and p.get("kind") != "hypothesis":
+                                    premise_names.append(name)
+                            elif isinstance(p, str):
+                                premise_names.append(p)
+
+                        if len(premise_names) == 0:
                             empty_premise_pairs += 1
                             continue
 
                         total_pairs += 1
-                        all_states.add(state)
-                        for p in premises:
+                        state_text = serialize_goals(prev_goals)
+                        all_states.add(state_text)
+                        for p in premise_names:
                             all_premises[p] += 1
 
         # Compute warnings
@@ -68,8 +96,8 @@ class TrainingDataValidator:
         total_steps = total_pairs + empty_premise_pairs
         if total_steps > 0 and empty_premise_pairs / total_steps > 0.10:
             warnings.append(
-                f"Over 10% of steps have empty premise lists — "
-                f"check extraction quality"
+                "Over 10% of steps have empty premise lists — "
+                "check extraction quality"
             )
 
         if malformed_pairs > 0:
