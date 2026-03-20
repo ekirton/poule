@@ -45,7 +45,14 @@ def create_context(db_path: str) -> PipelineContext:
     """
     reader = IndexReader(db_path)
 
-    wl_histograms = reader.load_wl_histograms()
+    # Reader returns {decl_id: {h: histogram}}; select h=3 to produce
+    # the flat {decl_id: histogram} expected by wl_screen (pipeline.md §4.1).
+    raw_wl = reader.load_wl_histograms()
+    wl_histograms = {
+        decl_id: h_map[3]
+        for decl_id, h_map in raw_wl.items()
+        if 3 in h_map
+    }
     inverted_index = reader.load_inverted_index()
     symbol_frequencies = reader.load_symbol_frequencies()
     declaration_node_counts = reader.load_declaration_node_counts()

@@ -38,10 +38,12 @@ from Poule.pipeline.parser import CoqParser, ParseError
 def _mock_reader():
     """Return a mock IndexReader with default stubs for all loader methods."""
     reader = MagicMock()
+    # Real IndexReader returns {decl_id: {h: histogram}} (storage.md §4.3).
+    # create_context must select h=3 to produce flat {decl_id: histogram}.
     reader.load_wl_histograms.return_value = {
-        1: {"label_A": 3, "label_B": 1},
-        2: {"label_A": 2, "label_C": 4},
-        3: {"label_B": 5},
+        1: {3: {"label_A": 3, "label_B": 1}},
+        2: {3: {"label_A": 2, "label_C": 4}},
+        3: {3: {"label_B": 5}},
     }
     reader.load_inverted_index.return_value = {
         "Coq.Init.Nat.add": {1, 2},
@@ -93,7 +95,9 @@ def _mock_context(parser=None):
     """Return a PipelineContext-like mock with all expected fields."""
     ctx = MagicMock(spec=PipelineContext)
     ctx.reader = _mock_reader()
-    ctx.wl_histograms = ctx.reader.load_wl_histograms()
+    # Pipeline context holds flat {decl_id: histogram} after h-selection.
+    raw_wl = ctx.reader.load_wl_histograms()
+    ctx.wl_histograms = {did: hists[3] for did, hists in raw_wl.items() if 3 in hists}
     ctx.inverted_index = ctx.reader.load_inverted_index()
     ctx.symbol_frequencies = ctx.reader.load_symbol_frequencies()
     ctx.declaration_node_counts = ctx.reader.load_declaration_node_counts()
@@ -127,7 +131,10 @@ class TestCreateContext:
         reader.load_inverted_index.assert_called_once()
         reader.load_symbol_frequencies.assert_called_once()
         assert ctx.reader is reader
-        assert ctx.wl_histograms == reader.load_wl_histograms()
+        # create_context selects h=3 from the nested reader output (pipeline.md §4.1)
+        raw_wl = reader.load_wl_histograms()
+        expected_flat = {did: hists[3] for did, hists in raw_wl.items() if 3 in hists}
+        assert ctx.wl_histograms == expected_flat
         assert ctx.inverted_index == reader.load_inverted_index()
         assert ctx.symbol_frequencies == reader.load_symbol_frequencies()
 

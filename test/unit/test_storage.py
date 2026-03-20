@@ -11,6 +11,7 @@ configuration.
 from __future__ import annotations
 
 import json
+import pickle
 import sqlite3
 import struct
 import threading
@@ -733,11 +734,12 @@ class TestGetConstrTrees:
 
     def test_returns_trees_for_non_null(self, tmp_db_path):
         writer = IndexWriter.create(tmp_db_path)
-        # One declaration with a constr_tree, one without
+        # One declaration with a pickled constr_tree, one without
+        tree_data = {"root": "example"}  # simple picklable object
         decl_with = _sample_declaration(
             name="A.with_tree",
             module="A",
-            constr_tree=b"serialized_tree_data",
+            constr_tree=pickle.dumps(tree_data),
         )
         decl_without = _sample_declaration(
             name="A.without_tree",

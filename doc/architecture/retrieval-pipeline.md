@@ -98,7 +98,7 @@ Precompute WL histogram vectors for all declarations at h=3. On query:
 4. Cosine similarity against all precomputed vectors (sparse dot product, producing a float result)
 5. Return top-N candidates (N=200-500, tunable for recall)
 
-Sub-second on 100K items. Histograms loaded into memory at server startup (~100MB for 100K declarations).
+Sub-second on 100K items. Histograms loaded into memory at server startup (~100MB for 100K declarations). The storage layer returns histograms keyed by `(decl_id, h)` to support multiple h values; the pipeline context selects `h=3` at startup to produce a flat `decl_id → histogram` map for the screening function.
 
 **Critical constraint**: The query h value must match the indexed h value. Comparing histograms computed at different h values produces meaningless similarity scores because the label spaces differ.
 

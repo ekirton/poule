@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 import sqlite3
 from pathlib import Path
 
@@ -146,7 +147,8 @@ class IndexReader:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_constr_trees(self, ids: list[int]) -> dict[int, bytes]:
+    def get_constr_trees(self, ids: list[int]) -> dict:
+        """Return id → deserialized ExprTree for declarations with constr_tree."""
         self._check_open()
         if not ids:
             return {}
@@ -156,7 +158,13 @@ class IndexReader:
             f"WHERE id IN ({placeholders}) AND constr_tree IS NOT NULL",
             ids,
         ).fetchall()
-        return {row[0]: row[1] for row in rows}
+        result = {}
+        for row in rows:
+            try:
+                result[row[0]] = pickle.loads(row[1])
+            except (pickle.UnpicklingError, Exception):
+                continue
+        return result
 
     def search_fts(self, query: str, limit: int) -> list[dict]:
         self._check_open()
