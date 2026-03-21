@@ -25,6 +25,7 @@ proof-diagram.html
 *.vok
 *.glob
 .*.aux
+.lia.cache
 Makefile.coq
 Makefile.coq.conf
 .coqdeps.d
