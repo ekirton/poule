@@ -1,29 +1,10 @@
-# End-to-End (E2E) Tests
-
-These examples of user prompts are used as end-to-end tests.  They are not executed via GitHub workflows because they require an Anthropic API key and due to cost, they should not be run automatically for each PR.
+# E2E Test Results
 
 Tested: 2026-03-21 (full retest of all 25 RETEST and 3 FAIL prompts)
 
-## Instructions for Claude
-
-* When an issue is resolved, do not mark it as "FIXED", simply delete it from the list.
-* After rerunning tests, update the "Tested:" line above with the current date and the extent of the retest (e.g. if not all tests, give a very brief description of how tests were selected)
-* Summarize issues (bugs/gaps) in lists at the bottom with sufficient detail for them to be investigated further.
-* Prompts that pass shall be listed in examples/README.md.  Update it whenever this file changes.
-
-## Example Data
-
-Example Coq files in `examples/` provide project context for prompts that previously required user-specific files: `algebra.v` (my_lemma, ring_morph, axiom comparisons), `typeclasses.v` (Proper instances, setoid rewriting, typeclass resolution), `dependent.v` (convoy pattern, dependent types), `automation.v` (auto vs eauto, hint databases, custom Ltac), `flocq.v` (bpow/simpl debugging).
-
-## Results
-
-Each prompt from `README.md` was executed against the Poule MCP tools and evaluated:
-- **PASS** — tool returned relevant, non-empty results that answer the question
-- **FAIL** — tool returned an error, empty results, or clearly unrelated results
-- **SKIP** — slash command (skill), tested separately
+Run `/run-e2e` to retest prompts and update this file.
 
 **Summary: 60 PASS, 19 FAIL, 10 SKIP (89 total)**
-*All 10 SKIP entries are slash commands — example files are ready for manual testing.*
 
 | Section | PASS | FAIL | SKIP |
 |---------|------|------|------|
