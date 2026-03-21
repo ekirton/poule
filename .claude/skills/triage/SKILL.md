@@ -1,3 +1,13 @@
+---
+name: triage
+description: Trace a known root cause up the SDD authority chain to determine which layer the fix should start at. Use when Claude has already identified a root cause and you need to determine the blast radius. Runs in an isolated context.
+context: fork
+agent: general-purpose
+model: opus
+disable-model-invocation: true
+argument-hint: "<root cause description>"
+---
+
 Triage a bug or failing test to determine which SDD layer the fix should start at: $ARGUMENTS
 
 You have identified (or been given) a root cause. Before making any changes, trace it upward through the authority chain to find the highest layer that needs correction. Do NOT edit any files — this is a read-only audit.

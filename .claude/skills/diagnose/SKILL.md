@@ -1,3 +1,13 @@
+---
+name: diagnose
+description: Investigate a bug report — find root cause, trace it up the SDD authority chain, recommend which layer to fix. Use when given a bug description, error report, or failing test. Runs in an isolated context to preserve the main conversation for the fix.
+context: fork
+agent: general-purpose
+model: opus
+disable-model-invocation: true
+argument-hint: "<bug description>"
+---
+
 Diagnose a bug and triage it to the correct SDD layer: $ARGUMENTS
 
 This is a read-only investigation. Do NOT edit any files.
