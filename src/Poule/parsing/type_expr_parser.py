@@ -76,14 +76,17 @@ _INFIX_BP: dict[str, tuple[int, int]] = {
     "->": (10, 9),
     "=": (30, 31),
     "<>": (30, 31),
+    "&": (40, 41),
     "+": (50, 51),
     "-": (50, 51),
     "++": (55, 54),
     "::": (55, 54),
     "*": (60, 61),
+    "^": (65, 66),
     "\\/": (65, 66),
     "/\\": (65, 66),
     "<->": (20, 21),
+    "==>": (15, 16),
     "||": (35, 36),
     "&&": (40, 41),
     "==": (30, 31),
@@ -156,6 +159,10 @@ def tokenize(text: str) -> list[Token]:
             three = text[i : i + 3]
             if three == "<->":
                 tokens.append(Token(TokenKind.INFIX_OP, "<->", pos))
+                i += 3
+                continue
+            if three == "==>":
+                tokens.append(Token(TokenKind.INFIX_OP, "==>", pos))
                 i += 3
                 continue
             if three in ("<=?", "=?b", "<?b"):
@@ -269,7 +276,7 @@ def tokenize(text: str) -> list[Token]:
             continue
 
         # Single-character infix operators
-        if ch in ("+", "*"):
+        if ch in ("+", "*", "^", "&"):
             tokens.append(Token(TokenKind.INFIX_OP, ch, pos))
             i += 1
             continue
@@ -304,9 +311,18 @@ def tokenize(text: str) -> list[Token]:
             i = j
             continue
 
-        # Standalone ?, !, ~, `, #, ; — skip (negation, bang, separators, etc.)
-        if ch in ("?", "!", "`", "#", "~", ";"):
+        # Standalone ?, !, ~, `, #, ;, ., $, % — skip
+        if ch in ("?", "!", "`", "#", "~", ";", ".", "$", "%"):
             i += 1
+            continue
+
+        # String literals "..." — skip entire quoted string
+        if ch == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                i += 1
+            if i < n:
+                i += 1  # consume closing quote
             continue
 
         # Standalone / or \ not part of /\ or \/ — skip
@@ -460,9 +476,9 @@ class TypeExprParser:
                 pos, arg = self._primary(tokens, pos, binders)
                 args.append(arg)
             elif (tokens[pos].kind == TokenKind.INFIX_OP
-                  and tokens[pos].value in ("+", "-", "*")
                   and pos + 1 < len(tokens)
-                  and tokens[pos + 1].kind not in _PRIMARY_STARTS):
+                  and tokens[pos + 1].kind not in _PRIMARY_STARTS
+                  and tokens[pos + 1].kind != TokenKind.INFIX_OP):
                 # Trailing operator with no right operand — treat as identifier
                 args.append(Const(tokens[pos].value))
                 pos += 1
@@ -486,6 +502,9 @@ class TypeExprParser:
             # Handle 'let ... := ... in ...' expressions
             if tok.value == "let":
                 return self._parse_let(tokens, pos, binders)
+            # Handle 'match ... with ... end' — skip to 'end', return body
+            if tok.value == "match":
+                return self._skip_match(tokens, pos, binders)
             return pos + 1, self._resolve(tok.value, binders)
 
         if tok.kind == TokenKind.SORT:
@@ -499,6 +518,9 @@ class TypeExprParser:
 
         if tok.kind == TokenKind.LPAREN:
             pos += 1
+            # Empty parens () — unit type
+            if tokens[pos].kind == TokenKind.RPAREN:
+                return pos + 1, Const("_unit_")
             pos, inner = self._expr(tokens, pos, binders, 0)
             # Named argument: (name := value) — keep just the value
             if tokens[pos].kind == TokenKind.COLONEQ:
@@ -523,11 +545,22 @@ class TypeExprParser:
                 pos, prop = self._expr(tokens, pos, binders, 0)
                 # For indexing purposes, treat as Prod("_", inner, prop)
                 inner = Prod("_", inner, prop)
-            if tokens[pos].kind != TokenKind.RBRACE:
+            if tokens[pos].kind == TokenKind.RBRACE:
+                return pos + 1, inner
+            # Brace content couldn't be fully parsed (e.g., {morphism >->})
+            # — skip to matching }
+            depth = 1
+            while depth > 0 and tokens[pos].kind != TokenKind.EOF:
+                if tokens[pos].kind == TokenKind.LBRACE:
+                    depth += 1
+                elif tokens[pos].kind == TokenKind.RBRACE:
+                    depth -= 1
+                pos += 1
+            if depth > 0:
                 raise ParseError(
                     f"Expected '}}' at position {tokens[pos].pos}"
                 )
-            return pos + 1, inner
+            return pos, inner
 
         if tok.kind == TokenKind.LRECORD:
             # Record syntax {| field := val ; ... |} — skip to matching |}
@@ -542,8 +575,10 @@ class TypeExprParser:
             return pos, Const("_record_")
 
         if tok.kind == TokenKind.LBRACKET:
-            # Maximal implicit binders [A : T] — treat like {A : T}
             pos += 1
+            # Empty brackets [] — nil/empty list
+            if tokens[pos].kind == TokenKind.RBRACKET:
+                return pos + 1, Const("_nil_")
             pos, inner = self._expr(tokens, pos, binders, 0)
             if tokens[pos].kind != TokenKind.RBRACKET:
                 raise ParseError(
@@ -559,6 +594,30 @@ class TypeExprParser:
 
         if tok.kind == TokenKind.FUN:
             return self._parse_fun(tokens, pos, binders)
+
+        # Leading/unary infix operator — treat as identifier (handles
+        # scope-stripped function references and unary operators)
+        if tok.kind == TokenKind.INFIX_OP:
+            return pos + 1, Const(tok.value)
+
+        # Stray ARROW in expression position — treat as identifier
+        if tok.kind == TokenKind.ARROW:
+            return pos + 1, Const("->")
+
+        # Stray PIPE — skip (e.g., match arms, absolute value notation)
+        if tok.kind == TokenKind.PIPE:
+            pos += 1
+            return self._primary(tokens, pos, binders)
+
+        # COLONEQ in unexpected position — skip
+        if tok.kind == TokenKind.COLONEQ:
+            pos += 1
+            return self._primary(tokens, pos, binders)
+
+        # COLON in unexpected position — skip
+        if tok.kind == TokenKind.COLON:
+            pos += 1
+            return self._primary(tokens, pos, binders)
 
         raise ParseError(
             f"Expected expression at position {tok.pos}, got {tok.value!r}"
@@ -805,6 +864,28 @@ class TypeExprParser:
         """
         # Skip 'let' and everything up to 'in', then parse body
         return self._skip_let_to_in(tokens, pos + 1, binders)
+
+    def _skip_match(
+        self,
+        tokens: list[Token],
+        pos: int,
+        binders: list[str],
+    ) -> tuple[int, Any]:
+        """Skip ``match ... with ... end`` and return a placeholder."""
+        depth = 1
+        pos += 1  # consume 'match'
+        while tokens[pos].kind != TokenKind.EOF:
+            if (tokens[pos].kind == TokenKind.IDENT
+                    and tokens[pos].value == "match"):
+                depth += 1
+            elif (tokens[pos].kind == TokenKind.IDENT
+                  and tokens[pos].value == "end"):
+                depth -= 1
+                if depth == 0:
+                    pos += 1  # consume 'end'
+                    return pos, Const("_match_")
+            pos += 1
+        return pos, Const("_match_")
 
     def _skip_let_to_in(
         self,
