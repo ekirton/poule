@@ -5,6 +5,7 @@ context: fork
 agent: general-purpose
 model: opus
 disable-model-invocation: true
+allowed-tools: Read, Grep, Glob, Bash
 argument-hint: "<bug description>"
 ---
 
