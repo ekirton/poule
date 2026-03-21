@@ -1,8 +1,6 @@
-# Example Prompt Test Results
+# End-to-End (E2E) Tests
 
-## Examples are End-to-End (E2E) Tests
-
-The examples of user prompts are used as end-to-end tests.  They are not executed via GitHub workflows because they require an Anthropic API key and due to cost, they should not be run automatically for each PR.
+These examples of user prompts are used as end-to-end tests.  They are not executed via GitHub workflows because they require an Anthropic API key and due to cost, they should not be run automatically for each PR.
 
 Tested: 2026-03-21 (full retest of all 25 RETEST and 3 FAIL prompts)
 
@@ -11,11 +9,10 @@ Tested: 2026-03-21 (full retest of all 25 RETEST and 3 FAIL prompts)
 * When an issue is resolved, do not mark it as "FIXED", simply delete it from the list.
 * After rerunning tests, update the "Tested:" line above with the current date and the extent of the retest (e.g. if not all tests, give a very brief description of how tests were selected)
 * Summarize issues (bugs/gaps) in lists at the bottom with sufficient detail for them to be investigated further.
-* Test only Poule-MCP prompts; skip slash commands (skills).
 
-## Limitations of automated testing
+## Example Data
 
-Tests exclude slash commands (complex skills). Example Coq files in `examples/` provide project context for prompts that previously required user-specific files: `algebra.v` (my_lemma, ring_morph, axiom comparisons), `typeclasses.v` (Proper instances, setoid rewriting, typeclass resolution), `dependent.v` (convoy pattern, dependent types), `automation.v` (auto vs eauto, hint databases, custom Ltac), `flocq.v` (bpow/simpl debugging).
+Example Coq files in `examples/` provide project context for prompts that previously required user-specific files: `algebra.v` (my_lemma, ring_morph, axiom comparisons), `typeclasses.v` (Proper instances, setoid rewriting, typeclass resolution), `dependent.v` (convoy pattern, dependent types), `automation.v` (auto vs eauto, hint databases, custom Ltac), `flocq.v` (bpow/simpl debugging).
 
 ## Results
 
