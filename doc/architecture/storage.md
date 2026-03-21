@@ -49,12 +49,17 @@ CREATE TABLE index_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
--- Required keys:
+-- Required keys (all indexes):
 --   'schema_version'  → tool's index schema version (e.g., '1')
---   'coq_version'     → Coq/Rocq version used during indexing
---   'libraries' → JSON array of indexed library identifiers (e.g., '["stdlib", "mathcomp"]')
---   'library_versions' → JSON object mapping library identifier to version string (e.g., '{"stdlib": "8.19.2", "mathcomp": "2.2.0"}')
+--   'coq_version'     → Coq/Rocq version used during indexing (e.g., '9.1.1')
 --   'created_at'      → ISO 8601 timestamp of index creation
+-- Required keys (per-library indexes):
+--   'library'         → single library identifier (e.g., 'stdlib')
+--   'library_version' → version string for the library (e.g., '9.1.1')
+--   'declarations'    → count of indexed declarations (e.g., '31035')
+-- Required keys (merged indexes):
+--   'libraries'       → JSON array of library identifiers (e.g., '["stdlib", "mathcomp"]')
+--   'library_versions'→ JSON object mapping identifier to version (e.g., '{"stdlib": "9.1.1", "mathcomp": "2.5.0"}')
 -- Optional keys (Neural Premise Selection):
 --   'neural_model_hash' → SHA-256 hash of the model checkpoint used to compute embeddings
 
@@ -81,9 +86,9 @@ CREATE VIRTUAL TABLE declarations_fts USING fts5(
 
 **WL vectors at multiple h values**: The schema supports histograms at h=1, 3, 5 to allow experimentation with different WL iteration depths without re-extracting. Phase 1 computes h=3 only; h∈{1, 5} are reserved for future use.
 
-**Index metadata table**: The `index_meta` table stores key-value pairs for the index schema version and the versions of indexed libraries. On server startup, the schema version is compared against the tool's expected version; a mismatch returns an error directing the user to re-index. Library versions are compared against the currently installed versions; a mismatch likewise returns an error. This table is the mechanism behind the index versioning behavior described in [library-indexing.md](../features/library-indexing.md).
+**Index metadata table**: The `index_meta` table stores key-value pairs for the index schema version, Coq version, and library identity/versions. The key set differs between per-library indexes (singular `library`/`library_version`/`declarations` keys) and merged indexes (plural `libraries`/`library_versions` keys). On server startup, the schema version is compared against the tool's expected version; a mismatch returns an error directing the user to re-index. Library versions are compared against the currently installed versions; a mismatch likewise returns an error. See [index-entities.md](data-models/index-entities.md) for the full key definitions.
 
-**Phase 1 kind values**: The `kind` column covers Phase 1 declaration kinds only (`lemma`, `theorem`, `definition`, `instance`, `inductive`, `constructor`, `axiom`). This set will expand in Phase 2 when additional Coq declaration forms (e.g., `record`, `class`) are supported.
+**Kind values**: The `kind` column stores: `lemma`, `theorem`, `definition`, `instance`, `inductive`, `constructor`, `axiom`. Coq declaration forms that map to these kinds include Record → `inductive`, Class → `inductive`, Let → `definition`, etc. (see [coq-extraction.md](coq-extraction.md) § Kind Mapping for the full table).
 
 **Embeddings table**: The `embeddings` table stores dense vector embeddings for neural premise retrieval. Each embedding is a 768-dimensional float32 vector stored as a raw BLOB (3,072 bytes per row). The table is populated during an optional embedding pass after standard indexing, only when a neural model checkpoint is available. When no model is available, the table is empty or absent — the retrieval pipeline treats this as "neural channel unavailable." The `neural_model_hash` key in `index_meta` tracks which model produced the embeddings; a mismatch between the current model and the stored hash invalidates the embeddings. See [neural-retrieval.md](neural-retrieval.md) for the embedding computation pipeline.
 

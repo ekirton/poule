@@ -15,20 +15,16 @@ For each declaration in a Coq library:
 - Symbol set (fully qualified kernel names of constants, inductives, and constructors referenced, for symbol-based search)
 - Dependency edges (what this declaration uses, what uses it)
 
-## Phased Scope
+## Scope
 
-### Phase 1 (MVP)
-- Coq standard library (default; additional libraries available via configuration)
-- Single SQLite database, offline extraction
-- Single command to index
-
-### Phase 2
-- User's current project (incremental re-indexing on file save)
-
-### Phase 3
-- Six supported libraries with per-library distribution (see [modular-index-distribution](modular-index-distribution.md))
+### Library Indexing (implemented)
+- Six supported libraries indexed independently into per-library SQLite databases (see [modular-index-distribution](modular-index-distribution.md))
 - All 6 libraries always included — no per-library selection needed
-- Download-and-merge assembly of per-library indexes
+- Download-and-merge assembly of per-library indexes into a single search database
+- Single command to index each library; build script orchestrates all 6
+
+### User Project Indexing (planned)
+- User's current project (incremental re-indexing on file save)
 
 ## Extraction Method
 
@@ -46,7 +42,7 @@ The database records an **index schema version** — a version identifier writte
 
 2. **Library update → immediate rebuild.** The index records the version of each indexed library (e.g., Coq stdlib version, and versions of any additional configured libraries). When the server detects that an installed library version has changed since the index was built, it rebuilds the index before serving any queries. This ensures search results always reflect the current state of the user's libraries.
 
-Re-indexing is always a full rebuild. The index is a derived artifact — rebuilding from scratch is simpler and more reliable than migration, and at the scale of Coq libraries (< 50K declarations) completes in acceptable time.
+Re-indexing is always a full rebuild. The index is a derived artifact — rebuilding from scratch is simpler and more reliable than migration, and at the scale of Coq libraries (~120K declarations across all 6 libraries) completes in acceptable time.
 
 ## Idempotent Re-Indexing
 

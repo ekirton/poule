@@ -155,7 +155,7 @@ Backends that do not return fully qualified names directly (e.g., coq-lsp `Searc
 
 #### detect_version()
 
-- ENSURES: Returns the Coq/Rocq version string (e.g., `"8.19"`).
+- ENSURES: Returns the Coq/Rocq version string (e.g., `"9.1.1"`).
 
 ### 4.2 Kind Mapping
 
@@ -223,7 +223,7 @@ Resolution mechanism:
 
 2. **Caching**: Maintain a `short_name → FQN` lookup table for the duration of the indexing run. The cache is keyed by the exact short name string. Most short names recur across thousands of declarations, so the cache eliminates redundant queries.
 
-3. **Batch processing**: `Locate` queries shall be batched into shared synthetic documents (≤100 commands per document), following the same batching pattern as kind detection (§4.1.1), to reduce document lifecycle overhead.
+3. **Batch processing**: `Locate` queries may be batched into shared synthetic documents (≤100 commands per document), following the same batching pattern as kind detection (§4.1.1), to reduce document lifecycle overhead. The combination of caching (step 2) and the small unique-symbol-to-total-declaration ratio makes per-call `locate()` acceptable — most indexing runs issue fewer than 2,000 unique Locate queries total, and caching ensures each is issued at most once.
 
 4. **Ambiguous names**: When `Locate` returns multiple matches (e.g., `Locate "+"` may resolve to both `Nat.add` and `Z.add`), all matching FQNs shall be included in the symbol set.
 
@@ -254,7 +254,7 @@ All dependency edges shall use the relation values defined in the `dependencies`
 
 #### Dependency Sources
 
-**Tree-based dependency extraction** (when expression tree is available): `extract_dependencies(tree)` walks `LConst` nodes to produce `"uses"` edges and reads instance metadata for `"instance_of"` edges. These are direct structural references with fully qualified names — no name resolution is needed.
+**Tree-based dependency extraction** (when expression tree is available): `extract_dependencies(tree)` walks `LConst` nodes to produce `"uses"` edges. These are direct structural references with fully qualified names — no name resolution is needed. `"instance_of"` edges require instance metadata from the backend, which is not yet collected; this relation type is reserved for future use.
 
 **Metadata-only declarations** (no expression tree): The backend's `get_dependencies(name)` provides dependency information. When the backend uses `Print Assumptions` (coq-lsp), the output represents transitive axiom and type dependencies, not theorem-to-theorem proof dependencies. `Print Assumptions A` returns the axioms underlying A's proof, not the theorems A invokes — so if theorem A uses theorem B, the edge A→B is **not** captured; only the axioms beneath B appear. These edges shall be stored with relation `"uses"` as a partial approximation.
 
@@ -307,9 +307,11 @@ The same multi-strategy resolver used in Pass 2 (§4.5) shall be reused: exact m
 After both passes:
 
 1. Compute global symbol frequencies across all declarations → `insert_symbol_freq`
-2. Write index metadata: `schema_version`, `coq_version`, `created_at`. When extracting a single library target (per-library index), also write `library` (the library identifier) and `library_version` (from `detect_library_version`). When extracting multiple targets, write `mathcomp_version` for backward compatibility.
-3. Write `declarations` metadata key with the count of indexed declarations.
-4. Call `writer.finalize()` — FTS5 rebuild + integrity check
+2. Write index metadata (see [index-entities.md](../doc/architecture/data-models/index-entities.md) § index_meta):
+   - Always: `schema_version`, `coq_version`, `created_at` (ISO 8601 with seconds precision and UTC suffix `Z`, e.g., `2026-03-21T12:00:00Z`).
+   - Per-library index (single library target): `library` (the library identifier), `library_version` (from `detect_library_version`), `declarations` (count of indexed declarations).
+   - Multi-target extraction is not the normal path — per-library extraction is the standard workflow (see [index-build-script.md](../doc/architecture/index-build-script.md)).
+3. Call `writer.finalize()` — FTS5 rebuild + integrity check
 
 ### 4.8 Existing Database Replacement
 
@@ -368,23 +370,23 @@ All paths are relative to the Coq base directory returned by `coqc -where`. File
 | Library | Detection method | opam package |
 |---------|-----------------|-------------|
 | `stdlib` | Parse version from `coqc --version` output | `coq` |
-| `mathcomp` | `opam show rocq-mathcomp-ssreflect --field=version` | `rocq-mathcomp-ssreflect` |
+| `mathcomp` | `opam show rocq-mathcomp-ssreflect --field=version` | `rocq-mathcomp-ssreflect` (compatibility meta-package wrapping `rocq-mathcomp-boot` + `rocq-mathcomp-order`) |
 | `stdpp` | `opam show coq-stdpp --field=version` | `coq-stdpp` |
 | `flocq` | `opam show coq-flocq --field=version` | `coq-flocq` |
 | `coquelicot` | `opam show coq-coquelicot --field=version` | `coq-coquelicot` |
 | `coqinterval` | `opam show coq-interval --field=version` | `coq-interval` |
 
-> **Given** MathComp 2.2.0 is installed via opam
+> **Given** MathComp 2.5.0 is installed via opam
 > **When** `detect_library_version("mathcomp")` is called
-> **Then** returns `"2.2.0"`
+> **Then** returns `"2.5.0"`
 
 > **Given** stdpp is not installed
 > **When** `detect_library_version("stdpp")` is called
 > **Then** returns `"none"`
 
-> **Given** Coq 8.19.2 is installed
+> **Given** Rocq 9.1.1 is installed
 > **When** `detect_library_version("stdlib")` is called
-> **Then** returns `"8.19.2"`
+> **Then** returns `"9.1.1"`
 
 ### 4.11 Progress Reporting
 

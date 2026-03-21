@@ -93,15 +93,32 @@ A key-value metadata entry managing index lifecycle and version compatibility.
 | `key` | text | Primary key; must be one of the required keys or a recognized optional key |
 | `value` | text | Required; format depends on key (see below) |
 
-### Required keys
+### Required keys (all indexes)
 
 | Key | Value constraint |
 |-----|-----------------|
 | `schema_version` | Parseable as a positive integer; must match the tool's expected version |
-| `coq_version` | Valid version string (e.g., `8.19`) |
+| `coq_version` | Valid version string (e.g., `9.1.1`) |
+| `created_at` | Valid ISO 8601 timestamp (e.g., `2026-03-21T12:00:00Z`) |
+
+### Required keys (per-library indexes)
+
+Per-library indexes are produced by the extraction pipeline when targeting a single library (e.g., `index-stdlib.db`).
+
+| Key | Value constraint |
+|-----|-----------------|
+| `library` | A single library identifier: one of `stdlib`, `mathcomp`, `stdpp`, `flocq`, `coquelicot`, `coqinterval` |
+| `library_version` | Valid version string for the library (e.g., `2.5.0`) |
+| `declarations` | Parseable as a non-negative integer; count of indexed declarations |
+
+### Required keys (merged indexes)
+
+Merged indexes are produced by the merge pipeline from all 6 per-library indexes (see [prebuilt-distribution.md](../prebuilt-distribution.md)).
+
+| Key | Value constraint |
+|-----|-----------------|
 | `libraries` | JSON array of library identifiers; each element must be one of: `stdlib`, `mathcomp`, `stdpp`, `flocq`, `coquelicot`, `coqinterval` |
 | `library_versions` | JSON object mapping library identifier to valid version string; keys must match entries in `libraries` |
-| `created_at` | Valid ISO 8601 timestamp |
 
 ### Relationships
 

@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Full human-readable reference: this file. See also [doc/SKILLS.md](SKILLS.md) for compound workflows.
+Full human-readable reference: this file. See also [doc/claude-skills.md](claude-skills.md) for compound workflows.
 
 All search tools accept an optional `limit` (integer, default 50, max 200).
 All proof interaction tools accept `session_id` (string, required) — returned by `open_proof_session`.

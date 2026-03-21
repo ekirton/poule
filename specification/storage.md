@@ -81,7 +81,7 @@ Declarations and their WL vectors shall be co-inserted in the same batch transac
 
 #### write_meta(key, value)
 
-- REQUIRES: `key` is a recognized metadata key.
+- REQUIRES: `key` is a recognized metadata key (see [index-entities.md](../doc/architecture/data-models/index-entities.md) § index_meta for per-library and merged key sets).
 - ENSURES: The key-value pair is written to `index_meta`.
 
 #### finalize()
@@ -208,10 +208,10 @@ for batch in declaration_batches:
 writer.insert_dependencies(all_dependency_edges)
 writer.insert_symbol_freq(symbol_frequencies)
 writer.write_meta("schema_version", "1")
-writer.write_meta("coq_version", "8.19")
+writer.write_meta("coq_version", "9.1.1")
 writer.write_meta("library", "stdlib")
-writer.write_meta("library_version", "8.19.2")
-writer.write_meta("declarations", "12450")
+writer.write_meta("library_version", "9.1.1")
+writer.write_meta("declarations", "31035")
 writer.write_meta("created_at", "2026-03-16T12:00:00Z")
 writer.finalize()
 ```

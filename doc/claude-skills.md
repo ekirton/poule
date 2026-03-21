@@ -1,6 +1,6 @@
 # Skills Reference
 
-Poule provides slash commands (skills) that orchestrate multiple MCP tools into compound workflows. Unlike individual MCP tools (see [MCP_TOOLS.md](MCP_TOOLS.md)), skills are multi-step agentic workflows — Claude reasons between steps, adapts strategy based on intermediate results, and coordinates tools that no single MCP call can replace.
+Poule provides slash commands (skills) that orchestrate multiple MCP tools into compound workflows. Unlike individual MCP tools (see [poule-mcp.md](poule-mcp.md)), skills are multi-step agentic workflows — Claude reasons between steps, adapts strategy based on intermediate results, and coordinates tools that no single MCP call can replace.
 
 Skills are invoked as slash commands in Claude Code. You do not need to know which MCP tools are used behind the scenes.
 

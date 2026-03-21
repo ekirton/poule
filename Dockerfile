@@ -41,9 +41,20 @@ RUN opam switch create coq ocaml-base-compiler.4.14.2 && \
 # a release of a frequently-updated library only invalidates its layer
 # and those below it.  Dependency chain: flocq → coquelicot → coq-interval.
 RUN eval $(opam env --switch=coq) && opam install -y coq-flocq.4.2.2 && opam clean -a -c -s --logs
-RUN eval $(opam env --switch=coq) && opam install -y coq-coquelicot.3.4.4 && opam clean -a -c -s --logs
+# Coquelicot and CoqInterval use remake and their install targets only
+# copy .vo files.  Install with --keep-build-dir so we can copy .v
+# source files afterward (needed for training data extraction).
+RUN eval $(opam env --switch=coq) && \
+    opam install -y -b coq-coquelicot.3.4.4 && \
+    cp /root/.opam/coq/.opam-switch/build/coq-coquelicot.3.4.4/theories/*.v \
+       /root/.opam/coq/lib/coq/user-contrib/Coquelicot/ && \
+    opam clean -a -c -s --logs
 RUN eval $(opam env --switch=coq) && opam install -y rocq-mathcomp-character.2.5.0 && opam clean -a -c -s --logs
-RUN eval $(opam env --switch=coq) && opam install -y coq-interval.4.11.4 && opam clean -a -c -s --logs
+RUN eval $(opam env --switch=coq) && \
+    opam install -y -b coq-interval.4.11.4 && \
+    cd /root/.opam/coq/.opam-switch/build/coq-interval.4.11.4/src && \
+    find . -name "*.v" -exec cp --parents {} /root/.opam/coq/lib/coq/user-contrib/Interval/ \; && \
+    opam clean -a -c -s --logs
 RUN eval $(opam env --switch=coq) && opam install -y coq-stdpp.1.12.0 && opam clean -a -c -s --logs
 
 # Move opam to /opt so it's accessible to any user,

@@ -935,6 +935,19 @@ class TestParseSearchDiagnostics:
         result = CoqLspBackend._parse_search_diagnostics([])
         assert result == []
 
+    def test_multiline_type_sig_joined(self):
+        """Multi-line type signatures from coq-lsp are collapsed (spec §4.1.1)."""
+        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        diags = [
+            _make_diagnostic("bar :\n  forall (n : nat),\n  n + 0 = n"),
+        ]
+
+        result = CoqLspBackend._parse_search_diagnostics(diags)
+        assert len(result) == 1
+        assert result[0][0] == "bar"
+        assert result[0][1] == "forall (n : nat), n + 0 = n"
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 7b. Declaration Kind Detection

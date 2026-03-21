@@ -2318,6 +2318,329 @@ class TestResolveSymbols:
         assert resolved == set()
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 19. type_expr Fallback to pretty_print_type (spec §4.4 step 8)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestTypeExprFallback:
+    """When constr_t lacks type_signature, process_declaration falls back
+    to backend.pretty_print_type() (spec §4.4 step 8)."""
+
+    def test_fallback_to_pretty_print_type_when_no_type_sig(self):
+        """Dict constr_t without type_signature triggers pretty_print_type."""
+        from Poule.extraction.pipeline import process_declaration
+
+        backend = _make_mock_backend()
+        backend.pretty_print_type.return_value = "nat -> nat -> nat"
+        constr_t = {"name": "Nat.add", "source": "coq-lsp"}
+
+        result = process_declaration(
+            "Nat.add", "Definition", constr_t, backend, "/fake/Nat.vo",
+            statement="Nat.add = ...", dependency_names=[],
+        )
+
+        assert result is not None
+        assert result.type_expr == "nat -> nat -> nat"
+        backend.pretty_print_type.assert_called_once_with("Nat.add")
+
+    def test_fallback_returns_none_when_pretty_print_type_fails(self):
+        """When pretty_print_type raises, type_expr is None (not fatal)."""
+        from Poule.extraction.pipeline import process_declaration
+
+        backend = _make_mock_backend()
+        backend.pretty_print_type.side_effect = Exception("backend error")
+        constr_t = {"name": "Nat.add", "source": "coq-lsp"}
+
+        result = process_declaration(
+            "Nat.add", "Definition", constr_t, backend, "/fake/Nat.vo",
+            statement="Nat.add = ...", dependency_names=[],
+        )
+
+        assert result is not None
+        assert result.type_expr is None
+
+    def test_no_fallback_when_type_sig_present(self):
+        """type_signature in constr_t prevents pretty_print_type call."""
+        from Poule.extraction.pipeline import process_declaration
+
+        backend = _make_mock_backend()
+        constr_t = {
+            "name": "Nat.add",
+            "type_signature": "nat -> nat -> nat",
+            "source": "coq-lsp",
+        }
+
+        process_declaration(
+            "Nat.add", "Definition", constr_t, backend, "/fake/Nat.vo",
+            statement="stmt", dependency_names=[],
+        )
+
+        backend.pretty_print_type.assert_not_called()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 20. Parse Failure Partial Result (spec §4.4 step 1)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestParseFailurePartialResult:
+    """When type parsing fails, the declaration is stored with partial data:
+    no tree, empty symbol set, empty WL vector, node_count=1 (spec §4.4)."""
+
+    def test_partial_result_fields(self):
+        from Poule.extraction.pipeline import process_declaration
+
+        backend = _make_mock_backend()
+        # constr_t without type_signature — parsing has nothing to parse
+        constr_t = {"name": "Broken.decl", "source": "coq-lsp"}
+
+        result = process_declaration(
+            "Broken.decl", "Definition", constr_t, backend, "/fake.vo",
+            statement="stmt", dependency_names=[],
+        )
+
+        assert result is not None
+        assert result.tree is None
+        assert result.symbol_set == []
+        assert result.wl_vector == {}
+
+    def test_partial_result_stored_with_node_count_one(self):
+        """PipelineWriter.batch_insert sets node_count=1 when tree is None."""
+        from Poule.extraction.pipeline import PipelineWriter
+
+        mock_writer = Mock()
+        mock_writer.insert_declarations.return_value = {"A": 1}
+        mock_writer.insert_wl_vectors.return_value = None
+        pw = PipelineWriter(mock_writer)
+
+        mock_result = Mock()
+        mock_result.name = "A"
+        mock_result.module = "M"
+        mock_result.kind = "definition"
+        mock_result.statement = "stmt"
+        mock_result.type_expr = None
+        mock_result.tree = None  # no tree — parse failure
+        mock_result.symbol_set = []
+        mock_result.wl_vector = {}
+
+        pw.batch_insert([mock_result])
+
+        decl_dicts = mock_writer.insert_declarations.call_args[0][0]
+        assert decl_dicts[0]["node_count"] == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 21. Metadata Timestamp Format (spec §4.7)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestMetadataTimestampFormat:
+    """created_at uses ISO 8601 with seconds precision and Z suffix (spec §4.7)."""
+
+    def test_created_at_is_iso8601_utc(self):
+        import re
+
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend(
+            declarations=[("A.decl1", "Lemma", {"mock": "constr"})]
+        )
+        backend.detect_version.return_value = "9.1.1"
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"A.decl1": 1}
+
+        mock_result = Mock()
+        mock_result.name = "A.decl1"
+        mock_result.dependency_names = []
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=[Path("/fake/A.vo")],
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                return_value=mock_result,
+            ),
+            patch(
+                "Poule.extraction.pipeline.detect_library_version",
+                return_value="9.1.1",
+            ),
+        ):
+            run_extraction(targets=["stdlib"], db_path=Path("/tmp/test.db"))
+
+        kwargs = writer.write_metadata.call_args[1]
+        ts = kwargs["created_at"]
+        # Must match ISO 8601: YYYY-MM-DDTHH:MM:SSZ
+        assert re.match(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", ts
+        ), f"Timestamp {ts!r} does not match ISO 8601 with Z suffix"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 22. Per-Library Metadata Values (spec §4.7)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestPerLibraryMetadataValues:
+    """Per-library extraction writes correct library identifier and version."""
+
+    def test_library_key_matches_target(self):
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend(
+            declarations=[("A.decl1", "Lemma", {"mock": "constr"})]
+        )
+        backend.detect_version.return_value = "9.1.1"
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"A.decl1": 1}
+
+        mock_result = Mock()
+        mock_result.name = "A.decl1"
+        mock_result.dependency_names = []
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=[Path("/fake/A.vo")],
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                return_value=mock_result,
+            ),
+            patch(
+                "Poule.extraction.pipeline.detect_library_version",
+                return_value="2.5.0",
+            ),
+        ):
+            run_extraction(targets=["mathcomp"], db_path=Path("/tmp/test.db"))
+
+        kwargs = writer.write_metadata.call_args[1]
+        assert kwargs["library"] == "mathcomp"
+        assert kwargs["library_version"] == "2.5.0"
+
+    def test_declarations_count_matches_indexed(self):
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend(
+            declarations=[
+                ("A.d1", "Lemma", {"mock": "constr"}),
+                ("A.d2", "Theorem", {"mock": "constr"}),
+            ]
+        )
+        backend.detect_version.return_value = "9.1.1"
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"A.d1": 1, "A.d2": 2}
+
+        mock_r = Mock()
+        mock_r.name = "A.d1"
+        mock_r.dependency_names = []
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=[Path("/fake/A.vo")],
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                return_value=mock_r,
+            ),
+            patch(
+                "Poule.extraction.pipeline.detect_library_version",
+                return_value="9.1.1",
+            ),
+        ):
+            run_extraction(targets=["stdlib"], db_path=Path("/tmp/test.db"))
+
+        kwargs = writer.write_metadata.call_args[1]
+        assert kwargs["declarations"] == "2"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 23. Multi-Line Type Signature Parsing (spec §4.1.1)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestMultiLineTypeSigParsing:
+    """coq-lsp may break long type signatures across lines (spec §4.1.1).
+    The parser must join continuation lines into a single type signature."""
+
+    def test_multiline_type_sig_collapsed_to_single_line(self):
+        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        raw = "forall (n : nat),\n  n + 0 = n"
+        result = CoqLspBackend._normalize_type_sig(raw)
+        assert result == "forall (n : nat), n + 0 = n"
+
+    def test_leading_whitespace_on_continuation_stripped(self):
+        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        raw = "forall (A : Type)\n    (x : A),\n    x = x"
+        result = CoqLspBackend._normalize_type_sig(raw)
+        assert result == "forall (A : Type) (x : A), x = x"
+
+    def test_single_line_unchanged(self):
+        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        raw = "nat -> nat -> nat"
+        result = CoqLspBackend._normalize_type_sig(raw)
+        assert result == "nat -> nat -> nat"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 24. Resolve Cache Shared Across Declarations (spec §4.4.1)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestResolveCacheSharedAcrossRun:
+    """A single resolution cache is shared across all declarations in an
+    indexing run, so that each unique symbol is resolved at most once
+    (spec §4.4.1 step 2)."""
+
+    def test_single_cache_across_multiple_declarations(self):
+        """Two declarations sharing symbol 'nat' should only trigger one Locate."""
+        from Poule.extraction.pipeline import resolve_symbols
+
+        backend = _make_mock_backend()
+        backend.locate.return_value = "Coq.Init.Datatypes.nat"
+
+        shared_cache: dict = {}
+
+        # First declaration: 'nat' not in cache, triggers Locate
+        resolve_symbols({"nat"}, backend, cache=shared_cache)
+        assert backend.locate.call_count == 1
+
+        # Second declaration: 'nat' in cache, no Locate
+        resolve_symbols({"nat", "bool"}, backend, cache=shared_cache)
+        # 'bool' is new, 'nat' is cached → only 1 additional call
+        assert backend.locate.call_count == 2
+
+
 class TestSymbolFreqUsesFQNs:
     """After extraction with symbol resolution, symbol_freq contains FQNs (spec §4.4.1 invariant)."""
 

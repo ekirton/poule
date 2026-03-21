@@ -20,7 +20,7 @@ Three tiers of library support, reflecting increasing extraction difficulty:
 - Coquelicot: ≥ 95% extraction success rate
 - CoqInterval: ≥ 90% extraction success rate
 
-The MathComp target includes the core component hierarchy installed by `rocq-mathcomp-ssreflect`, `rocq-mathcomp-algebra`, `rocq-mathcomp-fingroup`, `rocq-mathcomp-solvable`, `rocq-mathcomp-field`, and `rocq-mathcomp-character`. These packages provide the ssreflect, algebra, group theory, and finite field libraries that constitute "MathComp" as referenced elsewhere in this document.
+The MathComp target includes the core component hierarchy: `rocq-mathcomp-boot` (ssreflect base), `rocq-mathcomp-order`, `rocq-mathcomp-algebra`, `rocq-mathcomp-fingroup`, `rocq-mathcomp-solvable`, `rocq-mathcomp-field`, and `rocq-mathcomp-character`. The compatibility meta-package `rocq-mathcomp-ssreflect` wraps `rocq-mathcomp-boot` and `rocq-mathcomp-order`; version detection queries this meta-package. Together these packages provide the ssreflect, order theory, algebra, group theory, and finite field libraries that constitute "MathComp" as referenced elsewhere in this document.
 
 **Tier 1 (P1): Validated opam-installable projects**
 - Standard-Ltac projects beyond the Tier 0 set: validated extraction, success rate reported

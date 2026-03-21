@@ -57,7 +57,7 @@ Merging per-library databases into a single file at install time keeps all exist
 
 ### Why 6 libraries
 
-These 6 were selected because they are all: actively maintained, in the Rocq Platform, compatible with Coq 8.19, and extractable without special processing (no custom proof modes). They form two coherent dependency chains — the numerical analysis stack (Flocq → Coquelicot → CoqInterval) and the general-purpose extension (stdpp) — alongside the two anchor libraries (stdlib, MathComp). Libraries requiring custom extraction handling (Iris, CompCert) are excluded from the prebuilt set.
+These 6 were selected because they are all: actively maintained, in the Rocq Platform, compatible with the current Rocq release, and extractable without special processing (no custom proof modes). They form two coherent dependency chains — the numerical analysis stack (Flocq → Coquelicot → CoqInterval) and the general-purpose extension (stdpp) — alongside the two anchor libraries (stdlib, MathComp). Libraries requiring custom extraction handling (Iris, CompCert) are excluded from the prebuilt set.
 
 ### Why always include all 6
 
@@ -147,7 +147,7 @@ It does **not** provide:
 **Priority:** P0
 **Stability:** Stable
 
-- GIVEN the container starts with a complete index WHEN the startup message is displayed THEN it lists all 6 libraries with their versions (e.g., "stdlib 8.19.2, mathcomp 2.2.0, ...")
+- GIVEN the container starts with a complete index WHEN the startup message is displayed THEN it lists all 6 libraries with their versions (e.g., "stdlib 9.1.1, mathcomp 2.5.0, ...")
 - GIVEN the container starts and the index was just downloaded WHEN the startup message is displayed THEN it lists all 6 libraries with their versions
 
 ### Libraries Volume Mount

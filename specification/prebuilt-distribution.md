@@ -66,9 +66,9 @@ Accept: application/vnd.github+json
 
 No authentication is required (public repository). Unauthenticated rate limit: 60 requests/hour.
 
-> **Given** the repository has releases tagged `index-v1-coq8.19` and `index-v1-coq8.20`
+> **Given** the repository has releases tagged `index-v1-coq9.1` and `index-v1-coq9.2`
 > **When** `find_latest_release()` is called
-> **Then** returns the release with tag `index-v1-coq8.20` (most recent)
+> **Then** returns the release with tag `index-v1-coq9.2` (most recent)
 
 > **Given** the repository has no releases with `index-v` prefix
 > **When** `find_latest_release()` is called
@@ -256,7 +256,7 @@ The publish script (`scripts/publish-release.sh`) is a shell script for the proj
 ```
 $ poule download-index
 Finding latest index release...
-Found release: index-v1-coq8.19
+Found release: index-v1-coq9.1
   Downloading index-stdlib.db ... 30.8 / 30.8 MB
   Downloading index-mathcomp.db ... 3.7 / 3.7 MB
   Downloading index-stdpp.db ... 0.8 / 0.8 MB
@@ -264,7 +264,7 @@ Found release: index-v1-coq8.19
   Downloading index-coquelicot.db ... 1.4 / 1.4 MB
   Downloading index-coqinterval.db ... 6.2 / 6.2 MB
   Merging 6 libraries into index.db...
-Done. Indexed: stdlib 8.19.2, mathcomp 2.2.0, stdpp 1.12.0, flocq 4.2.1, coquelicot 3.4.3, coqinterval 4.11.4
+Done. Indexed: stdlib 9.1.1, mathcomp 2.5.0, stdpp 1.12.0, flocq 4.2.2, coquelicot 3.4.4, coqinterval 4.11.4
 ```
 
 ### Skip up-to-date libraries
@@ -272,7 +272,7 @@ Done. Indexed: stdlib 8.19.2, mathcomp 2.2.0, stdpp 1.12.0, flocq 4.2.1, coqueli
 ```
 $ poule download-index
 Finding latest index release...
-Found release: index-v1-coq8.19
+Found release: index-v1-coq9.1
   index-stdlib.db is up to date.
   index-mathcomp.db is up to date.
   index-stdpp.db is up to date.
@@ -280,7 +280,7 @@ Found release: index-v1-coq8.19
   index-coquelicot.db is up to date.
   index-coqinterval.db is up to date.
   index.db is up to date.
-Done. Indexed: stdlib 8.19.2, mathcomp 2.2.0, stdpp 1.12.0, flocq 4.2.1, coquelicot 3.4.3, coqinterval 4.11.4
+Done. Indexed: stdlib 9.1.1, mathcomp 2.5.0, stdpp 1.12.0, flocq 4.2.2, coquelicot 3.4.4, coqinterval 4.11.4
 ```
 
 ### Download with neural model
@@ -288,7 +288,7 @@ Done. Indexed: stdlib 8.19.2, mathcomp 2.2.0, stdpp 1.12.0, flocq 4.2.1, coqueli
 ```
 $ poule download-index --include-model
 Finding latest index release...
-Found release: index-v1-coq8.19
+Found release: index-v1-coq9.1
   Downloading index-stdlib.db ... 30.8 / 30.8 MB
   Downloading index-mathcomp.db ... 3.7 / 3.7 MB
   Downloading index-stdpp.db ... 0.8 / 0.8 MB
@@ -298,7 +298,7 @@ Found release: index-v1-coq8.19
   Merging 6 libraries into index.db...
   Downloading neural-premise-selector.onnx ... 98.5 / 98.5 MB
   neural-premise-selector.onnx (98.5 MB) -> /home/user/.local/share/poule/models/neural-premise-selector.onnx
-Done. Indexed: stdlib 8.19.2, mathcomp 2.2.0, stdpp 1.12.0, flocq 4.2.1, coquelicot 3.4.3, coqinterval 4.11.4
+Done. Indexed: stdlib 9.1.1, mathcomp 2.5.0, stdpp 1.12.0, flocq 4.2.2, coquelicot 3.4.4, coqinterval 4.11.4
 ```
 
 ### Publish a release
@@ -307,22 +307,22 @@ Done. Indexed: stdlib 8.19.2, mathcomp 2.2.0, stdpp 1.12.0, flocq 4.2.1, coqueli
 $ ./scripts/publish-release.sh index-stdlib.db index-mathcomp.db index-stdpp.db index-flocq.db index-coquelicot.db index-coqinterval.db --model models/neural-premise-selector.onnx
 Index metadata:
   schema_version:  1
-  coq_version:     8.19
+  coq_version:     9.1.1
 Libraries:
-  stdlib:          8.19.2  (12450 declarations, SHA-256: a1b2c3...)
-  mathcomp:        2.2.0   (8320 declarations, SHA-256: d4e5f6...)
-  stdpp:           1.12.0  (5200 declarations, SHA-256: 112233...)
-  flocq:           4.2.1   (3100 declarations, SHA-256: 445566...)
-  coquelicot:      3.4.3   (2800 declarations, SHA-256: 778899...)
-  coqinterval:     4.11.4  (1500 declarations, SHA-256: aabbcc...)
+  stdlib:          9.1.1   (31035 declarations, SHA-256: a1b2c3...)
+  mathcomp:        2.5.0   (57903 declarations, SHA-256: d4e5f6...)
+  stdpp:           1.12.0  (4868 declarations, SHA-256: 112233...)
+  flocq:           4.2.2   (2599 declarations, SHA-256: 445566...)
+  coquelicot:      3.4.4   (2398 declarations, SHA-256: 778899...)
+  coqinterval:     4.11.4  (20274 declarations, SHA-256: aabbcc...)
   ONNX model:              (SHA-256: 789abc...)
 
 Generated manifest.json:
 { ... }
 
-Release tag: index-v1-coq8.19
-Release created: index-v1-coq8.19
-URL: https://github.com/ekirton/Poule/releases/tag/index-v1-coq8.19
+Release tag: index-v1-coq9.1
+Release created: index-v1-coq9.1
+URL: https://github.com/ekirton/Poule/releases/tag/index-v1-coq9.1
 ```
 
 ## 9. Language-Specific Notes (Python)

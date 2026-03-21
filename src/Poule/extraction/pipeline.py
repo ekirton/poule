@@ -416,10 +416,16 @@ def process_declaration(
                 name, exc_info=True,
             )
 
-    # Type expression: prefer constr_t["type_signature"] from Search output
+    # Type expression: prefer constr_t["type_signature"] from Search output,
+    # fall back to pretty_print_type() per spec §4.4 step 8.
     type_expr = None
     if isinstance(constr_t, dict):
         type_expr = constr_t.get("type_signature")
+    if type_expr is None:
+        try:
+            type_expr = backend.pretty_print_type(name)
+        except Exception:
+            logger.debug("pretty_print_type failed for %s", name, exc_info=True)
 
     # Display data: use pre-fetched or fall back to per-declaration queries
     if statement is None:

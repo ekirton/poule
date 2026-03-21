@@ -280,7 +280,7 @@ Per-proof errors (tactic failure, backend crash, load failure) are not raised â€
 
 ```
 plan = build_campaign_plan(["/path/to/stdlib"], null)
-# plan.projects = [ProjectMetadata(project_id="stdlib", coq_version="8.19.1", ...)]
+# plan.projects = [ProjectMetadata(project_id="stdlib", coq_version="9.1.1", ...)]
 # plan.targets = [("stdlib", "theories/Init/Logic.v", "eq_refl"), ...]
 
 summary = run_campaign(["/path/to/stdlib"], "/output/stdlib.jsonl", default_options)

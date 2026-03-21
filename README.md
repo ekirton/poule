@@ -186,7 +186,7 @@ Poule also provides compound workflows that orchestrate multiple tools in a sing
 - *`/check-compat`* — check dependency compatibility before you hit opaque build failures
 - *`/scaffold`* — generate a complete project skeleton (Dune, opam, CI, boilerplate)
 
-For the full list of skills and their details, see [Skills Reference](doc/SKILLS.md).
+For the full list of skills and their details, see [Skills Reference](doc/claude-skills.md).
 
 **Capabilities provided to Claude:**
 
@@ -199,7 +199,7 @@ For the full list of skills and their details, see [Skills Reference](doc/SKILLS
 | **Visualization** | Render proof states, proof trees, dependency graphs, and step-by-step proof evolution as Mermaid diagrams — written to `proof-diagram.html` in your project directory for browser viewing |
 | **Skills** | Compound agentic workflows: formalization, proof compression, explanation, linting, repair, migration, compatibility analysis, error diagnosis, scaffolding |
 
-For the full list of MCP tools and their parameters, see [MCP Tools Reference](doc/MCP_TOOLS.md).
+For the full list of MCP tools and their parameters, see [MCP Tools Reference](doc/poule-mcp.md).
 
 ### CLI
 

@@ -25,15 +25,15 @@ Per-declaration processing:
      (parse failure → partial result stored, declaration reachable only via name/FTS search)
   2. coq_normalize(constr_node)→ normalized ExprTree (constr_to_tree + recompute_depths + assign_node_ids)
   3. cse_normalize(tree)       → CSE-reduced tree (recomputes depths + node_ids after)
-  4. extract_symbols(tree)     → raw symbol set {short display names from parsed text}
+  4. extract_consts(tree)      → raw symbol set {short display names from parsed text}
   5. resolve_symbols(raw_set)  → FQN symbol set {fully qualified kernel names via Locate queries}
      (unresolvable names kept as-is; ambiguous names resolved to all matching FQNs)
   6. wl_histogram(tree, h=3)   → WL kernel vector for structural screening (Phase 1 computes h=3 only)
-  6. pretty_print(name)        → human-readable statement
-  7. pretty_print_type(name)   → human-readable type signature
+  7. pretty_print(name)        → human-readable statement
+  8. pretty_print_type(name)   → human-readable type signature
 
   Pass 2 (after all declarations are inserted):
-  8. For each declaration, issue Print Assumptions <name> via coq-lsp.
+  9. For each declaration, issue Print Assumptions <name> via coq-lsp.
      Parse the response to extract the names of axioms, definitions,
      and types that this declaration transitively depends on.
      Resolve each name to its declaration ID in the index.
@@ -251,3 +251,26 @@ The indexing command:
 7. Records the index schema version and library versions in `index_meta`
 
 The entire process runs without GPU, network access, or external API keys.
+
+## Library Version Detection
+
+Each per-library index records the version of its library in `index_meta`. Version detection is library-specific:
+
+| Library | Detection method | opam package |
+|---------|-----------------|-------------|
+| `stdlib` | Parse version from `coqc --version` output | `coq` |
+| `mathcomp` | `opam show rocq-mathcomp-ssreflect --field=version` | `rocq-mathcomp-ssreflect` (compatibility meta-package wrapping `rocq-mathcomp-boot` + `rocq-mathcomp-order`) |
+| `stdpp` | `opam show coq-stdpp --field=version` | `coq-stdpp` |
+| `flocq` | `opam show coq-flocq --field=version` | `coq-flocq` |
+| `coquelicot` | `opam show coq-coquelicot --field=version` | `coq-coquelicot` |
+| `coqinterval` | `opam show coq-interval --field=version` | `coq-interval` |
+
+When a library is not installed, detection returns `"none"`.
+
+## Premise-Based Dependency Import
+
+The two-pass extraction pipeline captures axiom-level and symbol-set-level dependencies from `.vo` files. For theorem-to-theorem proof dependencies — which theorems a proof body actually invokes — the extraction campaign ([extraction-campaign.md](extraction-campaign.md)) produces a JSON Lines file of `DependencyEntry` records (see [extraction-types.md](data-models/extraction-types.md)).
+
+An import step reads this dependency graph file and inserts `"uses"` edges into an existing index database. Names in the dependency graph are resolved against the index using the same multi-strategy resolver as Pass 2 (exact match, `Coq.` prefix, suffix match). Edges already present from Pass 2 are skipped via the primary key constraint (idempotent). Unresolvable names are silently skipped.
+
+This import complements the three Pass 2 dependency sources (tree-based, `Print Assumptions`, symbol-set cross-referencing) by adding proof-body-level edges that cannot be obtained from `.vo`-only analysis.

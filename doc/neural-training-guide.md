@@ -28,18 +28,18 @@ Embeddings in index.db → neural retrieval channel active
 Extract proof traces with per-step premise annotations from Coq libraries. The extraction pipeline replays each proof, recording the proof state and which premises each tactic used.
 
 ```bash
-# Extract from the Coq standard library
-poule extract /home/coq/.opam/default/lib/coq/theories --output stdlib.jsonl
+# Extract from the Coq/Rocq standard library
+poule extract /opt/opam/coq/lib/coq/user-contrib/Stdlib --output stdlib.jsonl
 
 # Extract from MathComp
-poule extract /home/coq/.opam/default/lib/coq/user-contrib/mathcomp --output mathcomp.jsonl
+poule extract /opt/opam/coq/lib/coq/user-contrib/mathcomp --output mathcomp.jsonl
 
 # Multi-project extraction in a single campaign
 poule extract \
-  /home/coq/.opam/default/lib/coq/theories \
-  /home/coq/.opam/default/lib/coq/user-contrib/mathcomp \
-  /home/coq/.opam/default/lib/coq/user-contrib/stdpp \
-  /home/coq/.opam/default/lib/coq/user-contrib/Flocq \
+  /opt/opam/coq/lib/coq/user-contrib/Stdlib \
+  /opt/opam/coq/lib/coq/user-contrib/mathcomp \
+  /opt/opam/coq/lib/coq/user-contrib/stdpp \
+  /opt/opam/coq/lib/coq/user-contrib/Flocq \
   --output training-data.jsonl
 ```
 
@@ -194,12 +194,12 @@ This is the full workflow for producing the pre-trained model that ships with th
 ```bash
 # 1. Extract training data from all supported libraries
 poule extract \
-  /home/coq/.opam/default/lib/coq/theories \
-  /home/coq/.opam/default/lib/coq/user-contrib/mathcomp \
-  /home/coq/.opam/default/lib/coq/user-contrib/stdpp \
-  /home/coq/.opam/default/lib/coq/user-contrib/Flocq \
-  /home/coq/.opam/default/lib/coq/user-contrib/Coquelicot \
-  /home/coq/.opam/default/lib/coq/user-contrib/Interval \
+  /opt/opam/coq/lib/coq/user-contrib/Stdlib \
+  /opt/opam/coq/lib/coq/user-contrib/mathcomp \
+  /opt/opam/coq/lib/coq/user-contrib/stdpp \
+  /opt/opam/coq/lib/coq/user-contrib/Flocq \
+  /opt/opam/coq/lib/coq/user-contrib/Coquelicot \
+  /opt/opam/coq/lib/coq/user-contrib/Interval \
   --output training-data.jsonl
 
 # 2. Validate

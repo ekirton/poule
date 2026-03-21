@@ -28,7 +28,7 @@ GitHub Releases API                      ├── index-flocq.db
   │   manifest.json,                          │
   │   neural-premise-selector.onnx            │ merge pipeline
   ▼                                           ▼
-Release: index-v1-coq8.19              MCP server / CLI (reads index.db)
+Release: index-v1-coq9.1               MCP server / CLI (reads index.db)
 ```
 
 ## Distribution Vehicle: GitHub Releases
@@ -57,7 +57,7 @@ Indexes are versioned along four independent dimensions:
 index-v{schema_version}-coq{coq_version}
 ```
 
-Example: `index-v1-coq8.19`
+Example: `index-v1-coq9.1`
 
 Multiple releases can coexist for different Coq versions. Per-library versions are recorded in the manifest, not the tag. The download client selects the most recent release whose tag starts with `index-v`.
 
@@ -83,44 +83,44 @@ Every release includes a `manifest.json` that the download client fetches first 
 ```json
 {
   "schema_version": "1",
-  "coq_version": "8.19.2",
+  "coq_version": "9.1.1",
   "created_at": "2026-03-18T00:00:00Z",
   "libraries": {
     "stdlib": {
-      "version": "8.19.2",
+      "version": "9.1.1",
       "sha256": "<hex>",
       "asset_name": "index-stdlib.db",
-      "declarations": 12450
+      "declarations": 31035
     },
     "mathcomp": {
-      "version": "2.2.0",
+      "version": "2.5.0",
       "sha256": "<hex>",
       "asset_name": "index-mathcomp.db",
-      "declarations": 8320
+      "declarations": 57903
     },
     "stdpp": {
       "version": "1.12.0",
       "sha256": "<hex>",
       "asset_name": "index-stdpp.db",
-      "declarations": 5200
+      "declarations": 4868
     },
     "flocq": {
-      "version": "4.2.1",
+      "version": "4.2.2",
       "sha256": "<hex>",
       "asset_name": "index-flocq.db",
-      "declarations": 3100
+      "declarations": 2599
     },
     "coquelicot": {
-      "version": "3.4.3",
+      "version": "3.4.4",
       "sha256": "<hex>",
       "asset_name": "index-coquelicot.db",
-      "declarations": 2800
+      "declarations": 2398
     },
     "coqinterval": {
       "version": "4.11.4",
       "sha256": "<hex>",
       "asset_name": "index-coqinterval.db",
-      "declarations": 1500
+      "declarations": 20274
     }
   },
   "onnx_model_sha256": "<hex-or-null>"
@@ -214,7 +214,7 @@ On every container launch, the entrypoint verifies the search index before start
 The startup message lists each indexed library with its version:
 
 ```
-[poule] Indexed libraries: stdlib 8.19.2, mathcomp 2.2.0, stdpp 1.12.0, flocq 4.2.1, coquelicot 3.4.3, coqinterval 4.11.4
+[poule] Indexed libraries: stdlib 9.1.1, mathcomp 2.5.0, stdpp 1.12.0, flocq 4.2.2, coquelicot 3.4.4, coqinterval 4.11.4
 ```
 
 ## Volume Mounts

@@ -132,14 +132,14 @@ Error messages use fixed templates with interpolated values to maintain determin
   "projects": [
     {
       "project_id": "coq-stdlib",
-      "project_path": "/home/user/.opam/default/lib/coq/theories",
-      "coq_version": "8.19.1",
+      "project_path": "/opt/opam/coq/lib/coq/user-contrib/Stdlib",
+      "coq_version": "9.1.1",
       "commit_hash": null
     },
     {
       "project_id": "mathcomp",
       "project_path": "/home/user/mathcomp",
-      "coq_version": "8.19.1",
+      "coq_version": "9.1.1",
       "commit_hash": "a1b2c3d4e5f6"
     }
   ]
