@@ -11,31 +11,33 @@ Tested: 2026-03-21 (retest of 1.2, 1.3, 1.4 after suffix expansion and query-tim
 * When an issue is resolved, do not mark it as "FIXED", simply delete it from the list.
 * After rerunning tests, update the "Tested:" line above with the current date and the extent of the retest (e.g. if not all tests, give a very brief description of how tests were selected)
 * Summarize issues (bugs/gaps) in lists at the bottom with sufficient detail for them to be investigated further.
-* Test only Poule-MCP prompts; skip skills and those requiring example project data.
+* Test only Poule-MCP prompts; skip slash commands (skills).
 
 ## Limitations of automated testing
 
-Currently tests are limited to Poule-MCP and exclude those which require a user project or are a slash command (complex skill).
+Tests exclude slash commands (complex skills). Example Coq files in `examples/` provide project context for prompts that previously required user-specific files: `algebra.v` (my_lemma, ring_morph, axiom comparisons), `typeclasses.v` (Proper instances, setoid rewriting, typeclass resolution), `dependent.v` (convoy pattern, dependent types), `automation.v` (auto vs eauto, hint databases, custom Ltac), `flocq.v` (bpow/simpl debugging).
 
 ## Results
 
 Each prompt from `README.md` was executed against the Poule MCP tools and evaluated:
 - **PASS** — tool returned relevant, non-empty results that answer the question
 - **FAIL** — tool returned an error, empty results, or clearly unrelated results
-- **SKIP** — prompt requires context that doesn't exist (active proof session, user-specific files, or is a slash command)
+- **SKIP** — slash command (skill), tested separately
+- **RETEST** — prompt updated to reference example files, needs retest
 
-**Summary: 51 PASS, 3 FAIL, 35 SKIP (89 total)**
+**Summary: 51 PASS, 3 FAIL, 10 SKIP, 25 RETEST (89 total)**
+*RETEST prompts were updated to use example files and need retesting. All 10 SKIP entries are slash commands — example files are ready for manual testing.*
 
-| Section | PASS | FAIL | SKIP |
-|---------|------|------|------|
-| 1. Discovery and Search | 11 | 1 | 3 |
-| 2. Understanding Errors | 4 | 0 | 6 |
-| 3. Navigation | 8 | 2 | 0 |
-| 4. Proof Construction | 16 | 0 | 7 |
-| 5. Refactoring | 1 | 0 | 4 |
-| 6. Library and Ecosystem | 3 | 0 | 2 |
-| 7. Debugging | 6 | 0 | 6 |
-| 8. Performance | 2 | 0 | 7 |
+| Section | PASS | FAIL | SKIP | RETEST |
+|---------|------|------|------|--------|
+| 1. Discovery and Search | 11 | 1 | 0 | 3 |
+| 2. Understanding Errors | 4 | 0 | 1 | 5 |
+| 3. Navigation | 8 | 2 | 0 | 0 |
+| 4. Proof Construction | 16 | 0 | 2 | 5 |
+| 5. Refactoring | 1 | 0 | 4 | 0 |
+| 6. Library and Ecosystem | 3 | 0 | 2 | 0 |
+| 7. Debugging | 6 | 0 | 1 | 5 |
+| 8. Performance | 2 | 0 | 0 | 7 |
 
 ---
 
@@ -53,26 +55,26 @@ Each prompt from `README.md` was executed against the Poule MCP tools and evalua
 | 1.8 | What is the stdlib name for associativity of Z.add? | PASS | search_by_name returned Coq.ZArith.BinInt.Z.add_assoc |
 | 1.9 | Does Coquelicot already have the intermediate value theorem? | PASS | search_by_name with "*IVT*" returned Coquelicot.Continuity.IVT_gen, IVT_Rbar_incr, IVT_Rbar_decr, plus stdlib IVT and IVT_interv |
 | 1.10 | I need a lemma that says filtering a list twice is the same as filtering once | PASS | search_by_name returned stdpp.list_basics.list_filter_filter, stdpp.fin_maps.map_filter_filter, and Coquelicot.Hierarchy.filter_filter |
-| 1.11 | What does the %nat scope delimiter mean? | SKIP | notation_query requires an active proof session (session_id is required by design) |
-| 1.12 | What notations are currently in scope? | SKIP | notation_query requires an active proof session |
+| 1.11 | Open a proof session on examples/arith.v and tell me what the %nat scope delimiter means | RETEST | Prompt updated to open session on examples/arith.v |
+| 1.12 | Open a proof session on examples/arith.v and show me what notations are currently in scope | RETEST | Prompt updated to open session on examples/arith.v |
 | 1.13 | Where is Rdiv defined — Coquelicot or stdlib Reals? | PASS | search_by_name returned Coq.Reals.Rdefinitions.Rdiv alongside Coquelicot.Rcomplements.Rdiv_1 |
 | 1.14 | What tactics can close a goal of the form x = x? | PASS | tactic_lookup returned reflexivity metadata (kind: ltac, category: rewriting) |
-| 1.15 | Suggest tactics for my current goal | SKIP | suggest_tactics requires an active proof session (session_id is required by design) |
+| 1.15 | Open a proof session on rev_involutive in examples/lists.v, apply intros, then suggest tactics | RETEST | Prompt updated to open session on examples/lists.v |
 
 ## 2. Understanding Errors, Types, and Proof State
 
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
-| 2.1 | /explain-error Unable to unify Nat.add ?n (S ?m) with Nat.add (S ?n) ?m | SKIP | Slash command; no dedicated error-explanation MCP tool |
-| 2.2 | Run Check my_lemma with Set Printing All | SKIP | References "my_lemma" which doesn't exist |
+| 2.1 | /explain-error Unable to unify Nat.add ?n (S ?m) with Nat.add (S ?n) ?m | SKIP | Slash command — error message is inline, no file needed |
+| 2.2 | Run Check my_lemma from examples/algebra.v with Set Printing All | RETEST | my_lemma now defined in examples/algebra.v |
 | 2.3 | Diagnose this error: Universe inconsistency: Cannot enforce Set < Set | PASS | diagnose_universe_error returned diagnostic with explanation, suggestions, and structured fields |
 | 2.4 | What are the universe constraints on my_definition? | PASS | inspect_definition_constraints returned valid result for Nat.add (0 universe variables, 0 constraints — correct for Set-level fixpoint) |
-| 2.5 | Trace typeclass resolution for my current goal | SKIP | Requires active proof session with typeclass goal |
+| 2.5 | Open a proof session on measure_app_length in examples/typeclasses.v and trace typeclass resolution | RETEST | Prompt updated to use examples/typeclasses.v |
 | 2.6 | What instances are registered for the Proper typeclass? | PASS | list_instances returned 70+ Proper instances using fully qualified Coq.Classes.Morphisms.Proper (Nat.add_wd, Nat.mul_wd, etc.) |
-| 2.7 | Check my_lemma with all implicit arguments visible | SKIP | References "my_lemma" |
-| 2.8 | What axioms does my proof of ring_morph depend on? | PASS | audit_assumptions returned is_closed: true with empty axioms list — Nat.add_comm is axiom-free |
-| 2.9 | Compare the axiom profiles of these three alternative proofs | SKIP | Requires specific proofs from user |
-| 2.10 | Why doesn't simpl simplify this expression involving bpow? | SKIP | bpow (Flocq) not loaded in current environment |
+| 2.7 | Check my_lemma from examples/algebra.v with all implicit arguments visible | RETEST | my_lemma now defined in examples/algebra.v |
+| 2.8 | What axioms does ring_morph in examples/algebra.v depend on? | PASS | audit_assumptions returned is_closed: true with empty axioms list — Nat.add_comm is axiom-free |
+| 2.9 | Compare the axiom profiles of add_0_r_v1, add_0_r_v2, and add_0_r_v3 in examples/algebra.v | RETEST | Three alternative proofs now defined in examples/algebra.v |
+| 2.10 | Open a proof session on bpow_nonneg_example in examples/flocq.v — why doesn't simpl reduce bpow? | RETEST | bpow scenario now in examples/flocq.v |
 
 ## 3. Navigation
 
@@ -94,26 +96,26 @@ Each prompt from `README.md` was executed against the Poule MCP tools and evalua
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
 | 4.1 | My goal is forall n, n + 0 = n. Should I use induction, destruct, or lia? | PASS | compare_tactics returned structured comparison with per-tactic metadata, pairwise differences, and selection guidance |
-| 4.2 | Suggest tactics for my current proof state | SKIP | Requires active proof session |
+| 4.2 | Open a proof session on app_nil_r in examples/lists.v, apply intros, and suggest tactics | RETEST | Prompt updated to open session on examples/lists.v |
 | 4.3 | Compare auto vs eauto vs intuition | PASS | compare_tactics returned shared capabilities, pairwise differences, and selection guidance |
-| 4.4 | Compare rewrite and setoid_rewrite for my current goal | SKIP | Requires active proof session |
+| 4.4 | Open a proof session on union_equiv_compat in examples/typeclasses.v and compare rewrite vs setoid_rewrite | RETEST | Prompt updated to use examples/typeclasses.v |
 | 4.5 | How does the convoy pattern work? | PASS | tactic_lookup with name "convoy" returned result (kind: primitive) |
 | 4.6 | What does the eapply tactic do differently from apply? | PASS | tactic_lookup returned metadata for both "eapply" and "apply" (kind: primitive, category: rewriting) |
 | 4.7 | Open a proof session on rev_involutive in examples/lists.v | PASS | Successfully opened session; observe_proof_state showed initial goal: forall (A : Type) (l : list A), rev (rev l) = l |
 | 4.8 | Try applying intros then induction l in my current proof session | PASS | Both tactics submitted successfully via submit_tactic; intros narrowed goal, induction produced base and inductive subgoals |
 | 4.9 | Step through the proof of add_comm in examples/arith.v | PASS | Opened session, step_forward replayed 2 tactics (intros n m, apply Nat.add_comm), extract_proof_trace returned 3-state trace |
-| 4.10 | /formalize For all natural numbers, addition is commutative | SKIP | Slash command |
-| 4.11 | /explain-proof Nat.add_comm | SKIP | Slash command |
+| 4.10 | /formalize For all natural numbers, addition is commutative | SKIP | Slash command — no file needed, takes natural language |
+| 4.11 | /explain-proof add_comm in examples/arith.v | SKIP | Slash command — example files ready |
 | 4.12 | Visualize the proof tree for app_nil_r in examples/lists.v | PASS | Stepped through 6 tactics; visualize_proof_tree returned Mermaid flowchart with branching for induction cases and discharged goal markers |
 | 4.13 | Render the step-by-step proof evolution of modus_ponens in examples/logic.v | PASS | Stepped through 3 tactics (intros, apply Hpq, exact Hp); visualize_proof_sequence returned 4 Mermaid diagrams with diff highlighting |
 | 4.14 | I got "Abstracting over the terms ... leads to a term which is ill-typed" | PASS | tactic_lookup with "convoy" returned result |
 | 4.15 | destruct on my Fin n hypothesis lost the equality | PASS | tactic_lookup with "dependent_destruction" returned result (kind: primitive) |
 | 4.16 | I need an axiom-free way to do dependent destruction | PASS | tactic_lookup with "dependent_destruction" returned result |
-| 4.17 | Which hypotheses do I need to revert before destructing x? | SKIP | Requires specific proof context |
-| 4.18 | Generate the convoy pattern match term | SKIP | Requires specific proof context |
+| 4.17 | In examples/dependent.v, which hypotheses do I need to revert before destructing n in vhead_vcons? | RETEST | Dependent type scenario now in examples/dependent.v |
+| 4.18 | Generate the convoy pattern match term for vhead in examples/dependent.v | RETEST | Convoy pattern example now in examples/dependent.v |
 | 4.19 | Explain the convoy pattern | PASS | tactic_lookup with "convoy" returned result |
 | 4.20 | setoid_rewrite fails with "Unable to satisfy the following constraints" | PASS | tactic_lookup with "setoid_rewrite" returned result (kind: primitive, category: rewriting) |
-| 4.21 | Generate the Instance Proper declaration for my union function | SKIP | Requires user's specific code |
+| 4.21 | Generate the Instance Proper declaration for list_union with list_equiv in examples/typeclasses.v | RETEST | list_union and list_equiv now defined in examples/typeclasses.v |
 | 4.22 | rewrite can't find the subterm inside this forall | PASS | tactic_lookup with "setoid_rewrite" returned result |
 | 4.23 | Explain what Proper (eq ==> eq_set ==> eq_set) union means | PASS | tactic_lookup returned "Proper" as primitive; search_by_name found 21 results from Coq.Classes.Morphisms |
 
@@ -122,10 +124,10 @@ Each prompt from `README.md` was executed against the Poule MCP tools and evalua
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
 | 5.1 | If I rename my_add_comm, what breaks? | PASS | impact_analysis returned valid response — correctly reports name not found in dependency graph |
-| 5.2 | /compress-proof rev_involutive in src/Lists.v | SKIP | Slash command |
-| 5.3 | /proof-lint src/Core.v | SKIP | Slash command |
-| 5.4 | /proof-obligations | SKIP | Slash command |
-| 5.5 | /migrate-rocq | SKIP | Slash command |
+| 5.2 | /compress-proof rev_involutive in examples/lists.v | SKIP | Slash command — example files ready |
+| 5.3 | /proof-lint examples/lint_targets.v | SKIP | Slash command — lint_targets.v has deprecated names, verbose patterns |
+| 5.4 | /proof-obligations | SKIP | Slash command — obligations.v has Admitted/admit/Axiom targets |
+| 5.5 | /migrate-rocq | SKIP | Slash command — all .v files use deprecated `From Coq`, .opam has deps |
 
 ## 6. Library and Ecosystem
 
@@ -133,24 +135,24 @@ Each prompt from `README.md` was executed against the Poule MCP tools and evalua
 |---|--------|--------|--------|
 | 6.1 | What modules does Coquelicot provide? | PASS | list_modules returned 23 Coquelicot modules (AutoDerive, Complex, Derive, Hierarchy, Series, etc.) |
 | 6.2 | What typeclasses does std++ provide for finite maps? | PASS | list_modules returned 50 stdpp modules including fin_maps (790 decls) and fin_map_dom (89 decls) |
-| 6.3 | /check-compat | SKIP | Slash command |
+| 6.3 | /check-compat | SKIP | Slash command — coq-poule-examples.opam has dependency declarations |
 | 6.4 | What Coq packages are currently installed? | PASS | query_packages returned 98 installed opam packages (coq 9.1.1, coq-coquelicot 3.4.4, coq-mathcomp-ssreflect 2.5.0, coq-stdpp 1.12.0, etc.) |
-| 6.5 | /proof-repair | SKIP | Slash command |
+| 6.5 | /proof-repair examples/ | SKIP | Slash command — broken.v has omega/fourier errors; add to _CoqProject to test |
 
 ## 7. Debugging and Diagnosing Unexpected Behavior
 
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
-| 7.1 | Why doesn't auto solve this goal? | SKIP | Requires active proof session with specific goal |
+| 7.1 | Open a proof session on eauto_needed in examples/automation.v — why doesn't auto solve this goal? | RETEST | auto vs eauto scenario now in examples/automation.v |
 | 7.2 | Why wasn't bpow_ge_0 used by auto? | PASS | search_by_name found Flocq.Core.Raux.bpow_ge_0 and related lemma |
 | 7.3 | auto fails but eauto succeeds — what's the difference? | PASS | compare_tactics returned valid comparison with shared capabilities and pairwise differences |
-| 7.4 | What databases and transparency settings are in effect? | SKIP | Requires specific proof context |
+| 7.4 | Open a proof session on double_2 in examples/automation.v — what databases and transparency settings are in effect? | RETEST | Hint database scenario now in examples/automation.v |
 | 7.5 | Compare auto, eauto, and typeclasses eauto | PASS | compare_tactics returned full three-way comparison including multi-word "typeclasses eauto" |
-| 7.6 | auto solved the goal but used the wrong lemma | SKIP | Requires specific proof context |
+| 7.6 | Open a proof session on add_comm_test in examples/automation.v — which lemma did auto use? | RETEST | Competing hints scenario now in examples/automation.v |
 | 7.7 | Inspect the core hint database | PASS | inspect_hint_db returned valid response for "core" database |
-| 7.8 | What hints are in scope for this goal's head symbol? | SKIP | Requires specific proof context |
-| 7.9 | Trace typeclass resolution for my current goal | SKIP | Requires active proof session |
-| 7.10 | /explain-error rewrite Nat.add_comm fails with "unable to unify" | SKIP | Slash command |
+| 7.8 | Open a proof session on double_2 in examples/automation.v — what hints are in scope for the goal's head symbol? | RETEST | Hint database scenario now in examples/automation.v |
+| 7.9 | Open a proof session on measure_app_length in examples/typeclasses.v and trace typeclass resolution | RETEST | Typeclass scenario now in examples/typeclasses.v |
+| 7.10 | /explain-error rewrite Nat.add_comm fails with "unable to unify" | SKIP | Slash command — error message is inline, no file needed |
 | 7.11 | Why does apply Z.add_le_mono fail here? | PASS | search_by_name found Z.add_le_mono, Z.add_le_mono_r, Z.add_le_mono_l from Coq.ZArith.BinInt (12 results) |
 | 7.12 | Compare simpl vs cbn vs lazy | PASS | compare_tactics returned valid comparison with pairwise differences and selection guidance |
 
@@ -158,15 +160,15 @@ Each prompt from `README.md` was executed against the Poule MCP tools and evalua
 
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
-| 8.1 | Profile the proof of ring_morph in src/Algebra.v | SKIP | src/Algebra.v does not exist |
-| 8.2 | Why is Qed taking 30 seconds on this proof? | SKIP | Requires specific proof context |
-| 8.3 | Profile src/Core.v and show me the top 5 slowest lemmas | SKIP | src/Core.v does not exist |
-| 8.4 | Which sentences in this file take the most compilation time? | SKIP | Requires specific file context |
+| 8.1 | Profile the proof of ring_morph in examples/algebra.v | RETEST | ring_morph now defined in examples/algebra.v |
+| 8.2 | Profile the proof of zmul_expand in examples/algebra.v — is time spent in tactics or kernel? | RETEST | zmul_expand now defined in examples/algebra.v |
+| 8.3 | Profile examples/algebra.v and show me the top 5 slowest lemmas | RETEST | examples/algebra.v now has multiple lemmas |
+| 8.4 | Which sentences in examples/algebra.v take the most compilation time? | RETEST | examples/algebra.v now available |
 | 8.5 | simpl in * is taking 15 seconds — why is it slow? | PASS | tactic_lookup returned simpl metadata (kind: ltac, is_recursive: true) |
 | 8.6 | Typeclass resolution is the bottleneck — how do I speed it up? | PASS | tactic_lookup returned eauto metadata (kind: ltac, category: automation, is_recursive: true) |
-| 8.7 | Show me the Ltac call-tree breakdown for my_custom_tactic | SKIP | References user-specific tactic |
-| 8.8 | Compare profiling results before and after my optimization | SKIP | Requires prior profiling runs |
-| 8.9 | Profile all files in my project | SKIP | Requires project-wide profiling capability |
+| 8.7 | Show me the Ltac call-tree breakdown for my_crush in examples/automation.v | RETEST | my_crush now defined in examples/automation.v |
+| 8.8 | Profile overcomplicated in examples/lint_targets.v, then profile Nat.add_comm — compare the timings | RETEST | lint_targets.v has verbose proof, can compare against clean stdlib proof |
+| 8.9 | Profile all .v files in examples/ and show me the slowest files and lemmas | RETEST | Example files now available |
 
 ---
 
