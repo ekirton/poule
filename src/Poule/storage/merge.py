@@ -143,6 +143,55 @@ def merge_indexes(sources: list[tuple[str, Path]], dest: Path) -> dict:
 
     dest_conn.commit()
 
+    # 5b. Resolve cross-library dependencies from symbol_set entries.
+    # Build a suffix reverse-lookup table from all FQNs in the global map.
+    suffix_to_fqn: dict[str, str | None] = {}
+    for fqn in global_name_to_id:
+        parts = fqn.split(".")
+        for k in range(1, len(parts)):
+            suffix = ".".join(parts[k:])
+            if suffix in suffix_to_fqn:
+                if suffix_to_fqn[suffix] != fqn:
+                    suffix_to_fqn[suffix] = None  # ambiguous
+            else:
+                suffix_to_fqn[suffix] = fqn
+
+    def _resolve(sym: str) -> int | None:
+        """Multi-strategy name resolution: exact, Coq. prefix, suffix."""
+        dst_id = global_name_to_id.get(sym)
+        if dst_id is not None:
+            return dst_id
+        coq_name = "Coq." + sym
+        dst_id = global_name_to_id.get(coq_name)
+        if dst_id is not None:
+            return dst_id
+        resolved_fqn = suffix_to_fqn.get(sym)
+        if resolved_fqn is not None:
+            return global_name_to_id.get(resolved_fqn)
+        return None
+
+    # For each declaration, resolve symbol_set entries against the global map.
+    sym_decl_rows = dest_conn.execute(
+        "SELECT id, name, symbol_set FROM declarations"
+    ).fetchall()
+    for decl_id, decl_name, symbol_set_json in sym_decl_rows:
+        symbols = json.loads(symbol_set_json)
+        for sym in symbols:
+            dst_id = _resolve(sym)
+            if dst_id is None or dst_id == decl_id:
+                continue
+            try:
+                dest_conn.execute(
+                    "INSERT OR IGNORE INTO dependencies (src, dst, relation) "
+                    "VALUES (?, ?, ?)",
+                    (decl_id, dst_id, "uses"),
+                )
+                total_dependencies += 1
+            except sqlite3.IntegrityError:
+                pass  # duplicate — already counted
+
+    dest_conn.commit()
+
     # 6. Copy WL vectors, remapping decl_id.
     for (lib_name, src_path), old_to_new in zip(sources, all_id_maps):
         src_conn = sqlite3.connect(str(src_path))

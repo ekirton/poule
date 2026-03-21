@@ -661,6 +661,63 @@ class TestPass2NameResolution:
         assert len(edges) == 1
         assert edges[0] == {"src": 1, "dst": 2, "relation": "uses"}
 
+    def test_symbol_set_resolved_via_suffix_match(self):
+        """§4.5: Symbol-set cross-referencing uses multi-strategy resolution,
+        not just exact FQN match. A short name in symbol_set should resolve
+        via suffix match."""
+        from Poule.extraction.pipeline import DeclarationResult
+
+        r = DeclarationResult(
+            name="A.lemma1",
+            kind="lemma",
+            module="A",
+            statement="forall n, n = n",
+            type_expr=None,
+            tree=None,
+            symbol_set=["Nat.add"],  # short name, not FQN
+            wl_vector={},
+            dependency_names=[],
+        )
+        name_to_id = {
+            "A.lemma1": 1,
+            "Coq.Init.Nat.add": 10,  # FQN ending in .Nat.add
+        }
+
+        iw = self._make_writer_and_call([r], name_to_id)
+
+        iw.insert_dependencies.assert_called_once()
+        edges = iw.insert_dependencies.call_args[0][0]
+        assert len(edges) == 1
+        assert edges[0] == {"src": 1, "dst": 10, "relation": "uses"}
+
+    def test_symbol_set_resolved_via_coq_prefix(self):
+        """§4.5: Symbol-set names with Coq. prefix strategy.
+        'Init.Nat.add' should resolve to 'Coq.Init.Nat.add'."""
+        from Poule.extraction.pipeline import DeclarationResult
+
+        r = DeclarationResult(
+            name="A.lemma1",
+            kind="lemma",
+            module="A",
+            statement="forall n, n = n",
+            type_expr=None,
+            tree=None,
+            symbol_set=["Init.Nat.add"],
+            wl_vector={},
+            dependency_names=[],
+        )
+        name_to_id = {
+            "A.lemma1": 1,
+            "Coq.Init.Nat.add": 10,
+        }
+
+        iw = self._make_writer_and_call([r], name_to_id)
+
+        iw.insert_dependencies.assert_called_once()
+        edges = iw.insert_dependencies.call_args[0][0]
+        assert len(edges) == 1
+        assert edges[0] == {"src": 1, "dst": 10, "relation": "uses"}
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 5. Post-Processing

@@ -159,21 +159,27 @@ Per-library index databases are combined into a single `index.db` at install tim
    a. Read all declarations and insert into the target with new auto-assigned IDs
    b. Maintain a name-to-new-ID mapping for dependency resolution
 3. After all declarations are inserted:
-   a. For each source database, read dependency edges and resolve both source and destination to new IDs via name lookup
-   b. Insert resolved dependency edges (skip edges where either endpoint is missing — this handles cross-library dependencies gracefully)
-4. Rebuild the FTS5 index from merged declarations
-5. Recompute symbol frequencies across the merged declaration set
-6. Merge WL histogram vectors with remapped declaration IDs
-7. Write `index_meta` with:
+   a. For each source database, read dependency edges and remap both source and destination IDs using the per-source old-to-new ID map
+   b. Insert remapped dependency edges (skip edges where either endpoint's ID is missing from the per-source map)
+4. Resolve cross-library dependencies:
+   a. Build a suffix reverse-lookup table from all FQNs in the global name-to-ID map
+   b. For each declaration, read its `symbol_set` and resolve each symbol against the global name-to-ID map using multi-strategy resolution (exact match, `Coq.` prefix, suffix match)
+   c. For each resolved symbol that maps to a different declaration, insert a `(src, dst, "uses")` edge (deduplicated by primary key)
+5. Rebuild the FTS5 index from merged declarations
+6. Recompute symbol frequencies across the merged declaration set
+7. Merge WL histogram vectors with remapped declaration IDs
+8. Write `index_meta` with:
    - `schema_version`: from source databases (must all match)
    - `coq_version`: from source databases (must all match)
    - `libraries`: JSON array of all 6 library identifiers
    - `library_versions`: JSON object mapping library identifier to version string
    - `created_at`: current timestamp
 
-### Cross-library dependencies
+### Cross-library dependency resolution
 
-Since all 6 libraries are always included, cross-library dependency edges are resolved by name during merge. All edges between the 6 supported libraries are preserved.
+Per-library indexes contain only within-library dependency edges (since each library is extracted in isolation). During merge, cross-library edges are created by re-resolving each declaration's `symbol_set` against the global name-to-ID map using the multi-strategy resolver (exact match, `Coq.` prefix, suffix match — the same strategy used in extraction §4.5). This captures dependencies between libraries (e.g., a MathComp lemma whose type references `nat` from stdlib).
+
+Within-library edges from each source database are also preserved via ID remapping. The combined result is a dependency graph spanning all 6 libraries.
 
 ### Determinism
 

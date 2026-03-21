@@ -114,6 +114,8 @@ It does **not** provide:
 - GIVEN all 6 per-library indexes have been downloaded WHEN the merge completes THEN a single `index.db` exists containing declarations from all 6 libraries
 - GIVEN a merged `index.db` WHEN a search query is executed THEN results from all 6 libraries are returned and ranked together
 - GIVEN a merged `index.db` WHEN a full-text search is executed THEN it searches across declarations from all 6 libraries
+- GIVEN per-library indexes contain dependency edges WHEN the merge completes THEN within-library dependency edges are preserved with remapped IDs
+- GIVEN a declaration in one library whose symbol set references a declaration in another library WHEN the merge completes THEN a cross-library dependency edge is created between them
 
 ### Metadata Tracking
 

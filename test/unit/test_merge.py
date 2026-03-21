@@ -240,6 +240,152 @@ class TestMergeDependencies:
         result = merge_indexes([("mathcomp", mc_path)], dest)
         assert result["dropped_dependencies"] >= 1
 
+    def test_cross_library_deps_from_symbol_set_exact_fqn(self, tmp_path):
+        """§4.8: Cross-library edges created from symbol_set exact FQN match."""
+        # mathcomp's negb has symbol_set=["Coq.Init.Datatypes.bool"]
+        # which exactly matches stdlib's Coq.Init.Datatypes.bool (if it existed)
+        stdlib_decls = _stdlib_declarations() + [{
+            "name": "Coq.Init.Datatypes.bool",
+            "module": "Coq.Init.Datatypes",
+            "kind": "inductive",
+            "statement": "Inductive bool : Set := true | false",
+            "type_expr": "Set",
+            "constr_tree": None,
+            "node_count": 1,
+            "symbol_set": [],
+        }]
+        stdlib_path = _create_per_library_db(
+            tmp_path / "index-stdlib.db", "stdlib", stdlib_decls,
+            library_version="8.19.2",
+        )
+        mc_path = _create_per_library_db(
+            tmp_path / "index-mathcomp.db", "mathcomp", _mathcomp_declarations(),
+            library_version="2.2.0",
+        )
+        dest = tmp_path / "index.db"
+        result = merge_indexes([("stdlib", stdlib_path), ("mathcomp", mc_path)], dest)
+
+        # negb → bool cross-library edge should exist
+        conn = sqlite3.connect(str(dest))
+        edge = conn.execute(
+            "SELECT d1.name, d2.name FROM dependencies dep "
+            "JOIN declarations d1 ON d1.id = dep.src "
+            "JOIN declarations d2 ON d2.id = dep.dst "
+            "WHERE d1.name = 'mathcomp.ssreflect.ssrbool.negb' "
+            "AND d2.name = 'Coq.Init.Datatypes.bool'"
+        ).fetchone()
+        conn.close()
+        assert edge is not None, "Cross-library edge negb→bool should exist"
+
+    def test_cross_library_deps_suffix_resolution(self, tmp_path):
+        """§4.8: Cross-library edges created via suffix match on short names."""
+        # A declaration with symbol_set containing a short name "Nat.add"
+        # should resolve to Coq.Init.Nat.add via suffix matching
+        other_decls = [{
+            "name": "Other.Lib.uses_add",
+            "module": "Other.Lib",
+            "kind": "definition",
+            "statement": "forall n : nat, n + 0 = n",
+            "type_expr": "forall n : nat, n + 0 = n",
+            "constr_tree": None,
+            "node_count": 5,
+            "symbol_set": ["Nat.add"],  # short name, not FQN
+        }]
+        stdlib_path = _create_per_library_db(
+            tmp_path / "index-stdlib.db", "stdlib", _stdlib_declarations(),
+            library_version="8.19.2",
+        )
+        other_path = _create_per_library_db(
+            tmp_path / "index-other.db", "other", other_decls,
+            library_version="1.0.0",
+        )
+        dest = tmp_path / "index.db"
+        merge_indexes([("stdlib", stdlib_path), ("other", other_path)], dest)
+
+        conn = sqlite3.connect(str(dest))
+        edge = conn.execute(
+            "SELECT d1.name, d2.name FROM dependencies dep "
+            "JOIN declarations d1 ON d1.id = dep.src "
+            "JOIN declarations d2 ON d2.id = dep.dst "
+            "WHERE d1.name = 'Other.Lib.uses_add' "
+            "AND d2.name = 'Coq.Init.Nat.add'"
+        ).fetchone()
+        conn.close()
+        assert edge is not None, "Short name 'Nat.add' should resolve via suffix"
+
+    def test_cross_library_deps_skip_self_references(self, tmp_path):
+        """§4.8: Symbol-set resolution skips self-references."""
+        decls = [{
+            "name": "Coq.Init.Nat.add",
+            "module": "Coq.Init.Nat",
+            "kind": "definition",
+            "statement": "fix add (n m : nat) : nat",
+            "type_expr": "nat -> nat -> nat",
+            "constr_tree": None,
+            "node_count": 5,
+            "symbol_set": ["Coq.Init.Nat.add"],  # self-reference
+        }]
+        db_path = _create_per_library_db(
+            tmp_path / "index-stdlib.db", "stdlib", decls,
+            library_version="8.19.2",
+        )
+        dest = tmp_path / "index.db"
+        result = merge_indexes([("stdlib", db_path)], dest)
+
+        conn = sqlite3.connect(str(dest))
+        edges = conn.execute("SELECT COUNT(*) FROM dependencies").fetchone()[0]
+        conn.close()
+        assert edges == 0, "Self-referencing symbol_set should not create edges"
+
+    def test_cross_library_deps_skip_ambiguous_suffix(self, tmp_path):
+        """§4.8: Ambiguous suffix matches are skipped."""
+        decls = [
+            {
+                "name": "Lib.A.add",
+                "module": "Lib.A",
+                "kind": "definition",
+                "statement": "Definition add := 1",
+                "type_expr": "nat",
+                "constr_tree": None,
+                "node_count": 1,
+                "symbol_set": [],
+            },
+            {
+                "name": "Lib.B.add",
+                "module": "Lib.B",
+                "kind": "definition",
+                "statement": "Definition add := 2",
+                "type_expr": "nat",
+                "constr_tree": None,
+                "node_count": 1,
+                "symbol_set": [],
+            },
+            {
+                "name": "Lib.C.user",
+                "module": "Lib.C",
+                "kind": "definition",
+                "statement": "Definition user := add",
+                "type_expr": "nat",
+                "constr_tree": None,
+                "node_count": 1,
+                "symbol_set": ["add"],  # ambiguous — matches both A.add and B.add
+            },
+        ]
+        db_path = _create_per_library_db(
+            tmp_path / "index-lib.db", "lib", decls,
+            library_version="1.0.0",
+        )
+        dest = tmp_path / "index.db"
+        merge_indexes([("lib", db_path)], dest)
+
+        conn = sqlite3.connect(str(dest))
+        edges = conn.execute(
+            "SELECT COUNT(*) FROM dependencies WHERE src = "
+            "(SELECT id FROM declarations WHERE name = 'Lib.C.user')"
+        ).fetchone()[0]
+        conn.close()
+        assert edges == 0, "Ambiguous suffix 'add' should not create edges"
+
 
 # ===========================================================================
 # 3. Metadata

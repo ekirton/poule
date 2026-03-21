@@ -219,8 +219,9 @@ class PipelineWriter:
                 })
 
         # Symbol-set cross-referencing (spec §4.5): generate "uses" edges
-        # from symbol-set overlap.  When declaration A's symbol_set contains
-        # the FQN of declaration B, insert edge (A, B, "uses").  This
+        # from symbol-set overlap.  For each symbol in a declaration's
+        # symbol_set, resolve it using the same multi-strategy resolution
+        # (exact, Coq. prefix, suffix) used for dependency names.  This
         # captures theorem-to-theorem relationships that Print Assumptions
         # misses, because symbol sets reference the definitions and theorems
         # used in the type signature.
@@ -232,7 +233,7 @@ class PipelineWriter:
             if not symbol_set:
                 continue
             for sym in symbol_set:
-                dst_id = name_to_id.get(sym)
+                dst_id = _resolve(sym)
                 if dst_id is None:
                     continue
                 if src_id == dst_id:
