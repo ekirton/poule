@@ -132,6 +132,32 @@ The feature specification ([extraction-library-support.md](../features/extractio
 | Tier 1 (P1) | Validated opam-installable projects (standard-Ltac and ssreflect-based) | Reported per-project | Phase 2 — user-project extraction with incremental re-indexing extends the pipeline to arbitrary opam-installable projects; Tier 1 projects are those where extraction has been validated |
 | Tier 2 (P2) | Custom proof mode projects (Iris, CompCert, Fiat-Crypto) | Best-effort | No dedicated phase — the existing pipeline extracts declarations from these projects but with reduced premise granularity where custom tactics wrap standard Coq tactics |
 
+### Achieved Tier 0 structural coverage
+
+The TypeExprParser produces structural data (constr_tree, WL histograms, symbol sets) for declarations whose type signatures it can parse. Declarations that fail parsing are still indexed with name and statement text (reachable via FTS) but lack structural data.
+
+| Library | Declarations | Structural data | Coverage |
+|---|---|---|---|
+| stdlib | 31,035 | 30,644 | **99%** |
+| MathComp | 57,903 | 54,784 | **95%** |
+| stdpp | 4,868 | 4,193 | **86%** |
+| Flocq | 2,599 | 2,598 | **~100%** |
+| Coquelicot | 2,398 | 2,348 | **98%** |
+| CoqInterval | 20,274 | 20,231 | **~100%** |
+| **Total** | **119,077** | **114,798** | **96.4%** |
+
+### Out of scope for TypeExprParser (remaining ~4% gap)
+
+The following Coq syntax patterns are **out of scope** for the text-based type parser. They account for ~4,300 declarations (3.6% of the index) that lack structural data. These patterns are architecturally infeasible to handle via text parsing without reimplementing a full Coq term parser, and the marginal recovery does not justify the complexity:
+
+- **MathComp big operator notation** (`\big[op/idx]_(i <- r | P i) F i`, `\sum_`, `\prod_`, `\bigcap_`): Custom notation with subscript binders, scope-dependent semantics, and non-standard delimiter nesting. ~370 declarations.
+- **MathComp `%:` embedded notation** (`n%:R`, `x%:num`): Notation where `%:` is an integral part of the syntax rather than a scope annotation. The scope-stripping preprocessor cannot distinguish `%:R` (notation) from `%R` (scope). ~660 declarations.
+- **Deeply nested HB hierarchy types**: MathComp Hierarchy Builder generates types with 10+ nested mixin parameters and qualified paths exceeding 200 characters. Some trip edge cases in binder/application parsing. ~2,000 declarations.
+- **stdpp higher-order typeclass patterns**: Complex `Proper` morphism signatures with deeply nested `==>` chains and typeclass constraints that exceed the parser's nesting tolerance. ~675 declarations.
+- **Complex `fun` in type position**: Types containing `(fun _ : T => U) x` (beta-redex in type position) where the parser's greedy application consumes the lambda body incorrectly. ~70 declarations.
+
+These declarations remain reachable via `search_by_name` (FTS on name and statement text). To achieve 100% structural coverage, the extraction pipeline would need kernel term access (S-expression or JSON `Constr.t` output from coq-lsp), which is a Phase 2 concern.
+
 ### How the pipeline achieves tier targets
 
 **Tier 0 coverage** relies on three properties of the extraction pipeline:

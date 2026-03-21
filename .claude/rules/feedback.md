@@ -1,6 +1,8 @@
-# Feedback File Standards
+---
+globs: "**/feedback/**"
+---
 
-Shared standards for all `feedback/CLAUDE.md` files. Each layer's feedback CLAUDE.md references this file and adds only its layer-specific overrides.
+# Feedback Filing Rules
 
 ## File Naming
 
@@ -38,7 +40,7 @@ One feedback file per source file. Name matches the source (without prefixes lik
 | **Source** | Relative link to the file this feedback targets. |
 | **Date** | Absolute date (YYYY-MM-DD). Update when issues change. |
 | **Reviewer** | Who or what produced the feedback. |
-| **Severity** | `high` / `medium` / `low` (layer-specific definitions in each feedback CLAUDE.md). |
+| **Severity** | `high` / `medium` / `low` (see per-layer definitions below). |
 | **Location** | Where the issue originates (section number, function name, test method + line). |
 | **Problem** | The issue. Be specific: quote text, name sources, show math. |
 | **Impact** | Downstream consequences if unresolved. |
@@ -55,15 +57,22 @@ One feedback file per source file. Name matches the source (without prefixes lik
 - Delete empty feedback files.
 - Number issues sequentially; renumber after deletions.
 
-## Resolving Feedback
+## Per-Layer Severity Definitions
 
-1. Read the feedback issue.
-2. Read the upstream authority for the behavior in question.
-3. Determine root cause:
-   - **Source file is wrong:** fix it to match the upstream authority.
-   - **Upstream authority is wrong:** do not change it. File feedback in the upstream layer's feedback folder.
-4. Remove the resolved issue entirely.
-5. Delete the feedback file if all issues are removed.
+**doc/architecture/feedback/**: high = blocks specification or causes contradictions across multiple specs; medium = forces a spec writer judgment call the architecture should have made; low = documentation clarity or future-proofing.
+
+**specification/feedback/**: high = blocks implementation or causes incorrect behavior; medium = forces an implementer judgment call the spec should have made; low = documentation clarity, edge case coverage, or future-proofing.
+
+**src/feedback/**: high = test fails or contract violated; medium = implementation works but diverges from spec intent; low = code quality, performance, or clarity.
+
+**test/feedback/**: high = test cannot pass with correct implementation, or produces false passes; medium = test is fragile or underspecified; low = clarity or coverage gap.
+
+## Resolution Paths
+
+- **Architecture feedback:** Architecture wrong → fix to match data model or requirements. Data model wrong → fix or escalate. Requirements wrong → escalate to stakeholder.
+- **Specification feedback:** Spec wrong → fix to match upstream. Architecture wrong → file in `doc/architecture/feedback/`.
+- **Implementation feedback:** Implementation wrong → fix code, run tests. Test wrong → file in `test/feedback/`. Spec wrong → file in `specification/feedback/`.
+- **Test feedback:** Test wrong → fix to match spec. Spec wrong → file in `specification/feedback/`. Architecture wrong → file in `doc/architecture/feedback/`.
 
 ## Lifecycle
 

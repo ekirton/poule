@@ -15,8 +15,6 @@
 5. If a specification contradicts a data model or architecture document, file feedback in `specification/feedback/` rather than silently adopting the incorrect name. Follow the feedback standards defined in `specification/feedback/CLAUDE.md`.
 6. If an architecture or data model document appears ambiguous or contradictory, file feedback in `doc/architecture/feedback/`. Follow the feedback standards defined in `doc/architecture/feedback/CLAUDE.md`.
 
-**Upstream authority is immutable.** Specification documents (`specification/`), architecture documents (`doc/architecture/`), and data model documents (`doc/architecture/data-models/`) must not be modified when writing task breakdowns.
-
 **When generating task breakdowns:**
 
 - Decompose from architecture documents — not from feature documents or PRDs directly.
@@ -25,18 +23,4 @@
 - Record any decomposition decisions you made **beyond** what the Layer 3 spec prescribed — surface these to the architect.
 - Tasks are disposable LLM artifacts. They are regenerated when upstream specs change.
 
-**Task structure:**
-```
-- [ ] **Task name** — Brief description
-  - **Traces to:** [story or requirement reference]
-  - **Depends on:** [prior task references, if any]
-  - **Produces:** [files or modules]
-  - **Done when:** [completion criteria]
-```
-
-**One per:** feature or cohesive implementation unit
-
-**Marking tasks complete:**
-
-- When a task is implemented, update its checkbox from `- [ ]` to `- [x]`.
-- When **all** tasks in a file are complete, delete the file entirely.
+For task structure template and completion rules, see the `writing-tasks` skill.

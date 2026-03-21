@@ -20,9 +20,6 @@ Which lemmas in stdlib mention both Nat.add and Nat.mul?
 ```
 Search for lemmas with type forall n : nat, n + 0 = n
 ```
-```
-Find a lemma of type List.map f (List.map g l) = List.map (fun x => f (g x)) l
-```
 
 **Find lemmas matching a structural pattern:**
 ```
@@ -82,11 +79,6 @@ The second most common pain point. Poule can parse and explain cryptic error mes
 /explain-error Unable to unify Nat.add ?n (S ?m) with Nat.add (S ?n) ?m
 ```
 
-**Reveal hidden differences when terms look identical:**
-```
-Run Check my_lemma from examples/algebra.v with Set Printing All so I can see the implicit arguments
-```
-
 **Diagnose universe constraint errors:**
 ```
 Diagnose this error: Universe inconsistency: Cannot enforce Set < Set
@@ -97,23 +89,12 @@ What are the universe constraints on vhead in examples/dependent.v?
 
 **Debug typeclass resolution failures:**
 ```
-Open a proof session on measure_app_length in examples/typeclasses.v and trace typeclass resolution — which instances is Coq trying?
-```
-```
 What instances are registered for the Proper typeclass?
-```
-
-**Inspect implicit arguments and coercions:**
-```
-Check my_lemma from examples/algebra.v with all implicit arguments visible
 ```
 
 **Audit axiom dependencies:**
 ```
 What axioms does ring_morph in examples/algebra.v depend on? Does it use anything beyond functional_extensionality?
-```
-```
-Compare the axiom profiles of add_0_r_v1, add_0_r_v2, and add_0_r_v3 in examples/algebra.v
 ```
 
 **Understand why a term won't reduce:**
@@ -140,14 +121,6 @@ Which module gives me access to ssralg.GRing.Ring?
 **Unfold a definition to see its body:**
 ```
 What is the body of MathComp.ssrnat.leq?
-```
-
-**Reverse dependency — who uses a lemma:**
-```
-If I change Nat.add_comm, what downstream lemmas break?
-```
-```
-Show me the full impact analysis for Nat.add_0_r
 ```
 
 **Browse instances for a typeclass:**
@@ -248,18 +221,12 @@ I need an axiom-free way to do dependent destruction on this indexed type
 In examples/dependent.v, which hypotheses do I need to revert before destructing n in vhead_vcons?
 ```
 ```
-Generate the convoy pattern match term with the correct return clause for vhead in examples/dependent.v
-```
-```
 Explain the convoy pattern — why doesn't Coq automatically refine hypothesis types during case analysis?
 ```
 
 **Fix setoid rewriting errors:**
 ```
 setoid_rewrite fails with "Unable to satisfy the following constraints" — which Proper instance am I missing?
-```
-```
-Generate the Instance Proper declaration for list_union with list_equiv in examples/typeclasses.v
 ```
 ```
 rewrite can't find the subterm inside this forall — what should I do instead?
@@ -338,9 +305,6 @@ Why wasn't bpow_ge_0 used by auto? I registered it with Hint Resolve
 ```
 auto fails but eauto succeeds — what's the difference on this goal?
 ```
-```
-Open a proof session on double_2 in examples/automation.v — what databases and transparency settings are in effect for auto?
-```
 
 **Compare automation variants:**
 ```
@@ -353,14 +317,6 @@ Open a proof session on add_comm_test in examples/automation.v — auto solved t
 **Inspect hint databases:**
 ```
 Inspect the core hint database to see if my lemma is registered
-```
-```
-Open a proof session on double_2 in examples/automation.v — what hints are in scope for the goal's head symbol?
-```
-
-**Trace typeclass resolution:**
-```
-Open a proof session on measure_app_length in examples/typeclasses.v and trace typeclass resolution — show me which instances were tried and why they failed
 ```
 
 **Diagnose tactic failures:**
@@ -382,22 +338,6 @@ Compare simpl vs cbn vs lazy — why does simpl unfold too much here?
 
 Identify and fix proof performance bottlenecks without manually instrumenting code.
 
-**Profile a specific proof:**
-```
-Profile the proof of ring_morph in examples/algebra.v — which tactic is the bottleneck?
-```
-```
-Profile the proof of zmul_expand in examples/algebra.v — is the time spent in tactics or kernel re-checking?
-```
-
-**Profile an entire file:**
-```
-Profile examples/algebra.v and show me the top 5 slowest lemmas
-```
-```
-Which sentences in examples/algebra.v take the most compilation time?
-```
-
 **Get optimization suggestions:**
 ```
 simpl in * is taking 15 seconds — why is it slow and what should I use instead?
@@ -405,19 +345,3 @@ simpl in * is taking 15 seconds — why is it slow and what should I use instead
 ```
 Typeclass resolution is the bottleneck — how do I speed it up?
 ```
-
-**Profile Ltac tactics:**
-```
-Show me the Ltac call-tree breakdown for my_crush in examples/automation.v — which sub-tactic is expensive?
-```
-
-**Compare timing before and after:**
-```
-Profile overcomplicated in examples/lint_targets.v, then profile Nat.add_comm — compare the timings. Did the verbose version regress?
-```
-
-**Project-wide profiling:**
-```
-Profile all .v files in examples/ and show me the slowest files and lemmas
-```
-

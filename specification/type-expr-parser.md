@@ -52,14 +52,16 @@ Token kinds:
 
 | Kind | Matches | Examples |
 |------|---------|----------|
-| `IDENT` | Alphabetic or `_`-prefixed identifier, may contain `.` and `'` | `nat`, `Coq.Init.Nat.add`, `n'` |
+| `IDENT` | Alphabetic, `_`-, or `'`-prefixed identifier, may contain `.` and `'` | `nat`, `Coq.Init.Nat.add`, `n'`, `'M_` |
 | `NUMBER` | Digit sequence | `0`, `42` |
 | `SORT` | `Prop`, `Set`, `Type` | |
 | `FORALL` | `forall` keyword | |
+| `EXISTS` | `exists` keyword | |
 | `FUN` | `fun` keyword | |
 | `ARROW` | `->` | |
 | `DARROW` | `=>` | |
 | `COLON` | `:` | |
+| `COLONEQ` | `:=` | |
 | `COMMA` | `,` | |
 | `LPAREN` | `(` | |
 | `RPAREN` | `)` | |
@@ -67,20 +69,28 @@ Token kinds:
 | `RBRACE` | `}` | |
 | `LBRACKET` | `[` | |
 | `RBRACKET` | `]` | |
+| `LRECORD` | `{\|` | |
+| `RRECORD` | `\|}` | |
 | `PIPE` | <code>&#124;</code> | |
 | `UNDERSCORE` | Standalone `_` (not followed by alphanumeric/`_`/`'`) | |
-| `INFIX_OP` | Infix operator | `+`, `*`, `=`, `<`, `<=`, `>=`, `<>`, `<->`, `\/`, `/\`, `\|\|`, `&&`, `=?`, `?=` |
+| `INFIX_OP` | Infix operator | `+`, `*`, `^`, `&`, `=`, `==`, `<`, `<=`, `>=`, `<>`, `<->`, `==>`, `\/`, `/\`, `\|\|`, `&&`, `=?`, `?=`, `++`, `::` |
 | `EOF` | End of input | |
 
-The standalone `_` token (UNDERSCORE) is distinguished from `_`-prefixed identifiers: `_` followed by alphanumeric, `_`, or `'` is an IDENT; `_` alone or followed by whitespace/punctuation is UNDERSCORE.
+The standalone `_` token (UNDERSCORE) is distinguished from `_`-prefixed identifiers: `_` followed by alphanumeric, `_`, or `'` is an IDENT; `_` alone or followed by whitespace/punctuation is UNDERSCORE. Identifiers may start with `'` to support MathComp notation prefixes (e.g., `'M_`, `'End`).
 
-Multi-character operators (`<->`, `->`, `=>`, `<=`, `>=`, `<>`, `<=?`, `=?`, `?=`, `||`, `&&`, `\/`, `/\`) shall be recognized before single-character operators. Three-character operators (`<->`, `<=?`) shall be recognized before two-character operators.
+Multi-character operators (`<->`, `==>`, `->`, `=>`, `:=`, `::`, `++`, `==`, `<=`, `>=`, `<>`, `<=?`, `=?`, `?=`, `||`, `&&`, `\/`, `/\`, `{|`, `|}`) shall be recognized before single-character operators. Three-character operators (`<->`, `==>`, `<=?`) shall be recognized before two-character operators.
 
 #### Preprocessing
 
-Before tokenization, the input string shall be preprocessed to strip Coq scope annotations (substrings matching `%[a-zA-Z_][a-zA-Z0-9_]*`). For example, `(n + m)%nat` becomes `(n + m)`. The characters `@`, `?` (standalone), `!`, `~`, `` ` ``, and `#` shall be skipped during tokenization.
+Before tokenization, the input string shall be preprocessed in two steps:
 
-Coq control-flow keywords (`if`, `then`, `else`, `let`, `in`, `match`, `with`, `end`, `return`, `as`, `fix`, `cofix`) shall be tokenized as `IDENT` — they appear in type signatures but their control-flow semantics are not relevant for indexing.
+1. **Unicode normalization**: Unicode math symbols shall be replaced with ASCII equivalents: `∀`→`forall `, `∃`→`exists `, `→`→`-> `, `⇒`→`=> `, `↔`→`<-> `, `≤`→`<= `, `≥`→`>= `, `≠`→`<> `, `∧`→`/\ `, `∨`→`\/ `, `¬`→`~ `, `λ`→`fun `. Non-ASCII characters not in this map shall be silently skipped during tokenization.
+
+2. **Scope stripping**: Coq scope annotations (substrings matching `%[a-zA-Z_][a-zA-Z0-9_]*`) shall be removed. For example, `(n + m)%nat` becomes `(n + m)`.
+
+The characters `@`, `?` (standalone), `!`, `~`, `` ` ``, `#`, `;`, `.` (standalone), `$`, and `%` (standalone, not matching scope pattern) shall be skipped during tokenization. String literals (`"..."`) shall be skipped entirely.
+
+Coq control-flow keywords (`if`, `then`, `else`, `match`, `with`, `end`, `return`, `as`, `fix`, `cofix`) shall be tokenized as `IDENT` — they appear in type signatures but their control-flow semantics are not relevant for indexing. The keyword `let` is also tokenized as `IDENT` but receives special handling in the parser (see §4.4).
 
 > **Given** the input `"forall n : nat, n"`,
 > **When** tokenized,
@@ -93,13 +103,15 @@ The parser shall use Pratt (top-down operator precedence) parsing with the follo
 | Binding power | Operators | Associativity |
 |--------------|-----------|---------------|
 | 70 | `<`, `<=`, `>`, `>=` | left |
-| 65 | `\/`, `/\` | left |
+| 65 | `^`, `\/`, `/\` | left |
 | 60 | `*` | left |
+| 55 | `++`, `::` | right |
 | 50 | `+`, `-` | left |
-| 40 | `&&` | left |
+| 40 | `&`, `&&` | left |
 | 35 | `\|\|` | left |
-| 30 | `=`, `<>`, `=?`, `?=` | left |
+| 30 | `=`, `==`, `<>`, `=?`, `?=` | left |
 | 20 | `<->` | left |
+| 15 | `==>` | left |
 | 10 | `->` | right |
 
 Function application (juxtaposition) binds tighter than all infix operators. The parser shall greedily consume adjacent primary expressions as application arguments.
@@ -122,8 +134,16 @@ Function application (juxtaposition) binds tighter than all infix operators. The
 | `_` (standalone) | `Sort("Type")` | Wildcard |
 | `Coq.Init.Nat.add` | `Const("Coq.Init.Nat.add")` | Qualified names preserved as-is |
 | `42` | `Const("42")` | Numeric literals as constants |
+| `exists (x : T), body` | `Prod("x", T, body)` | Structurally identical to `forall` for indexing |
+| `let name := val in body` | `body` | Let binding — body parsed, value skipped |
+| `(name := val)` | `val` | Named argument — value kept, name discarded |
+| `(a, b, ...)` | `a` | Tuple — first element kept, rest discarded |
+| `()` | `Const("_unit_")` | Empty parens — unit type |
+| `[]` | `Const("_nil_")` | Empty brackets — nil/empty list |
+| `{| field := val; ... |}` | `Const("_record_")` | Record literal — skipped as opaque constant |
+| `match ... with ... end` | `Const("_match_")` | Match expression — skipped with depth tracking |
 | `(expr)` | `expr` | Parentheses for grouping only |
-| `{expr}` | `expr` | Braces for grouping in expression position |
+| `{expr}` | `expr` | Braces for grouping; tolerant — skips to `}` on parse failure |
 
 ### 4.5 De Bruijn Index Resolution
 

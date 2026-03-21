@@ -16,6 +16,7 @@ from Poule.normalization.constr_node import (
     App,
     Const,
     Lambda,
+    LetIn,
     Prod,
     Rel,
     Sort,
@@ -33,10 +34,12 @@ class TokenKind(Enum):
     NUMBER = auto()
     SORT = auto()
     FORALL = auto()
+    EXISTS = auto()
     FUN = auto()
     ARROW = auto()
     DARROW = auto()
     COLON = auto()
+    COLONEQ = auto()
     COMMA = auto()
     LPAREN = auto()
     RPAREN = auto()
@@ -44,6 +47,8 @@ class TokenKind(Enum):
     RBRACE = auto()
     LBRACKET = auto()
     RBRACKET = auto()
+    LRECORD = auto()
+    RRECORD = auto()
     PIPE = auto()
     UNDERSCORE = auto()
     INFIX_OP = auto()
@@ -71,14 +76,20 @@ _INFIX_BP: dict[str, tuple[int, int]] = {
     "->": (10, 9),
     "=": (30, 31),
     "<>": (30, 31),
+    "&": (40, 41),
     "+": (50, 51),
     "-": (50, 51),
+    "++": (55, 54),
+    "::": (55, 54),
     "*": (60, 61),
+    "^": (65, 66),
     "\\/": (65, 66),
     "/\\": (65, 66),
     "<->": (20, 21),
+    "==>": (15, 16),
     "||": (35, 36),
     "&&": (40, 41),
+    "==": (30, 31),
     "=?": (30, 31),
     "?=": (30, 31),
     "<": (70, 71),
@@ -96,14 +107,37 @@ _PRIMARY_STARTS = frozenset({
     TokenKind.LPAREN,
     TokenKind.LBRACE,
     TokenKind.LBRACKET,
+    TokenKind.LRECORD,
 })
 
 # Regex for scope annotations: )%ident or trailing %ident
-_SCOPE_RE = __import__("re").compile(r"%[a-zA-Z_][a-zA-Z0-9_]*")
+_re = __import__("re")
+_SCOPE_RE = _re.compile(r"%[a-zA-Z_][a-zA-Z0-9_]*")
+
+# Unicode math symbol → ASCII equivalent mapping
+_UNICODE_MAP: dict[str, str] = {
+    "\u2200": "forall ",   # ∀
+    "\u2203": "exists ",   # ∃
+    "\u2192": "-> ",       # →
+    "\u21d2": "=> ",       # ⇒
+    "\u2194": "<-> ",      # ↔
+    "\u2227": "/\\ ",      # ∧
+    "\u2228": "\\/ ",      # ∨
+    "\u00ac": "~ ",        # ¬
+    "\u03bb": "fun ",      # λ
+    "\u2264": "<= ",       # ≤
+    "\u2265": ">= ",       # ≥
+    "\u2260": "<> ",       # ≠
+}
+_UNICODE_RE = _re.compile(
+    "[" + "".join(_re.escape(k) for k in _UNICODE_MAP) + "]"
+)
 
 
 def tokenize(text: str) -> list[Token]:
     """Tokenize a Coq type expression string into a list of Tokens."""
+    # Pre-process: normalize Unicode math symbols to ASCII equivalents
+    text = _UNICODE_RE.sub(lambda m: _UNICODE_MAP[m.group()], text)
     # Pre-process: strip Coq scope annotations (%nat_scope, %bool, etc.)
     text = _SCOPE_RE.sub("", text)
     tokens: list[Token] = []
@@ -127,6 +161,10 @@ def tokenize(text: str) -> list[Token]:
                 tokens.append(Token(TokenKind.INFIX_OP, "<->", pos))
                 i += 3
                 continue
+            if three == "==>":
+                tokens.append(Token(TokenKind.INFIX_OP, "==>", pos))
+                i += 3
+                continue
             if three in ("<=?", "=?b", "<?b"):
                 # Decidable comparison notations — treat as identifiers
                 tokens.append(Token(TokenKind.IDENT, three, pos))
@@ -144,6 +182,30 @@ def tokenize(text: str) -> list[Token]:
                 tokens.append(Token(TokenKind.DARROW, "=>", pos))
                 i += 2
                 continue
+            if two == ":=":
+                tokens.append(Token(TokenKind.COLONEQ, ":=", pos))
+                i += 2
+                continue
+            if two == "::":
+                tokens.append(Token(TokenKind.INFIX_OP, "::", pos))
+                i += 2
+                continue
+            if two == "++":
+                tokens.append(Token(TokenKind.INFIX_OP, "++", pos))
+                i += 2
+                continue
+            if two == "==":
+                tokens.append(Token(TokenKind.INFIX_OP, "==", pos))
+                i += 2
+                continue
+            if two == "{|":
+                tokens.append(Token(TokenKind.LRECORD, "{|", pos))
+                i += 2
+                continue
+            if two == "|}":
+                tokens.append(Token(TokenKind.RRECORD, "|}", pos))
+                i += 2
+                continue
             if two in ("<=", ">=", "<>"):
                 tokens.append(Token(TokenKind.INFIX_OP, two, pos))
                 i += 2
@@ -153,9 +215,7 @@ def tokenize(text: str) -> list[Token]:
                 tokens.append(Token(TokenKind.INFIX_OP, two, pos))
                 i += 2
                 continue
-
-        # Boolean operators: || and &&
-        if i + 1 < n:
+            # Boolean operators: || and &&
             if two == "||":
                 tokens.append(Token(TokenKind.INFIX_OP, "||", pos))
                 i += 2
@@ -216,7 +276,7 @@ def tokenize(text: str) -> list[Token]:
             continue
 
         # Single-character infix operators
-        if ch in ("+", "*"):
+        if ch in ("+", "*", "^", "&"):
             tokens.append(Token(TokenKind.INFIX_OP, ch, pos))
             i += 1
             continue
@@ -251,9 +311,18 @@ def tokenize(text: str) -> list[Token]:
             i = j
             continue
 
-        # Standalone ?, !, ~, `, # — skip (negation, bang, etc.)
-        if ch in ("?", "!", "`", "#", "~"):
+        # Standalone ?, !, ~, `, #, ;, ., $, % — skip
+        if ch in ("?", "!", "`", "#", "~", ";", ".", "$", "%"):
             i += 1
+            continue
+
+        # String literals "..." — skip entire quoted string
+        if ch == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                i += 1
+            if i < n:
+                i += 1  # consume closing quote
             continue
 
         # Standalone / or \ not part of /\ or \/ — skip
@@ -271,7 +340,8 @@ def tokenize(text: str) -> list[Token]:
             continue
 
         # Identifiers, keywords, sorts
-        if ch.isalpha() or ch == "_":
+        # Allow ' as identifier start for MathComp notation (e.g. 'M_)
+        if ch.isalpha() or ch == "_" or ch == "'":
             j = i
             while j < n and (text[j].isalnum() or text[j] in ("_", "'", ".")):
                 j += 1
@@ -285,6 +355,8 @@ def tokenize(text: str) -> list[Token]:
                 tokens.append(Token(TokenKind.SORT, word, pos))
             elif word == "forall":
                 tokens.append(Token(TokenKind.FORALL, word, pos))
+            elif word == "exists":
+                tokens.append(Token(TokenKind.EXISTS, word, pos))
             elif word == "fun":
                 tokens.append(Token(TokenKind.FUN, word, pos))
             elif word in ("if", "then", "else", "let", "in",
@@ -295,6 +367,12 @@ def tokenize(text: str) -> list[Token]:
             else:
                 tokens.append(Token(TokenKind.IDENT, word, pos))
             i = j
+            continue
+
+        # Skip unknown non-ASCII characters (Unicode math symbols not
+        # handled by the pre-processing map, e.g. ∈, ⊆, ⊤, ⊥, ·)
+        if ord(ch) > 127:
+            i += 1
             continue
 
         raise ParseError(f"Unexpected character {ch!r} at position {pos}")
@@ -390,10 +468,22 @@ class TypeExprParser:
         pos, node = self._primary(tokens, pos, binders)
 
         # Greedy application: collect arguments while next token starts a primary
+        # Also consume stray infix operators as identifier arguments (handles
+        # scope-stripped function references like -%R → bare -, +%R → bare +)
         args: list[Any] = []
-        while tokens[pos].kind in _PRIMARY_STARTS:
-            pos, arg = self._primary(tokens, pos, binders)
-            args.append(arg)
+        while True:
+            if tokens[pos].kind in _PRIMARY_STARTS:
+                pos, arg = self._primary(tokens, pos, binders)
+                args.append(arg)
+            elif (tokens[pos].kind == TokenKind.INFIX_OP
+                  and pos + 1 < len(tokens)
+                  and tokens[pos + 1].kind not in _PRIMARY_STARTS
+                  and tokens[pos + 1].kind != TokenKind.INFIX_OP):
+                # Trailing operator with no right operand — treat as identifier
+                args.append(Const(tokens[pos].value))
+                pos += 1
+            else:
+                break
 
         if args:
             return pos, App(node, args)
@@ -409,6 +499,12 @@ class TypeExprParser:
         tok = tokens[pos]
 
         if tok.kind == TokenKind.IDENT:
+            # Handle 'let ... := ... in ...' expressions
+            if tok.value == "let":
+                return self._parse_let(tokens, pos, binders)
+            # Handle 'match ... with ... end' — skip to 'end', return body
+            if tok.value == "match":
+                return self._skip_match(tokens, pos, binders)
             return pos + 1, self._resolve(tok.value, binders)
 
         if tok.kind == TokenKind.SORT:
@@ -422,7 +518,18 @@ class TypeExprParser:
 
         if tok.kind == TokenKind.LPAREN:
             pos += 1
+            # Empty parens () — unit type
+            if tokens[pos].kind == TokenKind.RPAREN:
+                return pos + 1, Const("_unit_")
             pos, inner = self._expr(tokens, pos, binders, 0)
+            # Named argument: (name := value) — keep just the value
+            if tokens[pos].kind == TokenKind.COLONEQ:
+                pos += 1  # consume :=
+                pos, inner = self._expr(tokens, pos, binders, 0)
+            # Tuple-like: (a, b, ...) — skip remaining comma-separated items
+            while tokens[pos].kind == TokenKind.COMMA:
+                pos += 1
+                pos, _ = self._expr(tokens, pos, binders, 0)
             if tokens[pos].kind != TokenKind.RPAREN:
                 raise ParseError(
                     f"Expected ')' at position {tokens[pos].pos}"
@@ -438,15 +545,40 @@ class TypeExprParser:
                 pos, prop = self._expr(tokens, pos, binders, 0)
                 # For indexing purposes, treat as Prod("_", inner, prop)
                 inner = Prod("_", inner, prop)
-            if tokens[pos].kind != TokenKind.RBRACE:
+            if tokens[pos].kind == TokenKind.RBRACE:
+                return pos + 1, inner
+            # Brace content couldn't be fully parsed (e.g., {morphism >->})
+            # — skip to matching }
+            depth = 1
+            while depth > 0 and tokens[pos].kind != TokenKind.EOF:
+                if tokens[pos].kind == TokenKind.LBRACE:
+                    depth += 1
+                elif tokens[pos].kind == TokenKind.RBRACE:
+                    depth -= 1
+                pos += 1
+            if depth > 0:
                 raise ParseError(
                     f"Expected '}}' at position {tokens[pos].pos}"
                 )
-            return pos + 1, inner
+            return pos, inner
+
+        if tok.kind == TokenKind.LRECORD:
+            # Record syntax {| field := val ; ... |} — skip to matching |}
+            depth = 1
+            pos += 1
+            while depth > 0 and tokens[pos].kind != TokenKind.EOF:
+                if tokens[pos].kind == TokenKind.LRECORD:
+                    depth += 1
+                elif tokens[pos].kind == TokenKind.RRECORD:
+                    depth -= 1
+                pos += 1
+            return pos, Const("_record_")
 
         if tok.kind == TokenKind.LBRACKET:
-            # Maximal implicit binders [A : T] — treat like {A : T}
             pos += 1
+            # Empty brackets [] — nil/empty list
+            if tokens[pos].kind == TokenKind.RBRACKET:
+                return pos + 1, Const("_nil_")
             pos, inner = self._expr(tokens, pos, binders, 0)
             if tokens[pos].kind != TokenKind.RBRACKET:
                 raise ParseError(
@@ -457,8 +589,35 @@ class TypeExprParser:
         if tok.kind == TokenKind.FORALL:
             return self._parse_forall(tokens, pos, binders)
 
+        if tok.kind == TokenKind.EXISTS:
+            return self._parse_exists(tokens, pos, binders)
+
         if tok.kind == TokenKind.FUN:
             return self._parse_fun(tokens, pos, binders)
+
+        # Leading/unary infix operator — treat as identifier (handles
+        # scope-stripped function references and unary operators)
+        if tok.kind == TokenKind.INFIX_OP:
+            return pos + 1, Const(tok.value)
+
+        # Stray ARROW in expression position — treat as identifier
+        if tok.kind == TokenKind.ARROW:
+            return pos + 1, Const("->")
+
+        # Stray PIPE — skip (e.g., match arms, absolute value notation)
+        if tok.kind == TokenKind.PIPE:
+            pos += 1
+            return self._primary(tokens, pos, binders)
+
+        # COLONEQ in unexpected position — skip
+        if tok.kind == TokenKind.COLONEQ:
+            pos += 1
+            return self._primary(tokens, pos, binders)
+
+        # COLON in unexpected position — skip
+        if tok.kind == TokenKind.COLON:
+            pos += 1
+            return self._primary(tokens, pos, binders)
 
         raise ParseError(
             f"Expected expression at position {tok.pos}, got {tok.value!r}"
@@ -655,6 +814,100 @@ class TypeExprParser:
             result = Lambda(name, ty, result)
 
         return pos, result
+
+    def _parse_exists(
+        self,
+        tokens: list[Token],
+        pos: int,
+        binders: list[str],
+    ) -> tuple[int, Any]:
+        """Parse ``exists (binders), body`` — treated as Prod for indexing."""
+        pos += 1  # consume 'exists'
+
+        pos, pairs = self._parse_binder_groups(
+            tokens, pos, binders, TokenKind.COMMA
+        )
+        if not pairs:
+            raise ParseError(
+                f"Expected binder after 'exists' at position {tokens[pos].pos}"
+            )
+
+        if tokens[pos].kind != TokenKind.COMMA:
+            raise ParseError(
+                f"Expected ',' at position {tokens[pos].pos}"
+            )
+        pos += 1  # consume ','
+
+        # Build binder stack for body
+        body_binders = binders + [name for name, _ in pairs]
+        pos, body = self._expr(tokens, pos, body_binders, 0)
+
+        # Build nested Prod from right to left (structurally same as forall)
+        result = body
+        for name, ty in reversed(pairs):
+            result = Prod(name, ty, result)
+
+        return pos, result
+
+    def _parse_let(
+        self,
+        tokens: list[Token],
+        pos: int,
+        binders: list[str],
+    ) -> tuple[int, Any]:
+        """Parse ``let name := value in body``.
+
+        Since 'in' is tokenized as IDENT and the expression parser
+        would greedily consume it, we scan ahead for the 'in' token
+        at depth 0 and parse only the body (the structurally important
+        part for indexing).
+        """
+        # Skip 'let' and everything up to 'in', then parse body
+        return self._skip_let_to_in(tokens, pos + 1, binders)
+
+    def _skip_match(
+        self,
+        tokens: list[Token],
+        pos: int,
+        binders: list[str],
+    ) -> tuple[int, Any]:
+        """Skip ``match ... with ... end`` and return a placeholder."""
+        depth = 1
+        pos += 1  # consume 'match'
+        while tokens[pos].kind != TokenKind.EOF:
+            if (tokens[pos].kind == TokenKind.IDENT
+                    and tokens[pos].value == "match"):
+                depth += 1
+            elif (tokens[pos].kind == TokenKind.IDENT
+                  and tokens[pos].value == "end"):
+                depth -= 1
+                if depth == 0:
+                    pos += 1  # consume 'end'
+                    return pos, Const("_match_")
+            pos += 1
+        return pos, Const("_match_")
+
+    def _skip_let_to_in(
+        self,
+        tokens: list[Token],
+        pos: int,
+        binders: list[str],
+    ) -> tuple[int, Any]:
+        """Skip a destructuring let to the 'in' keyword and parse body."""
+        depth = 0
+        while tokens[pos].kind != TokenKind.EOF:
+            if tokens[pos].kind in (TokenKind.LPAREN, TokenKind.LBRACE):
+                depth += 1
+            elif tokens[pos].kind in (TokenKind.RPAREN, TokenKind.RBRACE):
+                depth -= 1
+            elif (depth == 0
+                  and tokens[pos].kind == TokenKind.IDENT
+                  and tokens[pos].value == "in"):
+                pos += 1  # consume 'in'
+                return self._expr(tokens, pos, binders, 0)
+            pos += 1
+        # Couldn't find 'in' — return a placeholder
+        return pos, Const("_let_")
 
     # ----- Name resolution -----
 

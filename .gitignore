@@ -1,5 +1,8 @@
-# Claude Code
-.claude/
+# Claude Code — personal/transient only
+.claude/settings.local.json
+.claude/worktrees/
+.claude/sdd-layer
+.claude/sdd-blast-radius
 
 # macOS
 .DS_Store
@@ -13,6 +16,9 @@ build/
 .venv/
 .coverage
 coverage.xml
+
+# Temporary files
+tmp/
 
 # Generated artifacts
 index.db
@@ -29,3 +35,4 @@ proof-diagram.html
 Makefile.coq
 Makefile.coq.conf
 .coqdeps.d
+.Makefile.coq.d

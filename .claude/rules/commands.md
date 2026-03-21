@@ -1,0 +1,11 @@
+---
+globs: "commands/**"
+---
+- Read the upstream feature document and its acceptance criteria before writing.
+- Write as direct instructions to Claude — imperative, second-person ("Search for...", "Open a proof session on...").
+- Specify which tools to use at each step. See doc/MCP_TOOLS.md for the MCP tool inventory.
+- Structure as numbered steps with decision points for branching, retrying, or falling back.
+- Include an edge cases section covering empty input, missing prerequisites, and large-scale operation.
+- Specify the output format — what the user sees when the command completes.
+- Always instruct Claude to clean up resources (close proof sessions, etc.) before finishing.
+- Do not re-state what or why — only how.

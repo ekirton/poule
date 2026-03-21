@@ -6,16 +6,6 @@
 
 Authority chain: `specification/*.md` → `doc/architecture/` → `doc/features/` → `doc/requirements/`
 
-## Upstream Authority Is Immutable
-
-Do not modify `test/`, `specification/`, `doc/architecture/`, or `doc/architecture/data-models/` when writing implementation code.
-
-- If a test fails, fix the implementation — not the test.
-- If a test imports from a specific module path, create that module at that path.
-- If a test expects a specific function signature, implement that exact signature.
-- If a test expects a specific exception type, raise that exact exception.
-- File feedback in the appropriate `feedback/` folder if upstream appears wrong.
-
 ## Import Paths
 
 Tests define the expected package structure:

@@ -25,6 +25,10 @@ Each layer answers "what" for the layer below and "how" for the layer above. A s
 * test/
 * commands/ : slash command prompt files (agentic workflows)
 
+# SDD Layer Enforcement
+
+Use `/diagnose` to investigate a bug and determine which SDD layer to fix first. Use `/sdd <layer> "description"` to execute a fix from that layer downward. Use `/requirements`, `/features`, `/architecture`, `/specification`, `/tasks`, `/tests`, or `/implementation` to enter a single phase. Use `/free` to disable enforcement.
+
 # Pull Request Process
 
 Do not push to a remote branch after every commit. Push only when the branch is ready to merge — the user makes many commits before a branch is ready.
