@@ -191,7 +191,12 @@ INDEX_DB="${OUTPUT_DIR}/index.db"
 LIB_LIST="${LIB_ARRAY[*]}"
 NEED_MERGE=false
 
-if [[ ! -f "$INDEX_DB" ]]; then
+# If any library was rebuilt, always re-merge (content may differ even
+# at the same version, e.g. after extraction pipeline improvements).
+if [[ "$REBUILT" -gt 0 ]]; then
+    NEED_MERGE=true
+    echo "Re-merging: ${REBUILT} library index(es) were rebuilt." >&2
+elif [[ ! -f "$INDEX_DB" ]]; then
     NEED_MERGE=true
 else
     # Compare library_versions in index.db against per-library index versions

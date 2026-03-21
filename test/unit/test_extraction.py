@@ -93,6 +93,25 @@ class TestMapKindExcludedForms:
         assert map_kind(coq_form) is None
 
 
+class TestMapKindUnknownForms:
+    """§4.2: Unknown kinds return 'definition', not None."""
+
+    @pytest.mark.parametrize(
+        "coq_form",
+        [
+            "scheme",
+            "fixpoint",
+            "cofixpoint",
+            "primitive",
+            "some_unknown_form",
+        ],
+    )
+    def test_unknown_form_returns_definition(self, coq_form):
+        from Poule.extraction.kind_mapping import map_kind
+
+        assert map_kind(coq_form) == "definition"
+
+
 class TestMapKindCaseSensitivity:
     """Kind mapping handles case-insensitive input."""
 

@@ -102,6 +102,23 @@ It does **not** provide:
 - GIVEN the build script is invoked with `--libraries stdlib,mathcomp` WHEN it completes THEN only `index-stdlib.db` and `index-mathcomp.db` are produced
 - GIVEN the build script is invoked with no `--libraries` flag WHEN it runs THEN it builds all 6 libraries
 
+### Force Rebuild
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN the build script is invoked with `--force` WHEN it completes THEN all selected per-library indexes are rebuilt regardless of whether their library versions have changed
+- GIVEN the build script rebuilds any per-library index (whether due to `--force` or a version change) WHEN the merge step runs THEN the merged `index.db` is regenerated from all per-library indexes
+
+### Merge Per-Library Indexes
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN all per-library indexes have been built WHEN the build script reaches the merge step THEN it produces a single `index.db` combining all per-library declarations
+- GIVEN the merged `index.db` already exists and all per-library index versions match WHEN no per-library index was rebuilt during this run THEN the merge step is skipped
+- GIVEN any per-library index was rebuilt during this run WHEN the merge step runs THEN `index.db` is regenerated even if library version strings have not changed
+
 ### Per-Library Metadata
 
 **Priority:** P0

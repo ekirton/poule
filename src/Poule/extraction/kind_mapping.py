@@ -39,4 +39,4 @@ def map_kind(coq_form: str) -> str | None:
     key = coq_form.lower()
     if key in _EXCLUDED:
         return None
-    return _KIND_MAP.get(key)
+    return _KIND_MAP.get(key, "definition")

@@ -100,6 +100,26 @@ Library versions are detected by querying the opam package manager:
 
 The script runs extractions sequentially — each library extraction is CPU-bound and memory-intensive, so parallelism provides no benefit within a single container.
 
+### Force Rebuild
+
+The `--force` flag rebuilds all selected per-library indexes regardless of whether the installed library version matches the version recorded in the existing index. Without `--force`, the script compares the installed version against the indexed version and skips libraries that are up to date.
+
+### Merge Step
+
+After all per-library extractions complete, the script merges all per-library indexes into a single `index.db` using `merge_indexes()` from the storage module.
+
+**Merge trigger conditions** — the merge runs when any of the following are true:
+
+1. `index.db` does not exist
+2. Any per-library index was rebuilt during this run (regardless of whether version strings changed)
+3. The version recorded in any per-library index differs from the corresponding version in `index.db`
+
+Condition 2 is essential: a `--force` rebuild may produce a different set of declarations (e.g., due to extraction pipeline improvements) even when the library version has not changed. Relying solely on version-string comparison would incorrectly skip the merge in this case.
+
+### Seed from GitHub Releases
+
+On a fresh container with no existing index files, the script downloads pre-built per-library indexes and the merged `index.db` from GitHub Releases. This allows only libraries whose versions have actually changed to be rebuilt from scratch, reducing build time. The seed step runs before the version comparison loop.
+
 ## Publish Script Updates
 
 The existing `scripts/publish-release.sh` must be updated from monolithic to per-library format:
