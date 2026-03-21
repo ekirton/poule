@@ -89,15 +89,51 @@ Algorithm:
 - ENSURES: Returns up to `limit` `SearchResult` items ranked by RRF-fused score.
 
 Algorithm:
-1. Parse and normalize `type_expr` (same as steps 1–4 of `search_by_structure`) → normalized tree, query histogram
-2. Run WL screening + structural scoring → structural ranked list
-3. `extract_consts(tree)` → query symbols; run `mepo_select(symbols, ...)` → symbol ranked list
-4. `fts_query(type_expr)` → FTS5 query; `fts_search(query, limit=limit, reader)` → lexical ranked list
-5. If `ctx.neural_encoder` is not null and `ctx.embedding_index` is not null: `neural_retrieve(ctx, type_expr, limit=50)` → neural ranked list
-6. `rrf_fuse([structural, symbol, lexical, neural?], k=60)` → final ranked list (neural omitted if unavailable)
-7. Take top `limit`, construct `SearchResult` objects
+1. Parse `type_expr` via `ctx.parser.parse()` → `ConstrNode`
+2. `normalize_type_query(ctx, constr_node)` → normalized `ConstrNode` with FQNs resolved and free variables wrapped (see §4.4.1)
+3. `coq_normalize(normalized_constr)` → normalized `ExprTree`; `cse_normalize(tree)` → CSE-reduced tree
+4. `wl_histogram(tree, h=3)` → query histogram
+5. `wl_screen(histogram, query_node_count, ctx.wl_histograms, ctx.declaration_node_counts, n=500, size_ratio=2.0)` → candidates with WL scores
+6. Structural scoring subroutine (§4.7) on candidates → structural ranked list
+7. `extract_consts(tree)` → query symbols; run `mepo_select(symbols, ...)` → symbol ranked list
+8. `fts_query(type_expr)` → FTS5 query; `fts_search(query, limit=limit, reader)` → lexical ranked list
+9. If `ctx.neural_encoder` is not null and `ctx.embedding_index` is not null: `neural_retrieve(ctx, type_expr, limit=50)` → neural ranked list
+10. `rrf_fuse([structural, symbol, lexical, neural?], k=60)` → final ranked list (neural omitted if unavailable)
+11. Take top `limit`, construct `SearchResult` objects
 
 Note: `extract_consts` at query time is equivalent to the MePo channel's `extract_symbols`. Reuse the same function.
+
+#### 4.4.1 normalize_type_query(ctx, constr_node)
+
+- REQUIRES: `ctx` has a populated `suffix_index` and `inverted_index`. `constr_node` is a valid `ConstrNode` produced by the parser.
+- ENSURES: Returns a `ConstrNode` where (1) resolvable constant names are replaced with FQNs, and (2) detected free variables are wrapped in outer `Prod` binders with `Rel` references replacing the original `Const` nodes.
+- MAINTAINS: The transformation is deterministic. If the query already contains `forall` binders, only steps 1–2 below are applied (no wrapping).
+
+**Step 1 — FQN Resolution.** Walk the `ConstrNode` tree. For each `Const(name)` node:
+1. If `name` is an exact key in `ctx.inverted_index`, keep it (already an FQN).
+2. Otherwise, look up `name` in `ctx.suffix_index`. If it resolves to exactly one FQN, replace `Const(name)` with `Const(fqn)`.
+3. If ambiguous (multiple FQNs) or no match, leave unchanged.
+
+**Step 2 — Free Variable Detection.** After Step 1, collect all remaining `Const(name)` nodes where `name` satisfies ALL of:
+- Contains no dot (`.`)
+- Is not a numeric literal
+- Starts with a lowercase letter or `_`
+- Is not a Coq keyword (`forall`, `fun`, `match`, `let`, `in`, `if`, `then`, `else`, `return`, `as`, `with`, `end`, `fix`, `cofix`)
+
+These are classified as free variables. Collect them in order of first occurrence (left-to-right, depth-first traversal).
+
+**Step 3 — Forall Wrapping.** If the outermost node is already a `Prod`, skip this step (the user wrote explicit quantifiers). Otherwise:
+1. For each detected free variable name, create a `Prod(name, Sort("Type"), ...)` binder.
+2. Replace all `Const(name)` references to that variable with `Rel(n)` where `n` is the correct 1-based de Bruijn index (distance from the binding `Prod` to the reference).
+3. Nest binders in order of first occurrence: the first-seen variable is outermost.
+
+> **Given** `type_expr = "List.map f (List.map g l) = List.map (fun x => f (g x)) l"` and the suffix index resolves `List.map` to `Coq.Lists.List.map` and `=` to `Coq.Init.Logic.eq`,
+> **When** `normalize_type_query` is called,
+> **Then** the result is equivalent to `Prod("f", Sort("Type"), Prod("g", Sort("Type"), Prod("l", Sort("Type"), <body>)))` where `<body>` uses `Const("Coq.Lists.List.map")`, `Const("Coq.Init.Logic.eq")`, and `Rel(3)`, `Rel(2)`, `Rel(1)` for `f`, `g`, `l` respectively.
+
+> **Given** `type_expr = "forall n : nat, n + 0 = n"` (already has forall),
+> **When** `normalize_type_query` is called,
+> **Then** FQN resolution is applied (e.g., `+` → FQN, `=` → FQN) but no forall wrapping occurs because the outermost node is already `Prod`.
 
 ### 4.5 search_by_symbols
 

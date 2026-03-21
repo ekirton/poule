@@ -71,20 +71,22 @@ Cosine similarity formula: `dot(A, B) / (norm(A) * norm(B))` using sparse dot pr
 
 Before computing cosine similarity, candidates shall be filtered by relative size.
 
-#### size_filter(query_node_count, candidate_node_count)
+#### size_filter(query_node_count, candidate_node_count, size_ratio)
 
-- REQUIRES: Both counts are positive integers. Both are post-CSE-normalized node counts.
+- REQUIRES: Both counts are positive integers. Both are post-CSE-normalized node counts. `size_ratio` is a positive float (default: use built-in thresholds).
 - ENSURES: Returns `True` if the candidate passes the filter, `False` otherwise.
 
-Thresholds:
+When `size_ratio` is provided, reject if `max(query, candidate) / min(query, candidate) > size_ratio`.
+
+When `size_ratio` is not provided (default), apply built-in thresholds:
 - When `query_node_count < 600`: reject if `max(query, candidate) / min(query, candidate) > 1.2`
 - When `query_node_count >= 600`: reject if `max(query, candidate) / min(query, candidate) > 1.8`
 
 ### 4.6 Online Screening
 
-#### wl_screen(query_histogram, query_node_count, library_histograms, library_node_counts, n)
+#### wl_screen(query_histogram, query_node_count, library_histograms, library_node_counts, n, size_ratio)
 
-- REQUIRES: `query_histogram` is a WL histogram for the query. `library_histograms` is a map of `decl_id → histogram`. `library_node_counts` is a map of `decl_id → node_count`. `n` is the number of candidates to return (default 500).
+- REQUIRES: `query_histogram` is a WL histogram for the query. `library_histograms` is a map of `decl_id → histogram`. `library_node_counts` is a map of `decl_id → node_count`. `n` is the number of candidates to return (default 500). `size_ratio` is an optional positive float forwarded to `size_filter` (default: not provided, use built-in thresholds).
 - ENSURES: Returns up to `n` `(decl_id, wl_cosine_score)` pairs, ranked by cosine similarity descending. Only candidates passing the size filter are considered.
 
 ### 4.7 Offline Indexing

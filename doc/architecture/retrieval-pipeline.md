@@ -50,15 +50,27 @@ The neural channel is optional. When unavailable (no model checkpoint, no embedd
 ### search_by_type (multi-channel)
 
 ```
-1. Parse and normalize the type expression (once — shared across all channels)
-2. Run WL screening pipeline (above)                 → structural ranked list
-3. Extract symbols from normalized tree, run MePo     → symbol ranked list
-4. Run FTS5 query (`fts_query`) on the original user-provided type_expr string → lexical ranked list
-5. If neural channel available:
+1. Parse the type expression via TypeExprParser → ConstrNode
+2. normalize_type_query(ctx, constr_node):
+   a. Resolve constant names to FQNs via suffix index
+      (e.g., List.map → Coq.Lists.List.map, = → Coq.Init.Logic.eq)
+   b. Detect free variables: remaining Const nodes with simple lowercase
+      names (no dots, not numeric, not a keyword)
+   c. Wrap in forall binders for detected free variables, converting
+      Const references to Rel nodes with correct de Bruijn indices
+3. coq_normalize + cse_normalize → normalized ExprTree
+4. Run WL screening with relaxed size ratio (2.0)    → structural ranked list
+5. Extract symbols from normalized tree, run MePo     → symbol ranked list
+6. Run FTS5 query (`fts_query`) on the original user-provided type_expr string → lexical ranked list
+7. If neural channel available:
      encode type_expr text via neural encoder         → neural ranked list
-6. rrf_fuse([structural, symbol, lexical, neural?], k=60) → final ranked list
-7. Return top-N results
+8. rrf_fuse([structural, symbol, lexical, neural?], k=60) → final ranked list
+9. Return top-N results
 ```
+
+**Query normalization rationale**: Users write type patterns like `List.map f (List.map g l) = List.map (fun x => f (g x)) l` where `f`, `g`, `l` are free variables and `List.map` is a short name. The index stores fully quantified types with bound variables, FQNs, and forall wrappers. Without normalization, all channels fail: the WL size filter rejects due to size mismatch, MePo finds zero symbol overlap (short vs FQN), and collapse match scores 0 at every free variable position (ConstantRef vs Variable category). Query normalization bridges this gap before any channel processing.
+
+**Relaxed size ratio**: `search_by_type` uses a wider WL size ratio (2.0 vs the standard 1.2) because user queries inherently omit type parameters (e.g., `A B C : Type`) present in indexed types. The wider threshold avoids rejecting valid candidates. Cosine similarity still ranks the 500 screened candidates effectively.
 
 Note: `extract_symbols` at query time is equivalent to `extract_consts` (const-jaccard) operating on the `ExprTree`. Implementations should reuse `extract_consts`.
 
@@ -118,7 +130,7 @@ Iterative breadth-first selection with inverse-frequency weighting:
 - Parameters: p=0.6, c=2.4, max_rounds=5
 - **Batch expansion**: Symbol set expansion is batch — the working symbol set `S` is updated only after all candidates in a round are evaluated, not during iteration within a round
 - **Missing symbol handling**: If a query-time symbol is not found in `symbol_freq` (i.e., it does not appear in any indexed declaration), treat its frequency as 1. This applies only to query-time symbols; declaration symbols are guaranteed to be in `symbol_freq` by the indexing invariant.
-- **FQN assumption**: The inverted index, `symbol_freq` table, and `declaration_symbols` map all use fully qualified kernel names as keys (see [coq-extraction.md](coq-extraction.md#symbol-fqn-resolution)). Query symbols must be resolved to FQNs before being passed to `mepo_select`. For `search_by_type`, this happens automatically via `extract_consts` on the normalized tree (which contains the same short names as the index — internal consistency). For `search_by_symbols`, the caller-provided names are resolved via the suffix index (see query processing above).
+- **FQN assumption**: The inverted index, `symbol_freq` table, and `declaration_symbols` map all use fully qualified kernel names as keys (see [coq-extraction.md](coq-extraction.md#symbol-fqn-resolution)). Query symbols must be resolved to FQNs before being passed to `mepo_select`. For `search_by_type`, constant names are resolved to FQNs during query normalization (step 2a) before the tree reaches `extract_consts`. For `search_by_symbols`, the caller-provided names are resolved via the suffix index (see query processing above).
 
 **Constructor-to-inductive mapping**: `LConstruct` nodes store the parent inductive type's FQN as their name plus a zero-based constructor index (see [expression-tree.md](data-models/expression-tree.md)). All constructors of the same inductive type contribute the same symbol name (the parent inductive FQN). This mapping happens at tree construction time (coq-normalization), not at symbol extraction time — no additional mapping is needed during `extract_symbols`.
 

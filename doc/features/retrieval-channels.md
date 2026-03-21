@@ -43,6 +43,33 @@ Results from applicable channels are combined so that items appearing across mul
 
 Channel usage is identical whether the query arrives via MCP tool call or CLI command.
 
+## Query-Time Type Normalization
+
+Traces to: R-P0-24
+
+Users write type queries as patterns — the body of a type with free variables standing in for universally quantified parameters and short constant names instead of fully qualified kernel names. The index stores complete types from Coq's kernel with bound variables, FQNs, and full quantifier structure.
+
+`search_by_type` normalizes user queries before channel processing to bridge this representation gap:
+
+1. **FQN resolution**: Short constant names in the query (e.g., `List.map`) are resolved to their fully qualified kernel names (e.g., `Coq.Lists.List.map`) using the same suffix-matching mechanism as `search_by_symbols`. This enables the symbol overlap and constant name channels to find matching declarations.
+
+2. **Free variable detection**: Remaining unresolved short lowercase identifiers (no dots, not numeric, not a Coq keyword) are identified as pattern variables rather than constant references.
+
+3. **Forall wrapping**: Detected free variables are wrapped in universal quantifiers, converting them from constant references to bound variables with correct de Bruijn indices. This makes the query's tree structure match the body of indexed fully-quantified types, enabling structural and fine structural channels.
+
+4. **Relaxed size filtering**: Type queries inherently omit type parameters (e.g., `A B C : Type`) that are present in the indexed type. The structural channel uses a wider size tolerance for `search_by_type` to avoid rejecting valid candidates whose indexed types are larger due to these invisible binders.
+
+**Remaining limitation**: Forall-wrapped free variables receive a generic `Type` binder type. Indexed types have concrete binder types (e.g., `A -> B`, `list A`). The outer quantifier nodes will score lower on structural matching, but the body — which is the majority of both trees — matches well. Combined with symbol overlap signal from FQN resolution, fusion compensates for this gap.
+
+### Acceptance Criteria
+
+**Priority:** P0
+**Stability:** Draft
+
+- GIVEN a type query with short constant names WHEN `search_by_type` executes THEN constant names are resolved to FQNs before channel processing
+- GIVEN a type query with unbound lowercase identifiers WHEN `search_by_type` executes THEN they are treated as pattern variables and wrapped in universal quantifiers
+- GIVEN a type query without explicit quantifiers WHEN structural screening executes THEN candidates with larger quantifier-wrapped types are not rejected by the size filter
+
 ## Design Rationale
 
 ### Why multiple channels

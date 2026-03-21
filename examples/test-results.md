@@ -174,11 +174,10 @@ Each prompt from `README.md` was executed against the Poule MCP tools and evalua
 
 ### search_by_type misses higher-order queries (1.4)
 - `search_by_type` for the `List.map` composition lemma returned 50 results but none matched `List.map_map`
-- **Query normalization (fixed)**: `search_by_type` now resolves short constant names to FQNs, detects free variables (`f`, `g`, `l`) and wraps them in forall binders converting `Const` nodes to `Rel`, and uses a relaxed WL size filter (2.0 vs 1.2). This enables structural and symbol channels to match queries written as type patterns against fully-quantified indexed types.
+- **Query normalization (implemented)**: `search_by_type` now resolves short constant names to FQNs, detects free variables (`f`, `g`, `l`) and wraps them in forall binders converting `Const` nodes to `Rel`, and uses a relaxed WL size filter (2.0 vs 1.2). This enables structural and symbol channels to match queries written as type patterns against fully-quantified indexed types. Verified working for declarations that have structural data.
 - **Blocking issue — incomplete index data**: `Coq.Lists.List.map_map` has `node_count=1`, no `constr_tree`, no WL histogram, and empty `symbol_set` in the index. 45% of declarations (37K of 82K) lack structural data. No amount of query normalization can surface a declaration with no structural or symbol data — only FTS can reach it. This is the primary reason the test still fails.
 - **Remaining gap — FQN display name mismatch**: the user writes `List.map` but the index stores the canonical definition FQN `ListDef.map` (Coq re-exports `ListDef.map` as `List.map`). The suffix index has `map` but not `List.map`, so FQN resolution fails for this specific name.
 - **Remaining gap — binder type approximation**: forall-wrapped free variables receive `Sort("Type")` as binder type, while indexed types have concrete binder types (e.g., `A -> B`, `list A`). The outer quantifier nodes score lower on structural matching, but the body — the majority of both trees — matches well.
-- **Pending E2E verification**: unit tests pass; MCP server restart required to verify the normalization fix against declarations that do have structural data.
 
 ### impact_analysis returns empty graphs (3.4, 3.5)
 - `impact_analysis` returns only root node with 0 edges for stdlib lemmas (`Nat.add_comm`, `Nat.add_0_r`) even with fully qualified names — reverse dependency edges not populated

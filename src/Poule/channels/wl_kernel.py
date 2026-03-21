@@ -120,12 +120,19 @@ def wl_cosine(hist_a: dict[str, int], hist_b: dict[str, int]) -> float:
     return dot / (norm_a * norm_b)
 
 
-def size_filter(query_node_count: int, candidate_node_count: int) -> bool:
+def size_filter(
+    query_node_count: int,
+    candidate_node_count: int,
+    size_ratio: float | None = None,
+) -> bool:
     """Check whether a candidate passes the size filter.
 
     Args:
         query_node_count: Node count of the query tree.
         candidate_node_count: Node count of the candidate tree.
+        size_ratio: Optional custom size ratio threshold. When provided,
+            reject if max/min > size_ratio. When None, use built-in
+            thresholds (1.2 for small queries, 1.8 for large).
 
     Returns:
         True if the candidate passes (should be considered), False if rejected.
@@ -133,6 +140,9 @@ def size_filter(query_node_count: int, candidate_node_count: int) -> bool:
     max_nc = max(query_node_count, candidate_node_count)
     min_nc = max(min(query_node_count, candidate_node_count), 1)  # guard against zero
     ratio = max_nc / min_nc
+
+    if size_ratio is not None:
+        return ratio <= size_ratio
 
     if query_node_count < 600:
         return ratio <= 1.2
@@ -146,6 +156,7 @@ def wl_screen(
     library_histograms: dict[Any, dict[str, int]],
     library_node_counts: dict[Any, int],
     n: int = 500,
+    size_ratio: float | None = None,
 ) -> list[tuple[Any, float]]:
     """Screen library declarations against a query using WL kernel similarity.
 
@@ -155,6 +166,8 @@ def wl_screen(
         library_histograms: Map of decl_id -> WL histogram.
         library_node_counts: Map of decl_id -> node count.
         n: Maximum number of candidates to return (default 500).
+        size_ratio: Optional custom size ratio threshold forwarded to
+            size_filter. When None, use built-in thresholds.
 
     Returns:
         Up to n (decl_id, cosine_score) pairs, sorted by score descending.
@@ -165,7 +178,7 @@ def wl_screen(
     candidates: list[tuple[Any, float]] = []
     for decl_id, lib_hist in library_histograms.items():
         lib_nc = library_node_counts.get(decl_id, 0)
-        if not size_filter(query_node_count, lib_nc):
+        if not size_filter(query_node_count, lib_nc, size_ratio=size_ratio):
             continue
         score = wl_cosine(query_histogram, lib_hist)
         candidates.append((decl_id, score))

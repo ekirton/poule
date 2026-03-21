@@ -71,6 +71,7 @@ Cross-references:
 | R-P0-8 | Support search by symbol set (constants, inductives, constructors) |
 | R-P0-22 | Indexed symbol sets must contain fully qualified kernel names, not short or display names |
 | R-P0-23 | Symbol search must accept short names, partial qualifications, or fully qualified names and resolve them to FQNs before matching |
+| R-P0-24 | Type search must normalize user queries to bridge the representation gap between how users write type patterns (free variables, short names, no quantifiers) and how types are stored in the index (bound variables, FQNs, fully quantified) |
 | R-P0-9 | Retrieve full declaration details including dependencies and dependents |
 | R-P0-10 | Navigate the dependency graph from a known declaration |
 | R-P0-11 | List modules under a given prefix |
