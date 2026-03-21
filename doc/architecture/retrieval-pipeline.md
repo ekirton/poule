@@ -3,7 +3,6 @@
 Technical design for the multi-channel retrieval pipeline and fusion logic.
 
 **Feature**: [Multi-Channel Retrieval](../features/retrieval-channels.md)
-**Stories**: [Epic 3: Retrieval Quality](../requirements/stories/tree-search-mcp.md#epic-3-retrieval-quality)
 **Implementation spec**: [specification/](../../specification/) ([pipeline](../../specification/pipeline.md), [fusion](../../specification/fusion.md))
 
 ---

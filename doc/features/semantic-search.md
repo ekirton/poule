@@ -2,8 +2,6 @@
 
 The core feature: natural-language and structural search over Coq/Rocq libraries, mediated by an LLM via MCP.
 
-**Stories**: [All epics](../requirements/stories/tree-search-mcp.md)
-
 ---
 
 ## Problem
@@ -68,3 +66,29 @@ This system is **not**:
 3. **Usability**: A user in Claude Code can describe what they need in natural language and get a useful, explained result within one conversational turn.
 4. **Zero-config deployment**: Index the standard library with a single command. No GPU, no external services, no API keys (beyond Claude Code itself for the MCP path).
 5. **CLI access**: All search capabilities available as standalone CLI commands for terminal workflows without Claude Code.
+
+## Acceptance Criteria
+
+### Multi-Channel Fusion
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a search query WHEN retrieval executes THEN all applicable retrieval channels (structural, symbolic, lexical) are engaged
+- GIVEN results from multiple channels WHEN fusion is applied THEN items appearing in multiple channels rank higher than items from a single channel
+
+### Recall Target
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a hand-curated evaluation set of (query, relevant lemma) pairs from common Coq workflows WHEN the retrieval pipeline is evaluated THEN the system achieves ≥ 70% recall@50
+- GIVEN ongoing development WHEN retrieval changes are made THEN recall metrics are tracked and reported
+
+### Latency Target
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an index of up to 50K declarations WHEN any search tool is called THEN retrieval completes in < 1 second
+- GIVEN latency measurement WHEN it is taken THEN it covers end-to-end from MCP tool call receipt to response

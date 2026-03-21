@@ -3,7 +3,6 @@
 The component that diagnoses dependent-destruction failures by analyzing proof state type dependencies, selects the appropriate repair technique based on context, and generates the tactic sequences or term-level boilerplate needed to fix the proof.
 
 **Feature**: [Convoy Pattern Assistant](../features/convoy-pattern-assistant.md)
-**Stories**: [Epics 1–4](../requirements/stories/convoy-pattern-assistant.md)
 
 ---
 

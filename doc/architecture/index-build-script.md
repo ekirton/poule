@@ -3,7 +3,6 @@
 Technical design for building per-library search indexes and publishing them as GitHub Release assets.
 
 **Feature**: [Index Build Script](../features/index-build-script.md)
-**Stories**: [Index Build Script](../requirements/stories/index-build-script.md)
 
 ---
 

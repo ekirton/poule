@@ -3,7 +3,6 @@
 The thin adapter layer between Claude Code, the search backend, the proof session manager, and the Mermaid renderer. The [CLI](cli.md) is a peer adapter that provides the same search capabilities for terminal users.
 
 **Feature**: [MCP Tool Surface](../features/mcp-tool-surface.md), [Proof Interaction MCP Tools](../features/proof-mcp-tools.md), [Visualization MCP Tools](../features/visualization-mcp-tools.md), [Proof Search MCP Tools](../features/proof-search-mcp-tools.md)
-**Stories**: [Epic 2: MCP Server and Tool Surface](../requirements/stories/tree-search-mcp.md#epic-2-mcp-server-and-tool-surface), [Epic 6: MCP Tool Surface](../requirements/stories/proof-interaction-protocol.md#epic-6-mcp-tool-surface), [Epics 1–4](../requirements/stories/proof-visualization-widgets.md), [Epics 1, 3](../requirements/stories/proof-search-automation.md)
 
 ---
 

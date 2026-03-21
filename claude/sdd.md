@@ -10,7 +10,7 @@ The exception is Stage 8 (implementation): you have wide latitude to implement c
 
 ### Stage 1: Requirements
 
-Write a detailed PRD and user stories to `doc/requirements/` and `doc/requirements/stories/`.
+Write a detailed PRD to `doc/requirements/`.
 
 ### Stage 2: Features
 

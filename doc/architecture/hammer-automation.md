@@ -3,7 +3,6 @@
 The component that wraps CoqHammer tactics (`hammer`, `sauto`, `qauto`) for invocation within active proof sessions, managing strategy sequencing, timeout budgets, and result interpretation.
 
 **Feature**: [Hammer Automation](../features/hammer-automation.md)
-**Stories**: [Epics 1–4](../requirements/stories/hammer-automation.md)
 **Data models**: [proof-types.md](data-models/proof-types.md)
 
 ---

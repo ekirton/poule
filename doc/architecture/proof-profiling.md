@@ -3,7 +3,6 @@
 The component that wraps Coq's profiling infrastructure (`coqc -time-file`, `Set Ltac Profiling`, `Show Ltac Profile`) to collect per-sentence and per-tactic timing data, classify bottlenecks by known performance patterns, and return structured profiling results that Claude interprets and explains. The MCP Server delegates profiling tool calls to this component; Ltac profiling uses the Proof Session Manager for interactive instrumentation.
 
 **Feature**: [Proof Profiling](../features/proof-profiling.md)
-**Stories**: [Epic 1: Single-Proof Profiling](../requirements/stories/proof-profiling.md#epic-1-single-proof-profiling), [Epic 2: Bottleneck Explanation and Optimization Guidance](../requirements/stories/proof-profiling.md#epic-2-bottleneck-explanation-and-optimization-guidance), [Epic 3: Ltac Profiling](../requirements/stories/proof-profiling.md#epic-3-ltac-profiling), [Epic 4: Timing Comparison and Regression Detection](../requirements/stories/proof-profiling.md#epic-4-timing-comparison-and-regression-detection), [Epic 5: Timeout and Safety](../requirements/stories/proof-profiling.md#epic-5-timeout-and-safety), [Epic 6: CI Integration](../requirements/stories/proof-profiling.md#epic-6-ci-integration)
 
 ---
 

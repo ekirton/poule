@@ -2,8 +2,6 @@
 
 Command-line tools for training, evaluating, and fine-tuning the neural premise selection model from extracted Coq proof trace data.
 
-**Stories**: [Epic 1: Model Training](../requirements/stories/neural-premise-selection.md#epic-1-model-training), [Epic 2: Model Evaluation](../requirements/stories/neural-premise-selection.md#epic-2-model-evaluation), [Epic 5: Pre-trained Model Distribution](../requirements/stories/neural-premise-selection.md#epic-5-pre-trained-model-distribution) (5.2)
-
 ---
 
 ## Problem
@@ -69,3 +67,77 @@ A neural model that achieves high recall but retrieves the same results as exist
 ### Why fine-tuning rather than retraining
 
 Fine-tuning from a pre-trained checkpoint on 1K–10K project-specific proofs is vastly more data-efficient and compute-efficient than training from scratch. The pre-trained model already understands Coq's type theory, standard library conventions, and MathComp idioms; fine-tuning adapts it to the user's project-specific definitions and proof patterns. This follows the transfer learning pattern validated by PROOFWALA (cross-system transfer) and standard practice in NLP retrieval.
+
+---
+
+## Acceptance Criteria
+
+### Train a Retrieval Model from Extracted Data
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a directory of JSON Lines proof trace files produced by Training Data Extraction WHEN the train command is run THEN a bi-encoder model checkpoint is produced in the specified output directory
+- GIVEN extracted data containing at least 10,000 `(proof_state, premises_used)` pairs WHEN training completes THEN the output includes loss curves and validation Recall@32 computed on a held-out split
+- GIVEN the training command is run without specifying a GPU WHEN a CUDA-capable GPU with ≤ 24GB VRAM is available THEN training uses the GPU automatically
+- GIVEN the training command is run WHEN no GPU is available THEN training falls back to CPU with a warning about expected duration
+
+### Validate Training Data Before Training
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a directory of JSON Lines proof trace files WHEN the validation command is run THEN it reports the count of valid `(proof_state, premises_used)` pairs, pairs with empty premise lists, and pairs with malformed fields
+- GIVEN a dataset where more than 10% of pairs have empty premise lists WHEN validation completes THEN a warning is emitted identifying the affected source files
+- GIVEN a valid dataset WHEN validation completes THEN it reports the total unique premises, total unique proof states, and the premise frequency distribution (top-10 most referenced premises)
+
+### Hard Negative Mining
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a proof state with known used premises and a set of accessible premises WHEN training batches are constructed THEN each positive pair is accompanied by at least 3 hard negatives drawn from the accessible-but-unused premise set
+- GIVEN a proof state for which no accessibility information is available WHEN training batches are constructed THEN negatives are drawn from the full premise corpus as a fallback
+
+### Masked Contrastive Loss for Shared Premises
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a training batch where premise P is a positive for proof state A and also appears in the candidate set for proof state B WHEN the contrastive loss is computed for proof state B THEN premise P is masked (excluded from the negative set) rather than treated as a negative
+- GIVEN a training run with masked contrastive loss WHEN compared to a training run with standard InfoNCE on the same data THEN the masked variant achieves equal or higher Recall@32 on the validation set
+
+### Evaluate Retrieval Quality
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a trained model checkpoint and a held-out test set of `(proof_state, premises_used)` pairs WHEN the evaluate command is run THEN it reports Recall@1, Recall@10, Recall@32, and MRR
+- GIVEN the evaluation results WHEN Recall@32 is below 50% THEN a warning is emitted indicating the model does not meet the deployment threshold
+- GIVEN an evaluation run WHEN it completes THEN it also reports the number of test examples, average premises per proof state, and evaluation latency per query
+
+### Compare Neural vs. Symbolic Retrieval
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a test set and both neural and symbolic retrieval results WHEN the comparison command is run THEN it reports Recall@32 for neural-only, symbolic-only, and their union
+- GIVEN the union results WHEN the relative improvement over symbolic-only is below 15% THEN a warning is emitted indicating the neural channel may not provide sufficient complementary value
+- GIVEN the comparison results WHEN they are reported THEN the output includes the overlap percentage (premises retrieved by both channels) and the exclusive contribution of each channel
+
+### Fine-tune on a User Project
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a pre-trained model checkpoint and a user project's extracted proof trace data WHEN the fine-tune command is run THEN a fine-tuned model checkpoint is produced
+- GIVEN a fine-tuned model WHEN evaluated on a held-out test set from the user's project THEN it achieves equal or higher Recall@32 compared to the base pre-trained model on the same test set
+- GIVEN a user project with at least 1,000 extracted proofs WHEN fine-tuning is run on a consumer GPU (≤ 24GB VRAM) THEN fine-tuning completes in under 4 hours
+
+### Initialize from Lean Pre-trained Weights
+
+**Priority:** P2
+**Stability:** Volatile
+
+- GIVEN a pre-trained Lean premise selection model (e.g., LeanHammer weights) WHEN the train command is run with the transfer flag THEN training initializes from the Lean weights before fine-tuning on Coq data
+- GIVEN a transfer-trained model WHEN evaluated on the Coq test set THEN it achieves equal or higher Recall@32 compared to a model trained from scratch on Coq data only

@@ -3,7 +3,6 @@
 How the MCP server wraps Coq's notation-related vernacular commands to support notation lookup, scope inspection, ambiguity resolution, precedence/associativity extraction, and authoring guidance.
 
 **Feature**: [Notation Inspection](../features/notation-inspection.md)
-**Stories**: [Notation Inspection](../requirements/stories/notation-inspection.md) — Epics 1–5
 **Integration point**: [MCP Server](mcp-server.md), [Vernacular Introspection](../features/vernacular-introspection.md) (shared `coq_query` tool)
 
 ---

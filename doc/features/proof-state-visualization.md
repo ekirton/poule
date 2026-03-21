@@ -2,8 +2,6 @@
 
 Visual diagrams of Coq proof states — goals, hypotheses, and local context — rendered as Mermaid diagrams for educators explaining proof structure and developers navigating complex proof obligations.
 
-**Stories**: [Epic 1: Proof State Visualization](../requirements/stories/proof-visualization-widgets.md#epic-1-proof-state-visualization), [Epic 4: Proof Sequence Navigation](../requirements/stories/proof-visualization-widgets.md#epic-4-proof-sequence-navigation)
-
 ---
 
 ## Problem
@@ -59,3 +57,68 @@ It does **not** provide:
 - Interactive proof state editing or tactic suggestion through diagrams
 - Animation or transitions between steps (each step is a static diagram)
 - Custom visual styling per proof or per library (a P2 consideration)
+
+## Acceptance Criteria
+
+### Render Current Proof State as a Diagram
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a proof state with 2 goals and 3 hypotheses WHEN the proof state visualization MCP tool is called with this state THEN it returns valid Mermaid syntax that renders a diagram showing both goals and all 3 hypotheses with their types
+- GIVEN a proof state with local context bindings (let-bound variables) WHEN the visualization tool is called THEN the diagram includes the local bindings visually grouped with the hypotheses
+- GIVEN a proof state from an ssreflect tactic step WHEN the visualization tool is called THEN it renders correctly, not only standard Ltac states
+
+**Traces to:** R4-P0-1, R4-P0-3, R4-P0-9
+
+### Validate Mermaid Output
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a proof state visualization produced by the MCP tool WHEN the Mermaid syntax is submitted to the Mermaid Chart MCP rendering service THEN it renders without syntax errors
+- GIVEN a proof state with special characters in hypothesis names or goal types (e.g., subscripts, primes, Unicode) WHEN the visualization tool generates Mermaid syntax THEN special characters are escaped or transliterated so rendering succeeds
+
+**Traces to:** R4-P0-5, R4-P0-7
+
+### Latency Target
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a proof state with up to 10 goals and 20 hypotheses WHEN the visualization MCP tool is called THEN the Mermaid diagram text is returned in under 2 seconds on a standard development machine
+- GIVEN a proof state from a MathComp proof with ssreflect-heavy context WHEN the visualization tool is called THEN it completes within the same 2-second latency target
+
+**Traces to:** R4-P0-8
+
+### Step-by-Step Proof Evolution Diagrams
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a proof trace with 6 tactic steps WHEN the proof sequence MCP tool is called THEN it returns 7 Mermaid diagrams (initial state plus one per tactic step)
+- GIVEN consecutive proof states in the sequence WHEN the diagrams are compared THEN each diagram reflects the effect of the corresponding tactic (new subgoals introduced, goals discharged, hypotheses added)
+
+**Traces to:** R4-P1-1
+
+### Highlight Changes Between Proof Steps
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN two consecutive proof states where a tactic introduced a new hypothesis H WHEN the step diagram is rendered THEN hypothesis H is visually highlighted as new (e.g., distinct styling or annotation)
+- GIVEN two consecutive proof states where a tactic discharged a subgoal WHEN the step diagram is rendered THEN the discharged goal is visually marked as resolved
+- GIVEN two consecutive proof states where a tactic split a goal into two subgoals WHEN the step diagram is rendered THEN both new subgoals are highlighted as newly introduced
+
+**Traces to:** R4-P1-2
+
+### Configure Diagram Detail Level
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a proof state with 3 goals and 5 hypotheses WHEN the summary detail level is requested THEN the diagram shows goal count and top-level structure only, without listing individual hypotheses
+- GIVEN the same proof state WHEN the standard detail level is requested THEN the diagram shows all goals and hypotheses with their names and types
+- GIVEN the same proof state WHEN the detailed level is requested THEN the diagram additionally expands type abbreviations and shows full local context
+
+**Traces to:** R4-P1-3

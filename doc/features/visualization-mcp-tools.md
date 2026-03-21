@@ -2,8 +2,6 @@
 
 The set of MCP tools that expose proof visualization capabilities through the existing MCP server, alongside the [search tools](mcp-tool-surface.md) and [proof interaction tools](proof-mcp-tools.md).
 
-**Stories**: [Epic 1: Proof State Visualization](../requirements/stories/proof-visualization-widgets.md#epic-1-proof-state-visualization), [Epic 2: Proof Tree Visualization](../requirements/stories/proof-visualization-widgets.md#epic-2-proof-tree-visualization), [Epic 3: Dependency Visualization](../requirements/stories/proof-visualization-widgets.md#epic-3-dependency-visualization), [Epic 4: Proof Sequence Navigation](../requirements/stories/proof-visualization-widgets.md#epic-4-proof-sequence-navigation)
-
 ---
 
 ## Combined Server

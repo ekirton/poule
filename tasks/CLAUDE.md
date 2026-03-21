@@ -19,7 +19,7 @@
 
 **When generating task breakdowns:**
 
-- Decompose from architecture documents and user story documents — not from feature documents or PRDs directly.
+- Decompose from architecture documents — not from feature documents or PRDs directly.
 - Scope each task to a single implementable unit (file, module, or function).
 - Trace every task to a specific requirement or acceptance criterion.
 - Record any decomposition decisions you made **beyond** what the Layer 3 spec prescribed — surface these to the architect.
@@ -34,7 +34,7 @@
   - **Done when:** [completion criteria]
 ```
 
-**One per:** feature, user story, or cohesive implementation unit
+**One per:** feature or cohesive implementation unit
 
 **Marking tasks complete:**
 

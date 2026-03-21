@@ -2,8 +2,6 @@
 
 Read-only access to proof states within an active session — the current state, a state at any step, or the full proof trace.
 
-**Stories**: [Epic 2: Proof State Observation](../requirements/stories/proof-interaction-protocol.md#epic-2-proof-state-observation)
-
 ---
 
 ## Problem
@@ -55,3 +53,39 @@ The initial proof state — the goal as stated in the theorem — is a critical 
 ### Why full trace returns tactics alongside states
 
 A proof state alone is not training data. The (state, tactic, next_state) triple is the fundamental unit of proof-step prediction. Returning tactics inline with states avoids clients needing to correlate two separate sequences.
+
+## Acceptance Criteria
+
+### Observe Current Proof State
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an active session WHEN the observe-state tool is called THEN it returns the current proof state including all open goals, hypotheses, the focused goal, and the current step index
+- GIVEN a proof state with multiple goals WHEN the state is returned THEN each goal includes its index, type, and associated hypotheses
+- GIVEN a proof state WHEN the state is serialized THEN it conforms to the version-stable JSON schema with a declared schema version field
+
+### Get Proof State at a Specific Step
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a session with a completed proof of N tactic steps WHEN the get-state-at-step tool is called with step k (0 ≤ k ≤ N) THEN it returns the proof state after the k-th tactic (step 0 = initial state)
+- GIVEN a step index outside the valid range WHEN the get-state-at-step tool is called THEN a structured error is returned indicating the step is out of range
+
+### Extract Full Proof Trace
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a session with a completed proof of N tactic steps WHEN the extract-trace tool is called THEN it returns all N+1 proof states and the N tactics in order
+- GIVEN the returned trace WHEN it is inspected THEN each entry includes the step index, the tactic applied (except for the initial state), and the resulting proof state
+- GIVEN the returned trace WHEN it is serialized THEN it conforms to the version-stable JSON schema with a declared schema version field
+
+### Incremental Tracing
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a project that has been previously traced WHEN a subset of .v files have changed THEN only the changed files are reprocessed to update proof traces
+- GIVEN incremental tracing WHEN it completes THEN the resulting traces are identical to what a full reprocessing would produce

@@ -2,8 +2,6 @@
 
 Coq proofs are opaque by nature: a proof script is a sequence of tactic invocations that transform an invisible proof state, and the reader must mentally simulate each step to understand why the proof works. Proof Explanation and Teaching provides an `/explain-proof` slash command that walks through a completed proof tactic by tactic, explains each step in plain English, shows how the proof state evolves, and connects the formal manipulation to the underlying mathematical intuition. The result is a readable, pedagogically useful narrative that transforms "I can see it compiles, but I don't understand why it works" into genuine understanding.
 
-**Stories**: [Epic 1: Step-by-Step Proof Explanation](../requirements/stories/proof-explanation.md#epic-1-step-by-step-proof-explanation), [Epic 2: Mathematical Intuition](../requirements/stories/proof-explanation.md#epic-2-mathematical-intuition), [Epic 3: Adjustable Detail Level](../requirements/stories/proof-explanation.md#epic-3-adjustable-detail-level), [Epic 4: Proof Summary and Structure](../requirements/stories/proof-explanation.md#epic-4-proof-summary-and-structure)
-
 ---
 
 ## Problem
@@ -77,3 +75,117 @@ A single explanation style cannot serve all audiences. Newcomers need every step
 ### Why summarize at the end
 
 Step-by-step explanations are valuable for understanding individual tactics, but they can obscure the overall proof strategy. A student who has just read through fifteen tactic explanations may understand each step but still not grasp the high-level argument. The closing summary addresses this by naming the proof strategy, listing the key lemmas, and identifying recognizable patterns — giving the user a mental framework to organize everything they just learned.
+
+---
+
+## Acceptance Criteria
+
+### Step Through a Proof
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a Coq file containing a completed proof WHEN `/explain-proof` is invoked with the theorem name THEN each tactic in the proof is executed sequentially and the proof state before and after each tactic is captured
+- GIVEN a proof with N tactics WHEN the explanation is generated THEN exactly N steps are presented, one per tactic application
+- GIVEN a theorem name that does not exist in the current file WHEN `/explain-proof` is invoked THEN a clear error is returned indicating the theorem was not found
+
+**Traces to:** RPE-P0-1, RPE-P0-5
+
+### Explain Each Tactic in Natural Language
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a tactic step in the proof WHEN its explanation is presented THEN it includes a general description of what the tactic does (e.g., "intros moves hypotheses from the goal into the context") and a specific description of what it accomplished here (e.g., "this introduced the hypothesis n : nat and the induction hypothesis IHn")
+- GIVEN a tactic that changes the number of goals WHEN its explanation is presented THEN the explanation notes how many goals exist before and after
+- GIVEN a tactic that closes a goal WHEN its explanation is presented THEN the explanation confirms the goal was discharged and explains why
+
+**Traces to:** RPE-P0-2
+
+### Display Proof State Evolution
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a tactic step WHEN its explanation is presented THEN the current goal(s) and hypotheses are displayed both before and after the tactic fires
+- GIVEN a tactic that introduces new hypotheses WHEN the proof state is displayed THEN the new hypotheses are clearly identified
+- GIVEN a tactic that modifies the goal (e.g., rewrite, simpl) WHEN the proof state is displayed THEN the change in the goal is evident from comparing the before and after states
+
+**Traces to:** RPE-P0-3
+
+### Handle Compound Tactics
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a tactic of the form `tac1; tac2` WHEN its explanation is presented THEN the explanation describes that `tac1` is applied first and `tac2` is applied to all resulting subgoals
+- GIVEN a tactic using `try` WHEN its explanation is presented THEN the explanation notes that the inner tactic is attempted but failure is silently caught
+- GIVEN a tactic using `repeat` WHEN its explanation is presented THEN the explanation describes how many times the inner tactic was applied before it stopped
+
+**Traces to:** RPE-P0-4
+
+### Connect Tactics to Mathematical Reasoning
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a tactic that applies induction WHEN its explanation is presented THEN it references the mathematical principle of induction, identifies the base case and inductive step, and explains what the induction hypothesis says
+- GIVEN a tactic that applies a rewrite using a known lemma WHEN its explanation is presented THEN it explains the mathematical fact that the lemma captures and why substituting equals for equals is valid here
+- GIVEN a tactic that performs case analysis WHEN its explanation is presented THEN it explains the proof-by-cases strategy and identifies what the distinct cases are
+
+**Traces to:** RPE-P1-1
+
+### Explain Automation Tactics
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a tactic like `auto` that succeeds WHEN its explanation is presented THEN it describes the general search strategy (`auto` tries applying hypotheses and lemmas from hint databases) and, where possible, identifies which lemma or hypothesis it applied
+- GIVEN a decision procedure like `lia` WHEN its explanation is presented THEN it explains that `lia` solves goals in linear integer arithmetic and describes the shape of the goal that made it applicable
+- GIVEN an automation tactic that solves multiple subgoals WHEN its explanation is presented THEN it notes how many subgoals were closed and summarizes the approach for each
+
+**Traces to:** RPE-P1-3
+
+### Brief Explanation Mode
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN the brief detail level is selected WHEN the explanation is generated THEN each tactic step is summarized in a single line (e.g., "Introduces n and IHn" or "Rewrites goal using plus_comm")
+- GIVEN the brief detail level WHEN the explanation is generated THEN proof states are not displayed between steps
+- GIVEN the brief detail level WHEN the explanation completes THEN a one-paragraph summary of the overall proof strategy is provided
+
+**Traces to:** RPE-P1-2
+
+### Verbose Explanation Mode
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN the verbose detail level is selected WHEN the explanation is generated THEN each tactic step includes: general tactic description, context-specific explanation, full proof state before and after, mathematical intuition, and notes on why this tactic was chosen over alternatives
+- GIVEN the verbose detail level WHEN a key proof step is reached (e.g., induction, case analysis) THEN the explanation includes a pedagogical note explaining the proof strategy to a student audience
+- GIVEN the verbose detail level WHEN the explanation completes THEN a detailed summary is provided covering the overall proof strategy, key lemmas used, proof patterns employed, and the logical structure of the argument
+
+**Traces to:** RPE-P1-2, RPE-P1-4
+
+### Summarize the Overall Proof
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a completed proof walkthrough WHEN the summary is presented THEN it describes the high-level proof strategy in one to three sentences (e.g., "This proof proceeds by induction on n, with the base case solved by reflexivity and the inductive step by rewriting with the induction hypothesis and simplifying")
+- GIVEN a proof that uses named lemmas WHEN the summary is presented THEN the key lemmas are listed with a brief description of each
+- GIVEN a proof that employs a recognizable pattern WHEN the summary is presented THEN the pattern is named and described (e.g., "This follows a standard induction-then-rewrite pattern")
+
+**Traces to:** RPE-P1-4, RPE-P2-3
+
+### Export Explanation as Document
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a completed proof explanation WHEN export is requested THEN a markdown document is generated with headings for each tactic step, formatted proof states in code blocks, and narrative explanations in body text
+- GIVEN an exported document WHEN it is rendered in a standard markdown viewer THEN it is readable and well-formatted without further editing
+- GIVEN an exported document WHEN it is reviewed by an educator THEN it can serve as a starting point for teaching materials with minimal modifications
+
+**Traces to:** RPE-P2-2

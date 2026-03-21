@@ -2,8 +2,6 @@
 
 Version-stable JSON serialization of proof traces and proof state diffs, enabling reliable downstream consumption across tool versions.
 
-**Stories**: [Epic 5: Proof Trace Serialization](../requirements/stories/proof-interaction-protocol.md#epic-5-proof-trace-serialization)
-
 ---
 
 ## Problem
@@ -49,3 +47,22 @@ Non-deterministic output (e.g., hash-map iteration order, floating-point formatt
 ### Why diff is P1 rather than P0
 
 Full proof states are sufficient for all training data use cases — diffs are a convenience that can be computed client-side from consecutive states. Promoting diff to P1 reflects its value for tool builders who want efficient UI updates (show only what changed) without burdening the P0 deliverable.
+
+## Acceptance Criteria
+
+### Serialize Proof Trace to JSON
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a proof trace WHEN it is serialized THEN the output is valid JSON containing a top-level schema version field
+- GIVEN traces produced by the same tool version WHEN they are compared THEN the serialization is deterministic (identical input produces identical output)
+- GIVEN a schema version change WHEN a downstream tool reads a trace THEN the schema version field allows it to detect incompatibility
+
+### Proof State Diff
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN two consecutive proof states (step k and step k+1) WHEN the diff tool is called THEN it returns the goals added, goals removed, goals changed, hypotheses added, hypotheses removed, and hypotheses changed
+- GIVEN a diff result WHEN it is inspected THEN changed items include both the before and after values

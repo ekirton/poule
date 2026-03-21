@@ -3,7 +3,6 @@
 All 6 supported Coq libraries are indexed independently, published as per-library assets in a single GitHub Release, and downloaded together into a merged searchable database. Existing search tools work without modification.
 
 **PRD**: [Modular Index Distribution](../requirements/modular-index-distribution.md)
-**Stories**: [Modular Index Distribution](../requirements/stories/modular-index-distribution.md)
 
 ---
 
@@ -86,3 +85,82 @@ It does **not** provide:
 - Per-library selection or user configuration of library subsets
 - Automatic detection of which libraries a user's project needs
 - Runtime switching of library sets without container restart
+
+---
+
+## Acceptance Criteria
+
+### Download All Libraries
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN the system needs a search index WHEN the download runs THEN all 6 per-library index assets (`index-stdlib.db`, `index-mathcomp.db`, `index-stdpp.db`, `index-flocq.db`, `index-coquelicot.db`, `index-coqinterval.db`) are fetched from the release
+- GIVEN a per-library index is already present locally with a checksum matching the current release WHEN the download runs THEN that index is not re-downloaded
+
+### Checksum Verification
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a per-library index is downloaded WHEN its SHA-256 checksum matches the manifest THEN the file is placed in the libraries directory
+- GIVEN a per-library index is downloaded WHEN its SHA-256 checksum does not match the manifest THEN the file is deleted, an error is reported, and the merge does not proceed
+
+### Merge Into Single Database
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN all 6 per-library indexes have been downloaded WHEN the merge completes THEN a single `index.db` exists containing declarations from all 6 libraries
+- GIVEN a merged `index.db` WHEN a search query is executed THEN results from all 6 libraries are returned and ranked together
+- GIVEN a merged `index.db` WHEN a full-text search is executed THEN it searches across declarations from all 6 libraries
+
+### Metadata Tracking
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a merged `index.db` containing all 6 libraries WHEN the metadata is queried THEN it reports all 6 libraries and their versions
+- GIVEN a merged `index.db` WHEN the index is missing a library that should be present THEN the system detects the mismatch
+
+### Pre-installed Libraries
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN the container is running WHEN `From Flocq Require Import Core.Fcore_defs.` is executed in Coq THEN it succeeds without error
+- GIVEN the container is running WHEN `From stdpp Require Import gmap.` is executed in Coq THEN it succeeds without error
+- GIVEN the container is running WHEN `From Coquelicot Require Import Coquelicot.` is executed in Coq THEN it succeeds without error
+
+### Startup Index Check
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN no `index.db` exists in the libraries directory WHEN the container starts THEN all 6 per-library indexes are downloaded, merged, and the index is ready before the user's session begins
+- GIVEN `index.db` exists and is up to date WHEN the container starts THEN no download or rebuild occurs and startup proceeds immediately
+
+### Startup Library Report
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN the container starts with a complete index WHEN the startup message is displayed THEN it lists all 6 libraries with their versions (e.g., "stdlib 8.19.2, mathcomp 2.2.0, ...")
+- GIVEN the container starts and the index was just downloaded WHEN the startup message is displayed THEN it lists all 6 libraries with their versions
+
+### Libraries Volume Mount
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN the libraries directory is mounted from `~/poule-libraries/` WHEN per-library indexes are downloaded THEN they are written to the mounted directory and persist after the container stops
+- GIVEN the libraries directory contains previously downloaded indexes WHEN a new container starts THEN the existing indexes are available without re-downloading
+
+### Launcher Update Flag
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a newer container image is available WHEN `poule --update` is run THEN the latest image is pulled
+- GIVEN newer per-library index assets are available WHEN `poule --update` is run THEN the updated indexes are downloaded and the merged index is rebuilt
+- GIVEN the container image and all indexes are already up to date WHEN `poule --update` is run THEN it reports that everything is current and exits

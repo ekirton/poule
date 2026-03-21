@@ -3,7 +3,6 @@
 The component that manages extraction of verified Coq/Rocq definitions to executable OCaml, Haskell, or Scheme code. Claude Code invokes extraction as an MCP tool; the Extraction Handler constructs the appropriate Coq command, executes it within a proof session, and returns the extracted code for preview or writes it to disk.
 
 **Feature**: [Code Extraction Management](../features/code-extraction-management.md)
-**Stories**: [Epics 1--4](../requirements/stories/code-extraction.md)
 **PRD**: [Code Extraction](../requirements/code-extraction.md)
 
 ---

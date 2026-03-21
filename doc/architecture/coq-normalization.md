@@ -3,7 +3,6 @@
 Transformations applied during tree construction to normalize Coq's kernel term representation for the retrieval algorithms.
 
 **Feature**: [Expression Normalization](../features/expression-normalization.md)
-**Stories**: [Epic 4: Coq-Specific Normalization](../requirements/stories/tree-search-mcp.md#epic-4-coq-specific-normalization)
 **Implementation spec**: [specification/coq-normalization.md](../../specification/coq-normalization.md)
 
 ---

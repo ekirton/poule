@@ -16,7 +16,7 @@ Do not modify `data-models/`. If an architecture document conflicts with a data 
 
 **Layer:** 3 — Design Specification
 **Location:** `doc/architecture/<component-or-concern>.md`
-**Derived from:** `doc/features/`, `doc/requirements/stories/`
+**Derived from:** `doc/features/`
 **Authoritative for:** `specification/`
 
 - Open each document with a pointer to the corresponding feature document.

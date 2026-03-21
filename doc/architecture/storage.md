@@ -3,7 +3,6 @@
 SQLite database schema for the search index. Single file, no external services.
 
 **Feature**: [Library Indexing](../features/library-indexing.md)
-**Stories**: [Epic 1: Library Indexing](../requirements/stories/tree-search-mcp.md#epic-1-library-indexing)
 
 ---
 

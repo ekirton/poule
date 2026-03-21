@@ -2,8 +2,6 @@
 
 Managed extraction of verified Coq/Rocq definitions to executable OCaml, Haskell, or Scheme. Claude Code invokes extraction as a tool to bridge the gap between formally verified specifications and runnable programs — handling target language selection, dependency resolution, failure diagnosis, and output preview so the user never has to write raw extraction commands or decipher opaque error messages.
 
-**Stories:** [Epic 1: Basic Extraction](../requirements/stories/code-extraction.md#epic-1-basic-extraction), [Epic 2: Target Language Selection](../requirements/stories/code-extraction.md#epic-2-target-language-selection), [Epic 3: Extraction Failure Handling](../requirements/stories/code-extraction.md#epic-3-extraction-failure-handling), [Epic 4: Extraction Preview](../requirements/stories/code-extraction.md#epic-4-extraction-preview)
-
 ---
 
 ## Problem
@@ -47,3 +45,65 @@ A Coq proof is a mathematical artifact. It establishes that a property holds for
 ### Relationship to assumption auditing
 
 Extraction quality is directly tied to the logical health of the definitions being extracted. A definition that depends on axioms without realizers will either fail to extract or produce code with holes — `assert false` stubs where the axiom's computational content should be. This is where extraction management connects to assumption auditing: axiom-free proofs extract cleanly, while axiom-dependent proofs require explicit realizer bindings. By surfacing axiom warnings during extraction, the tool closes the loop between proof hygiene and code generation — users discover at extraction time, not at runtime, that their verified code rests on unimplemented assumptions.
+
+---
+
+## Acceptance Criteria
+
+### Extract a Single Definition
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a Coq environment with a defined term `my_function` WHEN I request extraction of `my_function` to OCaml THEN the tool returns valid OCaml code corresponding to that definition
+- GIVEN a Coq environment with a defined term `my_function` WHEN I request extraction to Haskell THEN the tool returns valid Haskell code corresponding to that definition
+- GIVEN a Coq environment with a defined term `my_function` WHEN I request extraction to Scheme THEN the tool returns valid Scheme code corresponding to that definition
+- GIVEN a definition name that does not exist in the current environment WHEN I request extraction THEN the tool returns an error identifying the unknown name
+
+**Traces to:** R-CE-P0-1, R-CE-P0-3
+
+### Recursive Extraction
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a definition `serialize` that depends on `encode` and `to_bytes` WHEN I request recursive extraction of `serialize` to OCaml THEN the tool returns extracted code for `serialize`, `encode`, and `to_bytes`
+- GIVEN a recursive extraction request WHEN the result is returned THEN all transitive dependencies are included in the output
+- GIVEN a definition with no dependencies beyond Coq's built-in types WHEN I request recursive extraction THEN the output contains only the extracted definition itself
+
+**Traces to:** R-CE-P0-2, R-CE-P0-3
+
+### Choose Target Language
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a valid extraction request WHEN I specify OCaml as the target THEN the tool produces OCaml syntax
+- GIVEN a valid extraction request WHEN I specify Haskell as the target THEN the tool produces Haskell syntax
+- GIVEN a valid extraction request WHEN I specify Scheme as the target THEN the tool produces Scheme syntax
+- GIVEN a valid extraction request WHEN I specify an unsupported language (e.g., Python) THEN the tool returns an error listing the supported languages
+
+**Traces to:** R-CE-P0-3
+
+### Explain Extraction Failures
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a definition that references an opaque term WHEN extraction fails THEN the tool explains that the term is opaque and suggests using `Transparent` or providing an extraction directive
+- GIVEN a definition that depends on an axiom without a realizer WHEN extraction fails THEN the tool identifies the axiom and suggests providing an `Extract Constant` directive
+- GIVEN a definition with a universe inconsistency during extraction WHEN extraction fails THEN the tool explains the universe issue and suggests potential restructurings
+- GIVEN any extraction failure WHEN the error is returned THEN the response includes both the raw Coq error and a plain-language explanation with at least one suggested fix
+
+**Traces to:** R-CE-P0-4
+
+### Preview Extracted Code Before Writing
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a successful extraction request WHEN the result is returned THEN the extracted code is displayed in the response and no file is written to disk
+- GIVEN a previewed extraction WHEN I am satisfied with the output THEN I can request the tool to write the code to a specified file path
+- GIVEN a previewed extraction WHEN I am not satisfied THEN I can request extraction again with different options without any file having been created
+
+**Traces to:** R-CE-P0-5, R-CE-P1-2

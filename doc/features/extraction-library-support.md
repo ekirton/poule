@@ -2,8 +2,6 @@
 
 Which Coq libraries and projects the extraction pipeline supports, at what fidelity, and why the coverage tiers are structured as they are.
 
-**Stories**: [Epic 6: Library Coverage](../requirements/stories/training-data-extraction.md#epic-6-library-coverage), [Story 10.1: Custom Proof Mode Support](../requirements/stories/training-data-extraction.md#101-custom-proof-mode-support)
-
 ---
 
 ## Problem
@@ -66,3 +64,47 @@ It does **not** provide:
 - Automatic detection of proof mode type or tactic framework
 - Framework-specific extraction plugins or adapters
 - Cross-language extraction (Lean, Isabelle)
+
+## Acceptance Criteria
+
+### Coq Standard Library Extraction
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN the Coq standard library WHEN extraction is run THEN ≥ 95% of provable theorems produce successful proof trace records
+- GIVEN the extraction output WHEN theorem names are inspected THEN they are fully qualified and match the standard library's module structure
+- GIVEN the Coq standard library WHEN extraction is run on a single machine without GPU THEN extraction completes in under 1 hour
+
+**Traces to:** R3-P0-7
+
+### MathComp Extraction
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN the MathComp library WHEN extraction is run THEN ≥ 90% of provable theorems produce successful proof trace records
+- GIVEN MathComp proofs that use ssreflect tactics WHEN they are extracted THEN the per-step tactic text and proof states are correctly captured
+
+**Traces to:** R3-P0-8
+
+### Arbitrary Opam-Installable Projects
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN an opam-installable Coq project that builds successfully WHEN extraction is run THEN proof traces are produced for provable theorems in that project
+- GIVEN at least two standard-Ltac projects (e.g., Flocq, stdpp) WHEN extraction is run THEN proof traces are successfully produced
+- GIVEN at least two ssreflect-based projects (e.g., MathComp satellites) WHEN extraction is run THEN proof traces are successfully produced
+
+**Traces to:** R3-P1-7
+
+### Custom Proof Mode Support
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a project using custom proof modes (e.g., Iris iProofMode) WHEN extraction is run THEN proof traces are produced with best-effort premise annotations
+- GIVEN a custom tactic that wraps standard Coq tactics WHEN extraction encounters it THEN the output accepts reduced premise annotation granularity rather than failing
+
+**Traces to:** R3-P2-1

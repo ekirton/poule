@@ -3,7 +3,6 @@
 The component that transforms proof interaction data structures into Mermaid diagram syntax. It consumes ProofState, ProofTrace, and dependency data produced by the Proof Session Manager, and returns Mermaid text strings that can be rendered by any Mermaid-compatible service.
 
 **Feature**: [Proof State Visualization](../features/proof-state-visualization.md), [Proof Tree Visualization](../features/proof-tree-visualization.md), [Dependency Visualization](../features/dependency-visualization.md), [Visualization MCP Tools](../features/visualization-mcp-tools.md)
-**Stories**: [Epics 1–4](../requirements/stories/proof-visualization-widgets.md)
 **Data models**: [proof-types.md](data-models/proof-types.md)
 
 ---

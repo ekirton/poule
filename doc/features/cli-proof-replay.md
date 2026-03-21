@@ -2,8 +2,6 @@
 
 Batch proof trace extraction from the terminal, for Coq developers, CI pipelines, and dataset-building scripts that do not use an MCP client.
 
-**Stories**: [Epic 8: Batch Proof Replay CLI](../requirements/stories/proof-interaction-protocol.md#epic-8-batch-proof-replay-cli)
-
 ---
 
 ## Problem
@@ -50,3 +48,37 @@ It does **not** provide:
 - Tactic submission or proof exploration (MCP-mediated)
 - Partial trace extraction or step ranges
 - Multiple proofs in a single invocation
+
+## Acceptance Criteria
+
+### Replay Proof Trace via CLI
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a valid .v file and a named proof within it WHEN `replay-proof <file_path> <proof_name>` is executed THEN the command prints a human-readable trace to stdout showing each proof step with its tactic, goals, and hypotheses, and exits with code 0
+- GIVEN a valid .v file and proof WHEN `replay-proof <file_path> <proof_name> --json` is executed THEN the command prints the serialized proof trace as JSON to stdout and exits with code 0
+- GIVEN the JSON output WHEN it is parsed THEN it conforms to the `ProofTrace` schema produced by `serialize_proof_trace()`
+
+**Traces to:** R2-P0-5
+
+### Replay Proof with Premise Annotations
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a valid proof WHEN `replay-proof <file_path> <proof_name> --premises` is executed THEN the output includes per-step premise annotations alongside the proof trace
+- GIVEN `--json --premises` flags WHEN the command is executed THEN the JSON output wraps the trace and premises as `{"trace": ..., "premises": [...]}`
+- GIVEN the premise annotations WHEN they are inspected THEN each annotation includes the step index, tactic, and list of premises with name and kind
+
+**Traces to:** R2-P0-6
+
+### Replay Proof Error Handling
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a file path that does not exist WHEN `replay-proof` is executed THEN an error message is printed to stderr and the command exits with code 1
+- GIVEN a valid file but a nonexistent proof name WHEN `replay-proof` is executed THEN an error message is printed to stderr and the command exits with code 1
+- GIVEN a Coq backend crash during replay WHEN the error is detected THEN an error message is printed to stderr, the session is cleaned up, and the command exits with code 1
+- GIVEN missing required arguments WHEN `replay-proof` is executed THEN the command exits with code 2 (usage error)

@@ -4,7 +4,7 @@
 
 **Location:** `doc/requirements/<product-or-initiative>.md`
 
-**Authority:** PRDs are the **top-level authority** for project scope, goals, and priorities. All downstream documents — user stories, features, architecture, specifications, and tasks — must be traceable to PRD requirements. PRDs are not derived from any other project document.
+**Authority:** PRDs are the **top-level authority** for project scope, goals, and priorities. All downstream documents — features, architecture, specifications, and tasks — must be traceable to PRD requirements. PRDs are not derived from any other project document.
 
 **When writing or editing PRDs:**
 
@@ -21,6 +21,6 @@
 **Location:** `doc/requirements/backlog.md` (singleton)
 
 - A planning artifact, not a specification artifact.
-- Reference user story and feature documents by pointer — do not duplicate their content.
+- Reference feature documents by pointer — do not duplicate their content.
 - Track: prioritized ordering, status (proposed/ready/in-progress/done), dependencies, and iteration assignment.
 - Changes to the backlog do not trigger specification regeneration.

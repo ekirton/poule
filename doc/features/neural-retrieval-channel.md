@@ -2,8 +2,6 @@
 
 A learned semantic similarity channel added to the multi-channel retrieval pipeline, trained on Coq proof traces to capture mathematical relationships that structural and symbolic channels miss.
 
-**Stories**: [Epic 3: Index Integration](../requirements/stories/neural-premise-selection.md#epic-3-index-integration), [Epic 4: Inference Performance](../requirements/stories/neural-premise-selection.md#epic-4-inference-performance)
-
 ---
 
 ## Problem
@@ -64,3 +62,50 @@ The existing fusion mechanism combines channels without learned weights. Adding 
 ### Why CPU-only inference
 
 The research evidence is clear: 100M-class models with INT8 quantization achieve <10ms per encoding on any modern CPU. At 50K declarations, brute-force FAISS search adds <5ms. Total neural channel latency: ~15ms. Requiring a GPU would exclude most Coq developers and violate the project's zero-config deployment principle. The quality gap between 100M CPU models and 7B GPU models is small when compensated by hybrid ranking (LeanExplore's 109M off-the-shelf model matched or beat 7B fine-tuned models with hybrid ranking).
+
+---
+
+## Acceptance Criteria
+
+### Embed Premises into the Search Index
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a pre-trained model checkpoint and a Semantic Lemma Search index WHEN the index rebuild is triggered THEN premise embeddings are computed for all declarations and stored in the SQLite database
+- GIVEN a library of 50,000 declarations WHEN premise embeddings are computed on CPU with INT8 quantization THEN the embedding step completes in under 10 minutes
+- GIVEN the embeddings are stored WHEN the database is inspected THEN each declaration has a corresponding embedding vector alongside its existing retrieval data
+
+### Neural Channel Participates in Hybrid Ranking
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a search query submitted via the MCP server or CLI WHEN the neural channel is available THEN the neural channel's ranked results are included in the fusion step alongside existing channels
+- GIVEN a search query WHEN the neural channel returns results THEN the fused ranking promotes items that appear in multiple channels (neural + symbolic + structural)
+- GIVEN a search query WHEN the neural channel is not available (no model checkpoint or embeddings) THEN search operates using only existing channels with no errors or degradation
+
+### Configurable Retrieval Budget
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a search query with a retrieval budget parameter WHEN the neural channel executes THEN it returns at most the specified number of candidates (default: 32)
+- GIVEN a retrieval budget of 128 on a 50,000-declaration index WHEN the query executes on CPU THEN the neural channel completes in under 100ms
+
+### CPU Inference with INT8 Quantization
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a pre-trained model checkpoint WHEN the quantize command is run THEN an INT8 quantized model is produced that can be loaded without a GPU
+- GIVEN an INT8 quantized model and a 50,000-declaration index WHEN a single proof state is encoded and the top-32 premises are retrieved THEN the total latency is under 100ms on a modern laptop CPU
+- GIVEN the INT8 quantized model WHEN Recall@32 is compared to the full-precision model on the same test set THEN the quantized model achieves at least 95% of the full-precision Recall@32
+
+### End-to-End Search Latency
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a 50,000-declaration index with all channels active (neural, structural, symbolic) WHEN a search query is submitted THEN the end-to-end response time is under 1 second on a modern laptop CPU
+- GIVEN multiple concurrent search queries WHEN they are submitted within 1 second THEN each query completes within 1 second (no serialization bottleneck)

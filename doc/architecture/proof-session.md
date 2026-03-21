@@ -3,7 +3,6 @@
 The stateful component that manages interactive proof sessions, mediating between the MCP Server and Coq backend processes. Each session encapsulates a single proof within a single .v file.
 
 **Feature**: [Proof Session Management](../features/proof-session-management.md), [Proof State Observation](../features/proof-state-observation.md), [Tactic Interaction](../features/tactic-interaction.md), [Premise Tracking](../features/premise-tracking.md)
-**Stories**: [Epics 1–4, 7](../requirements/stories/proof-interaction-protocol.md)
 **Data models**: [proof-types.md](data-models/proof-types.md)
 
 ---

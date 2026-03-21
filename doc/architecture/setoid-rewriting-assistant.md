@@ -3,7 +3,6 @@
 The component that diagnoses `setoid_rewrite` failures by parsing error messages and proof state to identify missing `Proper` instances, checks existing instances in the environment, generates `Instance Proper ...` declaration skeletons with correct `respectful` signatures, and detects when `rewrite` should be replaced with `setoid_rewrite` under binders.
 
 **Feature**: [Setoid Rewriting Assistant](../features/setoid-rewriting-assistant.md)
-**Stories**: [Epics 1–4](../requirements/stories/setoid-rewriting-assistant.md)
 
 ---
 

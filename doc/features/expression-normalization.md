@@ -2,8 +2,6 @@
 
 Coq expressions are normalized before indexing and at query time so that surface-level syntactic variation does not affect search results.
 
-**Stories**: [Epic 4: Coq-Specific Normalization](../requirements/stories/tree-search-mcp.md#epic-4-coq-specific-normalization)
-
 ---
 
 ## Problem

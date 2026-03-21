@@ -11,7 +11,7 @@ Poule indexes compiled Coq `.vo` libraries into a SQLite database and provides m
 
 Six Coq libraries are available as prebuilt indexes: **stdlib**, **MathComp**, **std++**, **Flocq**, **Coquelicot**, and **CoqInterval**. All 6 are downloaded and merged into a single searchable index — no configuration required.
 
-> 👉 **TL;DR — [See examples of what you can ask Poule](examples.md)**
+> 👉 **TL;DR — [See examples of what you can ask Poule](examples/README.md)**
 
 ## Features
 

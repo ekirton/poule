@@ -3,7 +3,6 @@
 The adapter layer between the MCP Server and the external build tools (`coq_makefile`, Dune, opam). It detects which build system a project uses, generates and updates configuration files, executes builds as subprocesses, parses build errors into structured data for LLM interpretation, and queries/manages opam dependencies.
 
 **Feature**: [Build System Integration](../features/build-system-integration.md)
-**Stories**: [Epic 1: Project File Generation](../requirements/stories/build-system-integration.md#epic-1-project-file-generation), [Epic 2: Build Execution and Error Interpretation](../requirements/stories/build-system-integration.md#epic-2-build-execution-and-error-interpretation), [Epic 3: Package and Dependency Management](../requirements/stories/build-system-integration.md#epic-3-package-and-dependency-management), [Epic 4: Configuration Maintenance](../requirements/stories/build-system-integration.md#epic-4-configuration-maintenance)
 
 ---
 

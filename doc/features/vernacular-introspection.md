@@ -2,8 +2,6 @@
 
 A single MCP tool that gives Claude direct access to Coq's built-in vernacular introspection commands -- Print, Check, About, Locate, Search, Compute, and Eval -- so it can inspect types, unfold definitions, evaluate expressions, and locate names without the user acting as a relay between Claude Code and a Coq toplevel.
 
-**Stories**: [Vernacular Introspection](../requirements/stories/vernacular-introspection.md)
-
 ---
 
 ## Problem
@@ -45,3 +43,91 @@ Print, Check, About, Locate, Search, Compute, and Eval are the vernacular comman
 ### Session-aware, not session-free
 
 Introspection commands run against whatever Coq environment the MCP server currently manages: loaded files, imported modules, and any active proof session. When a proof is in progress, commands automatically see local hypotheses and let-bindings. This means the user does not need to tell Claude "I'm in a proof" or re-state their context -- the tool picks it up from the session. The tradeoff is that results depend on session state, so the same query can return different results at different points in a development. This matches how Coq itself works and avoids the complexity of maintaining a separate stateless query endpoint.
+
+## Acceptance Criteria
+
+### Definition Inspection
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a valid fully qualified name of a defined constant WHEN the introspection tool is called with command `Print` and that name THEN the response includes the complete definition body as Coq would display it
+- GIVEN a valid name of an inductive type WHEN the introspection tool is called with command `Print` THEN the response includes the inductive definition with all constructors
+- GIVEN a name that does not exist in the current environment WHEN the introspection tool is called with command `Print` THEN a structured error is returned indicating the name was not found
+
+### Print Assumptions
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a valid name of a defined constant or theorem WHEN the introspection tool is called with command `Print` and the `assumptions` option THEN the response lists all axioms the definition transitively depends on
+- GIVEN a definition with no axiom dependencies WHEN the command is executed THEN the response indicates the definition is axiom-free
+
+### Type Checking
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a well-typed Coq expression WHEN the introspection tool is called with command `Check` and that expression THEN the response includes the inferred type of the expression
+- GIVEN a simple name of a lemma or constant WHEN the introspection tool is called with command `Check` THEN the response includes the type (statement) of that lemma or constant
+- GIVEN an ill-typed expression WHEN the introspection tool is called with command `Check` THEN a structured error is returned including the Coq type error message
+- GIVEN an active proof session with hypotheses in context WHEN the introspection tool is called with command `Check` and a term referencing a local hypothesis THEN the response includes the type of that term resolved against the proof context
+- GIVEN an active proof session WHEN the introspection tool is called with command `Check` and a term that does not reference local hypotheses THEN the response includes the type resolved against the global environment as usual
+
+### Metadata and Name Resolution
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a valid name WHEN the introspection tool is called with command `About` THEN the response includes the kind (e.g., Theorem, Definition, Inductive, Constructor), the defining module, and whether it is opaque or transparent
+- GIVEN a name that does not exist in the current environment WHEN the introspection tool is called with command `About` THEN a structured error is returned indicating the name was not found
+- GIVEN a short name that resolves to a unique fully qualified path WHEN the introspection tool is called with command `Locate` THEN the response includes the fully qualified name and its kind
+- GIVEN a short name that resolves to multiple qualified paths WHEN the introspection tool is called with command `Locate` THEN the response includes all matching qualified names and their kinds
+- GIVEN a name that cannot be located WHEN the introspection tool is called with command `Locate` THEN a structured error is returned indicating the name was not found
+- GIVEN a notation string WHEN the introspection tool is called with command `Locate` THEN the response includes the notation's defining scope and interpretation
+
+### Search
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a valid search pattern (e.g., a type fragment) WHEN the introspection tool is called with command `Search` and that pattern THEN the response includes a list of matching names with their types
+- GIVEN a search pattern that matches no names WHEN the introspection tool is called with command `Search` THEN the response indicates no results were found
+- GIVEN a search pattern that produces a large number of results WHEN the introspection tool is called THEN results are truncated at a reasonable limit and the response indicates truncation occurred
+
+### Search with Scope Restriction
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a search pattern and a module scope qualifier WHEN the introspection tool is called with command `Search` and the scope restriction THEN only names within the specified module are returned
+- GIVEN a scope qualifier that names a nonexistent module WHEN the introspection tool is called THEN a structured error is returned indicating the module was not found
+
+### Expression Evaluation
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a well-typed Coq expression WHEN the introspection tool is called with command `Compute` and that expression THEN the response includes the fully reduced normal form of the expression
+- GIVEN an ill-typed expression WHEN the introspection tool is called with command `Compute` THEN a structured error is returned including the Coq error message
+- GIVEN a term whose reduction does not terminate within a reasonable time WHEN the introspection tool is called with command `Compute` THEN a structured error is returned indicating the computation timed out
+- GIVEN a well-typed expression and a valid reduction strategy name WHEN the introspection tool is called with command `Eval` and the strategy and expression THEN the response includes the term reduced under that strategy
+- GIVEN an invalid or unsupported strategy name WHEN the introspection tool is called with command `Eval` THEN a structured error is returned indicating the strategy is not recognized
+- GIVEN the `unfold` strategy and a list of names to unfold WHEN the introspection tool is called THEN only the specified names are unfolded in the result
+- GIVEN an active proof session with let-bound hypotheses WHEN the introspection tool is called with command `Compute` and a term referencing those hypotheses THEN the response includes the reduced form using the hypothesis values
+- GIVEN an active proof session WHEN the introspection tool is called with command `Eval` with a strategy and a term referencing proof context THEN the response includes the term reduced under that strategy using the proof context
+
+### Unified Tool Interface and Error Handling
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN the MCP server is running WHEN the tool list is requested THEN there is exactly one new tool for vernacular introspection (not one per command)
+- GIVEN the introspection tool WHEN it is called with a `command` parameter set to any of `Print`, `Check`, `About`, `Locate`, `Search`, `Compute`, or `Eval` THEN the corresponding Coq vernacular command is executed
+- GIVEN the introspection tool WHEN it is called with an unrecognized command parameter THEN a structured error is returned listing the valid command values
+- GIVEN any introspection command that fails WHEN the error is returned THEN the MCP response includes a structured error with the original command, the input that caused the error, and the Coq error message
+- GIVEN a name-not-found error WHEN the error is returned THEN the error type is distinguishable from a type error or a malformed-command error
+- GIVEN a malformed input (e.g., unparseable expression) WHEN the introspection tool is called THEN a structured error is returned indicating a parse failure with the Coq error message
+- GIVEN no active proof session WHEN an introspection command is executed THEN it runs against the global Coq environment
+- GIVEN an active proof session WHEN an introspection command is executed THEN it runs in the context of the current proof state, with access to local hypotheses and let-bindings
+- GIVEN an active proof session WHEN the introspection tool is called with a term that references a local hypothesis by name THEN the command succeeds and uses the hypothesis from the proof context

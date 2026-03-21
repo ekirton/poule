@@ -3,7 +3,6 @@
 How extracted proof traces are serialized to JSON Lines, how provenance metadata is structured, and how the output stream is organized.
 
 **Feature**: [Extraction Trace Format](../features/extraction-trace-format.md)
-**Stories**: [Epic 2: Proof Trace Record Structure](../requirements/stories/training-data-extraction.md#epic-2-proof-trace-record-structure), [Epic 3: Output Format and Schema](../requirements/stories/training-data-extraction.md#epic-3-output-format-and-schema)
 **Data models**: [extraction-types.md](data-models/extraction-types.md)
 
 ---

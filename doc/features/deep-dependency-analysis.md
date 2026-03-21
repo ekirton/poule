@@ -2,8 +2,6 @@
 
 Transitive dependency analysis for Coq projects — full forward and reverse dependency closures, cycle detection, impact analysis, and module-level summaries — built on coq-dpdgraph and exposed as MCP tools. This extends Poule's existing `find_related` (direct dependency navigation) and `visualize_dependencies` (subgraph rendering) into a complete dependency intelligence layer that operates at project scale.
 
-**Stories**: [Epic 1: Transitive Dependency Closure](../requirements/stories/dependency-graph-extraction.md#epic-1-transitive-dependency-closure), [Epic 2: Cycle Detection](../requirements/stories/dependency-graph-extraction.md#epic-2-cycle-detection), [Epic 3: Module-Level Dependency Summaries](../requirements/stories/dependency-graph-extraction.md#epic-3-module-level-dependency-summaries)
-
 ---
 
 ## Problem
@@ -51,3 +49,125 @@ Extracted transitive closures, impact sets, and cycle reports integrate with `vi
 coq-dpdgraph already solves the hard problem: extracting full dependency graphs from compiled Coq developments. It handles the complexities of Coq's module system, universe polymorphism, and opaque proofs, producing correct dependency data as structured output. Reimplementing this extraction would be substantial and error-prone.
 
 What coq-dpdgraph lacks is interactive, on-demand access within an editing session. It is a command-line tool that produces static output files requiring manual post-processing. Wrapping it behind MCP tools brings its capabilities into the Claude Code workflow — engineers query dependencies conversationally without learning coq-dpdgraph's CLI, processing its output formats, or leaving their editor. The wrapper adds the query layer (transitive closure, reverse dependencies, cycle enumeration, module aggregation) on top of coq-dpdgraph's extraction layer.
+
+---
+
+## Acceptance Criteria
+
+### Compute Forward Transitive Closure
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a fully qualified definition name in a compiled Coq project WHEN the transitive closure tool is invoked THEN it returns the complete set of definitions, lemmas, axioms, and constructors that the target transitively depends on
+- GIVEN a definition with no dependencies beyond itself WHEN the transitive closure tool is invoked THEN it returns an empty dependency set
+- GIVEN a definition in the Coq standard library WHEN the transitive closure tool is invoked THEN it returns results in under 5 seconds
+
+**Traces to:** R7-P0-1, R7-P0-4, R7-P0-5
+
+### Compute Reverse Dependencies (Impact Analysis)
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a fully qualified definition name WHEN the impact analysis tool is invoked THEN it returns all definitions, lemmas, and theorems in the project that transitively depend on the target
+- GIVEN a definition that nothing depends on WHEN the impact analysis tool is invoked THEN it returns an empty set
+- GIVEN a foundational definition used throughout a project WHEN the impact analysis tool is invoked THEN the result includes all transitive dependents, not just direct dependents
+
+**Traces to:** R7-P0-2, R7-P0-4, R7-P0-5
+
+### Detect Dependency Cycles
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a Coq project with one or more dependency cycles WHEN the cycle detection tool is invoked THEN it returns each cycle as an ordered list of fully qualified participant names
+- GIVEN a Coq project with no dependency cycles WHEN the cycle detection tool is invoked THEN it returns an empty result indicating no cycles were found
+- GIVEN a project with multiple overlapping cycles WHEN the cycle detection tool is invoked THEN each distinct cycle is reported separately with zero false positives
+
+**Traces to:** R7-P0-3, R7-P0-4, R7-P0-5
+
+### Produce Module-Level Summaries
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a Coq project WHEN the module summary tool is invoked THEN it returns a list of modules, each with its inbound dependencies (modules that depend on it) and outbound dependencies (modules it depends on)
+- GIVEN a module summary entry WHEN it is inspected THEN it includes fan-in count (number of modules depending on this module) and fan-out count (number of modules this module depends on)
+- GIVEN a project with a single module WHEN the module summary tool is invoked THEN it returns that module with zero inbound and zero outbound module-level dependencies
+
+**Traces to:** R7-P1-1, R7-P0-4
+
+### Filter Dependencies by Depth
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a definition and a depth limit of N WHEN the transitive closure tool is invoked with depth=N THEN it returns only dependencies reachable within N hops
+- GIVEN a depth limit of 1 WHEN the transitive closure tool is invoked THEN it returns only direct dependencies (equivalent to `find_related`)
+- GIVEN a depth limit of 0 WHEN the transitive closure tool is invoked THEN it returns an empty dependency set
+
+**Traces to:** R7-P1-2, R7-P0-4
+
+### Filter Dependencies by Scope
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a scope filter restricting to a specific module WHEN a dependency query is invoked THEN only dependencies within that module are included in the result
+- GIVEN a scope filter excluding the standard library WHEN a dependency query is invoked THEN no standard library definitions appear in the result
+- GIVEN no scope filter WHEN a dependency query is invoked THEN all dependencies are included regardless of their module (default behavior)
+
+**Traces to:** R7-P1-3, R7-P0-4
+
+### Render Extracted Graphs with Existing Visualization
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a transitive closure result WHEN the user requests visualization THEN the result is rendered using Poule's `visualize_dependencies` tool
+- GIVEN an impact analysis result WHEN the user requests visualization THEN the affected definitions are rendered as a dependency subgraph
+- GIVEN a cycle detection result WHEN the user requests visualization THEN each cycle is highlighted in the rendered graph
+
+**Traces to:** R7-P1-4, R7-P0-4
+
+### Cache Extracted Dependency Graphs
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a project whose dependency graph has already been extracted WHEN a new dependency query is made against the same project THEN the cached graph is reused without re-extraction
+- GIVEN a cached graph WHEN the underlying project source files have changed THEN the cache is invalidated and the graph is re-extracted on the next query
+- GIVEN no prior extraction for a project WHEN a dependency query is made THEN the graph is extracted, the query is answered, and the graph is cached for future queries
+
+**Traces to:** R7-P1-5
+
+### Rank Impact by Coupling Metric
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN an impact analysis result WHEN ranking is requested THEN the results are sorted by number of transitive dependents in descending order
+- GIVEN a ranked result WHEN it is inspected THEN each entry includes the coupling metric value alongside the definition name
+
+**Traces to:** R7-P2-1
+
+### Identify Strongly Connected Components
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a Coq project WHEN strongly connected component analysis is invoked THEN it returns each component as a list of participant definitions with the component size
+- GIVEN a project with no cycles WHEN the analysis is invoked THEN every strongly connected component has size 1
+
+**Traces to:** R7-P2-2
+
+### Export Dependency Graphs
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN an extracted dependency graph WHEN export to DOT format is requested THEN the output is a valid DOT file loadable by Graphviz
+- GIVEN an extracted dependency graph WHEN export to JSON adjacency list is requested THEN the output is valid JSON with each node listing its outbound edges
+
+**Traces to:** R7-P2-4

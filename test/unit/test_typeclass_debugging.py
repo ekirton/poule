@@ -166,19 +166,20 @@ def _make_failure_explanation(**kwargs):
 
 
 def _make_mock_session_manager(vernacular_responses=None):
-    """Create a mock session manager with execute_vernacular support.
+    """Create a mock session manager with send_command support.
 
     vernacular_responses: dict mapping command string to response string.
+    Per spec §6, typeclass debugging uses submit_command (coqtop routing).
     """
     manager = AsyncMock()
     vernacular_responses = vernacular_responses or {}
 
-    async def _execute(session_id, command):
+    async def _send(session_id, command, *, prefer_coqtop=False):
         if command in vernacular_responses:
             return vernacular_responses[command]
         return ""
 
-    manager.execute_vernacular.side_effect = _execute
+    manager.send_command.side_effect = _send
     return manager
 
 
@@ -273,7 +274,7 @@ class TestListInstances:
         _, SESSION_NOT_FOUND, SessionError = _import_session_errors()
 
         manager = AsyncMock()
-        manager.execute_vernacular.side_effect = SessionError(
+        manager.send_command.side_effect = SessionError(
             SESSION_NOT_FOUND, "not found"
         )
         with pytest.raises(SessionError) as exc_info:
@@ -298,7 +299,7 @@ class TestListInstances:
             session_manager=manager,
         )
         # Only Print Instances should be called -- no state-altering commands
-        for call in manager.execute_vernacular.call_args_list:
+        for call in manager.send_command.call_args_list:
             cmd = call[0][1] if len(call[0]) > 1 else call[1].get("command", "")
             assert "Print Instances" in cmd or "Print" in cmd
 
@@ -381,7 +382,7 @@ class TestListTypeclasses:
             session_manager=manager,
         )
         # Only Print Typeclasses should be called, not any Print Instances
-        for call in manager.execute_vernacular.call_args_list:
+        for call in manager.send_command.call_args_list:
             cmd = call[0][1] if len(call[0]) > 1 else call[1].get("command", "")
             assert "Print Instances" not in cmd
 
@@ -409,10 +410,10 @@ class TestTraceResolution:
             "Unset Typeclasses Debug.": "",
         })
         # The trace_resolution captures debug output during goal resolution re-trigger
-        manager.execute_vernacular.side_effect = None
+        manager.send_command.side_effect = None
         call_count = 0
 
-        async def _execute(session_id, command):
+        async def _execute(session_id, command, *, prefer_coqtop=False):
             nonlocal call_count
             call_count += 1
             if "Set Typeclasses Debug Verbosity 2" in command:
@@ -422,7 +423,7 @@ class TestTraceResolution:
             # The re-trigger command captures debug output
             return debug_output
 
-        manager.execute_vernacular.side_effect = _execute
+        manager.send_command.side_effect = _execute
 
         result = await trace_resolution(
             session_id="abc123",
@@ -436,7 +437,7 @@ class TestTraceResolution:
         """Given a goal without typeclass resolution, returns NO_TYPECLASS_GOAL error."""
         _, _, trace_resolution, *_ = _import_debugging()
 
-        async def _execute(session_id, command):
+        async def _execute(session_id, command, *, prefer_coqtop=False):
             if "Set Typeclasses Debug Verbosity 2" in command:
                 return ""
             if "Unset Typeclasses Debug" in command:
@@ -445,7 +446,7 @@ class TestTraceResolution:
             return ""
 
         manager = AsyncMock()
-        manager.execute_vernacular.side_effect = _execute
+        manager.send_command.side_effect = _execute
 
         with pytest.raises(Exception) as exc_info:
             await trace_resolution(
@@ -464,7 +465,7 @@ class TestTraceResolution:
 
         call_count = 0
 
-        async def _execute(session_id, command):
+        async def _execute(session_id, command, *, prefer_coqtop=False):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -472,7 +473,7 @@ class TestTraceResolution:
             raise SessionError(BACKEND_CRASHED, "backend crashed")
 
         manager = AsyncMock()
-        manager.execute_vernacular.side_effect = _execute
+        manager.send_command.side_effect = _execute
 
         with pytest.raises(SessionError) as exc_info:
             await trace_resolution(
@@ -488,7 +489,7 @@ class TestTraceResolution:
 
         commands_sent = []
 
-        async def _execute(session_id, command):
+        async def _execute(session_id, command, *, prefer_coqtop=False):
             commands_sent.append(command)
             if "Set Typeclasses Debug Verbosity 2" in command:
                 return ""
@@ -497,7 +498,7 @@ class TestTraceResolution:
             return "1: looking for Eq nat\n  1.1: trying Eq_nat -- success\n"
 
         manager = AsyncMock()
-        manager.execute_vernacular.side_effect = _execute
+        manager.send_command.side_effect = _execute
 
         await trace_resolution(
             session_id="abc123",
@@ -514,7 +515,7 @@ class TestTraceResolution:
         commands_sent = []
         call_count = 0
 
-        async def _execute(session_id, command):
+        async def _execute(session_id, command, *, prefer_coqtop=False):
             nonlocal call_count
             commands_sent.append(command)
             call_count += 1
@@ -526,7 +527,7 @@ class TestTraceResolution:
             raise asyncio.TimeoutError()
 
         manager = AsyncMock()
-        manager.execute_vernacular.side_effect = _execute
+        manager.send_command.side_effect = _execute
 
         with pytest.raises(Exception):
             await trace_resolution(
@@ -542,7 +543,7 @@ class TestTraceResolution:
         """S7.3: Command timeout returns TIMEOUT error after cleanup."""
         _, _, trace_resolution, *_ = _import_debugging()
 
-        async def _execute(session_id, command):
+        async def _execute(session_id, command, *, prefer_coqtop=False):
             if "Set Typeclasses Debug Verbosity 2" in command:
                 return ""
             if "Unset Typeclasses Debug" in command:
@@ -550,7 +551,7 @@ class TestTraceResolution:
             raise asyncio.TimeoutError()
 
         manager = AsyncMock()
-        manager.execute_vernacular.side_effect = _execute
+        manager.send_command.side_effect = _execute
 
         with pytest.raises(Exception) as exc_info:
             await trace_resolution(
@@ -1400,7 +1401,7 @@ class TestErrorSpecification:
         """S7.3: Parse error includes raw output for LLM interpretation."""
         _, _, trace_resolution, *_ = _import_debugging()
 
-        async def _execute(session_id, command):
+        async def _execute(session_id, command, *, prefer_coqtop=False):
             if "Set Typeclasses Debug Verbosity 2" in command:
                 return ""
             if "Unset Typeclasses Debug" in command:
@@ -1409,7 +1410,7 @@ class TestErrorSpecification:
             return "\x00\x01\x02 binary garbage"
 
         manager = AsyncMock()
-        manager.execute_vernacular.side_effect = _execute
+        manager.send_command.side_effect = _execute
 
         with pytest.raises(Exception) as exc_info:
             await trace_resolution(

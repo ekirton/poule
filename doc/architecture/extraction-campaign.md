@@ -3,7 +3,6 @@
 The batch component that processes one or more Coq project directories, extracts proof traces for all provable theorems, and produces a streaming JSON Lines dataset with graceful degradation on per-proof failures.
 
 **Feature**: [Batch Extraction CLI](../features/batch-extraction-cli.md), [Extraction Library Support](../features/extraction-library-support.md)
-**Stories**: [Epic 1: Project-Level Extraction](../requirements/stories/training-data-extraction.md#epic-1-project-level-extraction), [Epic 4: Determinism and Reproducibility](../requirements/stories/training-data-extraction.md#epic-4-determinism-and-reproducibility), [Epic 5: Graceful Degradation and Reporting](../requirements/stories/training-data-extraction.md#epic-5-graceful-degradation-and-reporting), [Epic 6: Library Coverage](../requirements/stories/training-data-extraction.md#epic-6-library-coverage)
 **Data models**: [extraction-types.md](data-models/extraction-types.md), [proof-types.md](data-models/proof-types.md)
 
 ---

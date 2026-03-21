@@ -2,8 +2,6 @@
 
 CoqHammer is one of the most effective automated proving tools in the Coq ecosystem, but it remains underused because it requires plugin knowledge, tactic syntax familiarity, and the ability to interpret opaque failure output. Hammer Automation wraps CoqHammer's tactics (`hammer`, `sauto`, `qauto`) so that Claude can invoke them on behalf of the user during active proof sessions. The user experience shifts from "read the CoqHammer docs and figure out the right tactic" to "try to prove this automatically."
 
-**Stories**: [Epic 1: Hammer Invocation](../requirements/stories/hammer-automation.md#epic-1-hammer-invocation), [Epic 2: Result Handling](../requirements/stories/hammer-automation.md#epic-2-result-handling), [Epic 3: Configuration](../requirements/stories/hammer-automation.md#epic-3-configuration), [Epic 4: Multi-Strategy Automation](../requirements/stories/hammer-automation.md#epic-4-multi-strategy-automation)
-
 ---
 
 ## Problem
@@ -64,3 +62,118 @@ CoqHammer's three tactics cover different points in the power-speed tradeoff. `h
 ### Why CoqHammer is the right foundation
 
 CoqHammer is the most mature automated proving tool in the Coq ecosystem. It combines premise selection with external ATP solvers (E, Vampire, Z3) and proof reconstruction, covering a large fraction of first-order goals. Its `sauto` and `qauto` tactics complement the main `hammer` tactic by handling goals that do not require external ATPs. The tool is actively maintained and battle-tested across major formalization projects. Rather than building new automation from scratch, wrapping CoqHammer gives users access to years of engineering and research through a natural language interface.
+
+---
+
+## Acceptance Criteria
+
+### Invoke Hammer in an Active Proof Session
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an active proof session with an open goal WHEN hammer automation is invoked THEN the `hammer` tactic is submitted through the proof interaction protocol and the result is returned
+- GIVEN no active proof session WHEN hammer automation is invoked THEN a clear error is returned indicating that a proof session must be active
+- GIVEN a proof session with multiple open goals WHEN hammer automation is invoked THEN it targets the current focused goal
+
+**Traces to:** RH-P0-1
+
+### Invoke sauto and qauto Variants
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an active proof session with an open goal WHEN `sauto` automation is invoked THEN the `sauto` tactic is submitted through the proof interaction protocol and the result is returned
+- GIVEN an active proof session with an open goal WHEN `qauto` automation is invoked THEN the `qauto` tactic is submitted through the proof interaction protocol and the result is returned
+- GIVEN a choice between `sauto` and `qauto` WHEN the user does not specify which to use THEN Claude can choose based on context or try both
+
+**Traces to:** RH-P0-2
+
+### Expose as Mode of Existing Tools
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN the MCP server's tool list WHEN it is inspected THEN hammer automation does not appear as a new top-level tool
+- GIVEN an existing proof interaction tool WHEN it is invoked with a hammer mode or tactic parameter THEN it executes the hammer tactic and returns the result
+- GIVEN a user who has never used CoqHammer WHEN they ask Claude to "try to prove this automatically" THEN Claude can invoke hammer through the existing tool interface without additional setup
+
+**Traces to:** RH-P0-6
+
+### Handle Success — Return Verified Proof Script
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a hammer invocation that succeeds WHEN the result is returned THEN it includes the complete tactic script that closes the goal
+- GIVEN a successful proof script returned by hammer WHEN it is submitted to Coq independently THEN it is accepted without error
+- GIVEN a successful `hammer` invocation WHEN it finds a proof via ATP reconstruction THEN the returned script uses only Coq-native tactics (the reconstruction, not the ATP proof)
+
+**Traces to:** RH-P0-3
+
+### Handle Failure — Return Diagnostics
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a hammer invocation that fails WHEN the result is returned THEN it includes a structured failure reason (e.g., timeout, no proof found, reconstruction failure)
+- GIVEN a hammer failure due to timeout WHEN the diagnostic is returned THEN it indicates that the timeout was reached and reports the timeout value used
+- GIVEN a hammer failure WHEN the diagnostic is returned THEN it includes any partial progress information available (e.g., ATP solver found a proof but reconstruction failed)
+
+**Traces to:** RH-P0-4
+
+### Configure Timeout
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a hammer invocation with a specified timeout WHEN the tactic runs THEN it respects the specified timeout
+- GIVEN a hammer invocation without a specified timeout WHEN the tactic runs THEN a sensible default timeout is applied
+- GIVEN a timeout value WHEN it is specified THEN it is passed through to the underlying CoqHammer tactic
+
+**Traces to:** RH-P0-5
+
+### Configure sauto and qauto Options
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a `sauto` invocation with a search depth parameter WHEN the tactic runs THEN the specified depth limit is applied
+- GIVEN a `qauto` invocation with unfolding hints WHEN the tactic runs THEN the specified definitions are unfolded during search
+- GIVEN a `sauto` or `qauto` invocation without options WHEN the tactic runs THEN sensible defaults are applied
+
+**Traces to:** RH-P1-4
+
+### Try Multiple Strategies Sequentially
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN an active proof session with an open goal WHEN multi-strategy automation is invoked THEN `hammer`, `sauto`, and `qauto` are tried in sequence
+- GIVEN a multi-strategy invocation WHEN one of the tactics succeeds THEN the successful result is returned immediately without trying remaining tactics
+- GIVEN a multi-strategy invocation WHEN all tactics fail THEN the result includes diagnostics from each attempt
+- GIVEN a multi-strategy invocation WHEN the combined time exceeds the timeout THEN the sequence is terminated and the diagnostics collected so far are returned
+
+**Traces to:** RH-P1-1
+
+### Pass Lemma Hints to Hammer
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a hammer invocation with specified lemma hints WHEN the tactic runs THEN the hints are passed to the underlying CoqHammer tactic
+- GIVEN a `sauto` invocation with lemma hints WHEN the tactic runs THEN the hints are included in the search
+- GIVEN a hammer invocation without hints WHEN the tactic runs THEN it proceeds with CoqHammer's default premise selection
+
+**Traces to:** RH-P1-2
+
+### Return Both ATP and Reconstructed Proof
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a successful `hammer` invocation that used an ATP solver WHEN the result is returned THEN it includes the reconstructed Coq tactic script
+- GIVEN a successful `hammer` invocation WHEN the ATP-level proof is available THEN it is also included in the result alongside the reconstructed script
+- GIVEN a successful `sauto` or `qauto` invocation WHEN the result is returned THEN only the Coq tactic script is included (no ATP proof exists)
+
+**Traces to:** RH-P1-3

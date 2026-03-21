@@ -2,8 +2,6 @@
 
 A CLI command that processes one or more Coq project directories and extracts proof traces for all provable theorems, with deterministic output and graceful degradation on failure.
 
-**Stories**: [Epic 1: Project-Level Extraction](../requirements/stories/training-data-extraction.md#epic-1-project-level-extraction), [Epic 4: Determinism and Reproducibility](../requirements/stories/training-data-extraction.md#epic-4-determinism-and-reproducibility), [Epic 5: Graceful Degradation and Reporting](../requirements/stories/training-data-extraction.md#epic-5-graceful-degradation-and-reporting)
-
 ---
 
 ## Problem
@@ -59,3 +57,72 @@ It does **not** provide:
 - Single-proof extraction (use Phase 2's `replay-proof` CLI)
 - Dataset post-processing (quality reports, benchmarks, export — separate features)
 - Real-time extraction during editing
+
+## Acceptance Criteria
+
+### Single-Project Extraction
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a Coq project directory that builds successfully WHEN the extraction command is run on it THEN one structured proof trace record is produced per provable theorem
+- GIVEN a Coq project directory WHEN the extraction command is run THEN it does not require a GPU, external API keys, or network access beyond what Coq itself needs to build the project
+- GIVEN a project with N provable theorems WHEN extraction completes THEN the output contains exactly one record per successfully extracted theorem
+
+**Traces to:** R3-P0-1, R3-P0-10, R3-P0-12
+
+### Multi-Project Extraction
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a list of Coq project directories WHEN the extraction command is run with the list THEN it processes each project and produces a unified dataset
+- GIVEN a multi-project extraction WHEN the output is inspected THEN each record includes project-level metadata identifying which project it came from
+- GIVEN a multi-project extraction WHEN one project fails entirely THEN the remaining projects are still extracted
+- GIVEN the Coq standard library, MathComp, and at least two additional Coq projects WHEN a multi-project extraction completes THEN the total extracted theorem count is ≥ 100,000
+
+**Traces to:** R3-P0-9, R3-P0-10
+
+### CLI Interface
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a single project directory WHEN the extraction CLI is invoked with that directory THEN extraction proceeds on that project
+- GIVEN a list of project directories WHEN the extraction CLI is invoked with the list THEN extraction proceeds on each project in turn
+- GIVEN missing required arguments WHEN the CLI is invoked THEN it exits with a usage error and nonzero exit code
+
+**Traces to:** R3-P0-10
+
+### Byte-Identical Output
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN the same project directory at the same commit WHEN extraction is run twice THEN the two output files are byte-identical
+- GIVEN the same set of projects WHEN a multi-project extraction is run twice THEN the two output files are byte-identical
+- GIVEN a deterministic extraction WHEN the output is diffed across runs THEN there are zero differences (no timestamps, random orderings, or nondeterministic serialization)
+
+**Traces to:** R3-P0-4
+
+### Skip Failed Proofs
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a project where proof P fails to extract WHEN extraction runs THEN a structured error record is emitted for P and extraction continues for all remaining proofs in the file and project
+- GIVEN a structured error record WHEN it is inspected THEN it includes the theorem name, file path, and a description of the failure
+- GIVEN a project with 100 proofs where 3 fail WHEN extraction completes THEN the output contains 97 successful trace records and 3 error records
+
+**Traces to:** R3-P0-5
+
+### Extraction Summary Statistics
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a completed extraction WHEN the summary is inspected THEN it includes total theorems found, successfully extracted, failed, and skipped counts
+- GIVEN a completed extraction WHEN the summary is inspected THEN it includes a per-file breakdown of the same counts
+- GIVEN a multi-project extraction WHEN the summary is inspected THEN it includes per-project rollups
+
+**Traces to:** R3-P0-6

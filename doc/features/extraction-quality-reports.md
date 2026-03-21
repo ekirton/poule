@@ -2,8 +2,6 @@
 
 Dataset quality metrics and configurable extraction scope, enabling researchers to assess fitness of extracted data and build focused datasets.
 
-**Stories**: [Epic 9: Dataset Quality and Filtering](../requirements/stories/training-data-extraction.md#epic-9-dataset-quality-and-filtering)
-
 ---
 
 ## Problem
@@ -55,3 +53,27 @@ It does **not** provide:
 - Semantic categorization of proofs by domain (arithmetic, algebra, etc. — that requires understanding proof content, not just names)
 - Comparison across extraction runs or dataset versions
 - Recommendations for improving extraction coverage
+
+## Acceptance Criteria
+
+### Dataset Quality Reports
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a completed extraction WHEN the quality report is generated THEN it includes premise annotation coverage (percentage of tactic steps with at least one annotated premise)
+- GIVEN a completed extraction WHEN the quality report is generated THEN it includes distribution of proof lengths and tactic vocabulary frequency
+- GIVEN a multi-project extraction WHEN the quality report is generated THEN it includes per-project breakdowns of all metrics
+
+**Traces to:** R3-P1-3
+
+### Configurable Extraction Scope
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN an extraction with a name pattern filter WHEN extraction runs THEN only proofs whose fully qualified names match the pattern are extracted
+- GIVEN an extraction with a module filter WHEN extraction runs THEN only proofs in the specified modules are extracted
+- GIVEN no filter is specified WHEN extraction runs THEN all provable theorems are extracted (default behavior)
+
+**Traces to:** R3-P1-4

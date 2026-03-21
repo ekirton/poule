@@ -2,8 +2,6 @@
 
 Coq type errors are notoriously opaque. They report expected and actual types in fully expanded form, often spanning dozens of lines, with no indication of where the types diverge, what coercions were attempted, or what the user likely intended. Resolving a type error today requires manually running `Check`, `Print`, `About`, and `Print Coercions` to reconstruct the context the error message omits — a process that demands expert knowledge of Coq's type system. Type Error Explanation provides an `/explain-error` slash command that automates this entire diagnostic workflow: it parses the error, inspects the relevant types and coercions in the user's environment, and delivers a plain-language explanation of what went wrong and how to fix it.
 
-**Stories**: [Epic 1: Error Parsing and Type Inspection](../requirements/stories/type-error-explanation.md#epic-1-error-parsing-and-type-inspection), [Epic 2: Plain-Language Explanation](../requirements/stories/type-error-explanation.md#epic-2-plain-language-explanation), [Epic 3: Coercion Analysis](../requirements/stories/type-error-explanation.md#epic-3-coercion-analysis), [Epic 4: Fix Suggestions](../requirements/stories/type-error-explanation.md#epic-4-fix-suggestions), [Epic 5: Notation and Scope Confusion](../requirements/stories/type-error-explanation.md#epic-5-notation-and-scope-confusion), [Epic 6: Advanced Diagnostics](../requirements/stories/type-error-explanation.md#epic-6-advanced-diagnostics), [Epic 7: Slash Command Integration](../requirements/stories/type-error-explanation.md#epic-7-slash-command-integration)
-
 ---
 
 ## Problem
@@ -70,3 +68,115 @@ Type errors often have multiple valid resolutions, and the best choice depends o
 ### Why build on existing MCP tools rather than new ones
 
 The inspection capabilities this feature needs — querying type definitions, checking coercions, examining universe constraints, inspecting notations — are general-purpose operations that other features also require. Building them as standalone MCP tools in separate initiatives (vernacular introspection, universe inspection, notation inspection) and consuming them here avoids duplication, keeps the tool count manageable, and ensures that improvements to the underlying inspection tools automatically benefit type error diagnosis.
+
+## Acceptance Criteria
+
+### Error Parsing and Type Inspection
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a Coq type error of the form "The term X has type T1 while it is expected to have type T2" WHEN `/explain-error` is invoked THEN it correctly extracts the term, the actual type, and the expected type as separate structured fields
+- GIVEN a type error that includes an environment context ("In environment ...") WHEN the error is parsed THEN the local variable bindings from the environment are extracted and available for subsequent inspection
+- GIVEN a type error that spans multiple lines due to complex types WHEN the error is parsed THEN the full types are captured without truncation
+- GIVEN a type error involving a user-defined type WHEN `/explain-error` inspects the type THEN it retrieves the type's full definition using `Print` or `About` and includes it in the explanation
+- GIVEN a type error involving a type alias or abbreviation WHEN the types are inspected THEN the explanation shows both the abbreviated form and the expanded form to clarify the mismatch
+- GIVEN a type error where the expected and actual types are structurally identical but differ by a module qualifier WHEN the types are inspected THEN the explanation identifies that two distinct but identically-named types are involved
+
+**Traces to:** RTE-P0-1, RTE-P0-2
+
+### Plain-Language Explanation
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a type error where the user passed a `nat` where a `bool` was expected WHEN `/explain-error` is invoked THEN the explanation states in plain language that the function expected a boolean argument but received a natural number, and identifies which argument position is wrong
+- GIVEN a type error involving a function applied to too many or too few arguments WHEN `/explain-error` is invoked THEN the explanation states how many arguments the function expects, how many were provided, and which argument caused the error
+- GIVEN any type error WHEN the explanation is produced THEN it avoids Coq jargon where possible and defines technical terms (e.g., "inductive type," "universe") when they are unavoidable
+- GIVEN a unification failure between two complex types that differ in a single nested position WHEN `/explain-error` is invoked THEN the explanation pinpoints the specific sub-expression where the types diverge
+- GIVEN a unification failure involving existential variables or metavariables WHEN `/explain-error` is invoked THEN the explanation notes that Coq was unable to infer a value for a particular position and suggests providing it explicitly
+- GIVEN a unification failure WHEN the explanation is produced THEN it shows the two types aligned or annotated so the point of divergence is visually clear
+
+**Traces to:** RTE-P0-3, RTE-P0-4
+
+### Coercion Analysis
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a type mismatch where a coercion path exists from the actual type to the expected type WHEN `/explain-error` analyzes coercions THEN the explanation states that a coercion exists, names it, and explains why Coq did not apply it automatically (e.g., the coercion is not registered as a default, or a prerequisite was not met)
+- GIVEN a type mismatch where no coercion path exists WHEN `/explain-error` analyzes coercions THEN the explanation states that no coercion is available and suggests that the user may need to define one or apply an explicit conversion
+- GIVEN a type mismatch where multiple coercion paths exist WHEN `/explain-error` analyzes coercions THEN the explanation lists the available paths and notes any ambiguity
+
+**Traces to:** RTE-P1-1
+
+### Implicit Argument Mismatches
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a type error where an implicit argument was inferred to a surprising type WHEN `/explain-error` is invoked THEN the explanation identifies which implicit argument was inferred, what type it was inferred to, and why that inference conflicts with the rest of the term
+- GIVEN an implicit argument mismatch WHEN a fix is suggested THEN it proposes providing the implicit argument explicitly using `@` notation, with the correct type filled in
+- GIVEN a term with no implicit arguments WHEN `/explain-error` checks for implicit mismatches THEN it skips this analysis without producing spurious output
+
+**Traces to:** RTE-P1-3
+
+### Fix Suggestions
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a type error caused by a missing coercion WHEN a fix is suggested THEN it proposes either an explicit cast or an appropriate coercion declaration with correct syntax
+- GIVEN a type error caused by applying a constructor to arguments in the wrong order WHEN a fix is suggested THEN it shows the correct argument order with the expected types labeled
+- GIVEN a type error for which no clear fix can be determined WHEN `/explain-error` completes THEN it does not produce a misleading suggestion; instead it states that it could not determine a fix and provides diagnostic context for the user to investigate further
+
+**Traces to:** RTE-P1-2
+
+### Contextual Usage Examples
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a type error on a function application WHEN a usage example is requested THEN the explanation includes at least one example of a well-typed application of that function using types from the user's current environment
+- GIVEN a type error involving a lemma or theorem WHEN a usage example is provided THEN it shows the lemma's type signature with each argument labeled and a sample instantiation
+- GIVEN a type error on a definition with no obvious example WHEN the explanation is produced THEN this section is omitted rather than producing an unhelpful or incorrect example
+
+**Traces to:** RTE-P1-5
+
+### Notation and Scope Confusion
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a type error where a notation (e.g., `+`, `*`, `::`) was interpreted in a scope different from what the user intended WHEN `/explain-error` is invoked THEN the explanation identifies the notation, states which scope it was interpreted in, and shows what type it resolved to
+- GIVEN a notation scope confusion WHEN a fix is suggested THEN it proposes either a `%scope` annotation or an `Open Scope` command to select the intended interpretation
+- GIVEN a type error that does not involve notation ambiguity WHEN notation analysis is performed THEN it completes silently without producing spurious output
+
+**Traces to:** RTE-P1-4
+
+### Advanced Diagnostics
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a universe inconsistency error WHEN `/explain-error` is invoked THEN it retrieves the relevant universe constraints and identifies the cycle or contradictory pair in the constraint graph
+- GIVEN a universe inconsistency WHEN the explanation is produced THEN it traces the conflicting constraints back to the definitions that introduced them, naming the specific `Definition`, `Inductive`, or `Lemma` declarations involved
+- GIVEN a universe inconsistency WHEN a fix is suggested THEN it proposes concrete strategies such as universe polymorphism, `Set Universe Polymorphism`, or restructuring the type hierarchy
+- GIVEN a type error where a canonical structure projection should have triggered but did not WHEN `/explain-error` is invoked THEN it identifies the relevant canonical structure and explains which condition of the projection rule was not met
+- GIVEN a canonical structure failure WHEN the relevant structures are inspected THEN the explanation lists the registered canonical instances and shows which one was expected to match
+
+**Traces to:** RTE-P2-1, RTE-P2-2
+
+### Slash Command Integration
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a Coq type error in the current session WHEN the user invokes `/explain-error` THEN the slash command orchestrates error parsing, type inspection, and explanation generation, and returns a complete diagnostic within 15 seconds
+- GIVEN no type error in the current context WHEN the user invokes `/explain-error` THEN it responds with a clear message that no type error was found to explain
+- GIVEN a type error WHEN `/explain-error` completes THEN the output includes at minimum: a restatement of the error in plain language, the relevant type definitions, and an identification of the root cause
+- GIVEN the `/explain-error` slash command WHEN it inspects types THEN it uses the vernacular introspection MCP tools (`Check`, `Print`, `About`) rather than raw Coq command strings
+- GIVEN the `/explain-error` slash command WHEN it analyzes coercions THEN it uses the coercion-related MCP tools from the vernacular introspection initiative
+- GIVEN a new MCP tool added to the Poule server WHEN it is relevant to type error diagnosis THEN the slash command can incorporate it without architectural changes to the command itself
+
+**Traces to:** RTE-P0-5

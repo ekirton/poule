@@ -8,8 +8,7 @@ Each layer answers "what" for the layer below and "how" for the layer above. A s
 
 ## Layer 2 : Behavioral specification
 
-* doc/requirements/stories/ : user stories with acceptance criteria
-* doc/features/ : what and why, design rationale
+* doc/features/ : what and why, design rationale, acceptance criteria
 
 ## Layer 3 : Design specification
 

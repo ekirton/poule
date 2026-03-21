@@ -2,8 +2,6 @@
 
 Self-contained HTML file output for proof visualization diagrams — visualization tools write a file the user opens in their browser.
 
-**Stories**: [Epic 5: Diagram File Output](../requirements/stories/proof-visualization-widgets.md#epic-5-diagram-file-output)
-
 ---
 
 ## Problem
@@ -40,3 +38,34 @@ No bundling needed, browser caches it after the first load, and the Docker image
 Provides: self-contained HTML file with CDN mermaid.js, dark theme, multi-diagram support with step labels, client-side `mermaid.render()`.
 
 Does **not** provide: persistent diagram history, image export (PNG/SVG), interactive features (pan, zoom, collapse), offline mermaid.js (CDN required on first load).
+
+## Acceptance Criteria
+
+### Write Rendered Diagram to Project Directory
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a call to `visualize_proof_tree` WHEN the tool returns THEN a file `proof-diagram.html` exists in the project directory containing valid HTML that renders the Mermaid diagram in a browser
+- GIVEN the HTML file is opened in a browser without network access to the container THEN the diagram renders (mermaid.js loaded from CDN, no SSE/server dependency)
+
+**Traces to:** R4-P1-6
+
+### Multi-Diagram Sequence in Single File
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a proof trace with 6 tactic steps WHEN `visualize_proof_sequence` is called THEN the HTML file contains 7 rendered diagrams (initial + 6 steps) with step labels
+- GIVEN the HTML file WHEN opened in a browser THEN all diagrams render in order with their tactic labels visible
+
+**Traces to:** R4-P1-6, R4-P1-1
+
+### Overwrite on Subsequent Calls
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a previous `proof-diagram.html` exists WHEN a new visualization tool is called THEN the file is overwritten with the new diagram
+
+**Traces to:** R4-P1-6

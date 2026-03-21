@@ -4,7 +4,7 @@ These tests exercise the real Coq backend to verify mock/real parity.
 
 Spec: specification/cli.md §4.6
 Architecture: doc/architecture/cli.md
-Stories: doc/requirements/stories/proof-interaction-protocol.md Epic 8
+Feature: doc/features/cli-proof-replay.md
 """
 
 from __future__ import annotations

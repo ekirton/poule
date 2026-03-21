@@ -3,7 +3,6 @@
 Technical design for distributing prebuilt search indexes and neural model checkpoints via GitHub Releases, enabling quick-start usage without a Coq toolchain.
 
 **Feature**: [Pre-trained Model Distribution](../features/pre-trained-model.md)
-**Stories**: [Epic 5: Pre-trained Model Distribution](../requirements/stories/neural-premise-selection.md#epic-5-pre-trained-model-distribution)
 
 ---
 

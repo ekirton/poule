@@ -21,9 +21,11 @@ from Poule.extraction.errors import BackendCrashError, ExtractionError
 
 logger = logging.getLogger(__name__)
 
-# Regex for parsing ``Search`` output lines.
-# Each result looks like: ``name : type_signature``
-_SEARCH_LINE_RE = re.compile(r"^(\S+)\s*:\s*(.+)$")
+# Regex for parsing ``Search`` output.
+# Each result looks like ``name : type_signature`` where the type signature
+# may span multiple lines with indentation (coq-lsp breaks long types).
+# re.DOTALL lets ``.`` match newlines so multi-line signatures are captured.
+_SEARCH_LINE_RE = re.compile(r"^(\S+)\s*:\s*(.+)$", re.DOTALL)
 
 # Regex for parsing ``About`` output to extract the declaration kind.
 # Coq ≤8.x: "Nat.add is a Definition."
@@ -576,6 +578,17 @@ class CoqLspBackend:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _normalize_type_sig(raw: str) -> str:
+        """Collapse multi-line type signatures into a single line.
+
+        coq-lsp breaks long type signatures across lines with leading
+        whitespace.  Per spec §4.1.1, continuation lines are joined into
+        the full type signature with newlines and surrounding whitespace
+        collapsed to a single space.
+        """
+        return re.sub(r"\s*\n\s*", " ", raw).strip()
+
+    @staticmethod
     def _parse_search_diagnostics(
         diags: list[dict[str, Any]],
     ) -> list[tuple[str, str]]:
@@ -590,7 +603,8 @@ class CoqLspBackend:
             msg = d["message"]
             match = _SEARCH_LINE_RE.match(msg)
             if match:
-                results.append((match.group(1), match.group(2)))
+                type_sig = CoqLspBackend._normalize_type_sig(match.group(2))
+                results.append((match.group(1), type_sig))
         return results
 
     @staticmethod
@@ -609,7 +623,8 @@ class CoqLspBackend:
             text = m["text"]
             match = _SEARCH_LINE_RE.match(text)
             if match:
-                results.append((match.group(1), match.group(2)))
+                type_sig = CoqLspBackend._normalize_type_sig(match.group(2))
+                results.append((match.group(1), type_sig))
         return results
 
     # ------------------------------------------------------------------

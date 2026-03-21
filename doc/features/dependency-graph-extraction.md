@@ -2,8 +2,6 @@
 
 Extract the theorem-level dependency graph from a Coq project: which theorems, definitions, and axioms each proof depends on.
 
-**Stories**: [Epic 8: Dependency Graph Extraction](../requirements/stories/training-data-extraction.md#epic-8-dependency-graph-extraction)
-
 ---
 
 ## Problem
@@ -41,3 +39,16 @@ It does **not** provide:
 - Cross-project dependency graphs (dependencies stay within a single project's scope)
 - Graph visualization or rendering
 - Dependency-aware change propagation for incremental extraction
+
+## Acceptance Criteria
+
+### Theorem Dependency Graph
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a Coq project WHEN dependency graph extraction is run THEN it produces a structured adjacency list of theorem-level dependencies
+- GIVEN a dependency graph entry for theorem T WHEN it is inspected THEN it lists the theorems, definitions, and axioms that T's proof depends on, each with a fully qualified name
+- GIVEN the dependency graph WHEN it is serialized THEN it uses a structured format consistent with the extraction output schema
+
+**Traces to:** R3-P1-2

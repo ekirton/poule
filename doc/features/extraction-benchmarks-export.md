@@ -2,8 +2,6 @@
 
 Generate benchmark subsets from extracted data, export to ML framework formats, validate traces by replay, and deduplicate across projects.
 
-**Stories**: [Epic 10: Advanced Extraction and Export](../requirements/stories/training-data-extraction.md#epic-10-advanced-extraction-and-export) (stories 10.2–10.5)
-
 ---
 
 ## Problem
@@ -57,3 +55,46 @@ It does **not** provide:
 - Continuous benchmark updates or CI-driven regeneration
 - Tokenization, embedding, or feature engineering for extracted data
 - Automated difficulty or domain classification beyond simple heuristics (proof length, tactic counts)
+
+## Acceptance Criteria
+
+### Benchmark Subset Generation
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN an extracted dataset WHEN benchmark generation is run with a difficulty split THEN it produces subsets stratified by proof length and tactic diversity
+- GIVEN an extracted dataset WHEN benchmark generation is run with a domain split THEN it produces subsets categorized by domain (arithmetic, algebra, logic)
+- GIVEN an extracted dataset WHEN benchmark generation is run with a project split THEN it produces per-project subsets
+
+**Traces to:** R3-P2-2
+
+### ML Framework Export
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN an extracted dataset WHEN export to HuggingFace Datasets format is run THEN the output is loadable by the `datasets` library
+- GIVEN an exported dataset WHEN it is loaded THEN the schema preserves all fields from the JSON Lines format
+
+**Traces to:** R3-P2-3
+
+### Proof Trace Validation by Replay
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN an extracted proof trace WHEN it is replayed against Coq THEN the replayed tactic sequence reproduces the original proof
+- GIVEN a replay validation run WHEN it completes THEN it reports how many traces replayed successfully and how many failed
+
+**Traces to:** R3-P2-4
+
+### Dataset Deduplication
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a multi-project dataset WHEN deduplication is run THEN semantically equivalent proofs across projects are identified and flagged
+- GIVEN a flagged duplicate WHEN it is inspected THEN it includes references to all equivalent proofs
+
+**Traces to:** R3-P2-5

@@ -3,7 +3,6 @@
 The component that retrieves, parses, and diagnoses Coq universe constraints, providing structured access to the universe constraint system through the MCP tool surface. It mediates between the MCP Server and the Coq backend, translating raw vernacular output into queryable data structures and actionable diagnosis.
 
 **Feature**: [Universe Constraint Inspection](../features/universe-inspection.md)
-**Stories**: [Epics 1–5](../requirements/stories/universe-inspection.md)
 
 ---
 

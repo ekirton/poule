@@ -4,14 +4,14 @@
 
 **Location:** `commands/<command-name>.md`
 
-**Derived from:** `doc/features/<command-name>.md`, `doc/requirements/stories/<command-name>.md`
+**Derived from:** `doc/features/<command-name>.md`
 
 **Authority:** Command prompt files are the **executable implementation** of agentic workflow features. They are authoritative for Claude's runtime behavior when the corresponding slash command is invoked. They are not authoritative for what the feature does or why — that belongs in the feature document.
 
 **Before writing or editing command files:**
 
 1. Read the upstream feature document this command implements.
-2. Read the corresponding user stories and acceptance criteria.
+2. Read the feature's acceptance criteria.
 3. Verify the command's scope is consistent with the feature's stated scope boundaries.
 
 **When writing or editing command files:**

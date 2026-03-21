@@ -2,8 +2,6 @@
 
 Large Coq developments accumulate incomplete proofs — `admit`, `Admitted`, and `Axiom` declarations that start as temporary scaffolding and quietly become permanent fixtures. Over time, no one remembers which axioms are intentional design decisions, which admits are forgotten TODOs, and which gaps pose real risk to the soundness of downstream theorems. Proof Obligation Tracking provides a `/proof-obligations` slash command that scans an entire project, classifies every obligation by intent and severity, and tracks progress toward completion across successive scans.
 
-**Stories**: [Epic 1: Scanning and Detection](../requirements/stories/proof-obligation-tracking.md#epic-1-scanning-and-detection), [Epic 2: Classification](../requirements/stories/proof-obligation-tracking.md#epic-2-classification), [Epic 3: Reporting](../requirements/stories/proof-obligation-tracking.md#epic-3-reporting), [Epic 4: Progress Tracking](../requirements/stories/proof-obligation-tracking.md#epic-4-progress-tracking)
-
 ---
 
 ## Problem
@@ -75,3 +73,123 @@ A project with 50 admits is not necessarily in worse shape than a project with 1
 ### Why track progress over time
 
 Formalization projects span months or years. Without progress tracking, each scan is an isolated snapshot that tells the user how much work remains but not whether the trend is positive. By persisting scan results and computing deltas, the command transforms from a diagnostic tool into a project management tool. Teams can see that they resolved 15 obligations this sprint, that 3 new ones were introduced, and that total obligation count is trending downward. This is especially valuable for formalization efforts with completion milestones or deadlines.
+
+## Acceptance Criteria
+
+### Scanning and Detection
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a Coq project with `.v` files WHEN `/proof-obligations` is invoked THEN every occurrence of `admit`, `Admitted`, and `Axiom` across all `.v` files is detected
+- GIVEN a project with no `admit`, `Admitted`, or `Axiom` declarations WHEN `/proof-obligations` is invoked THEN the report indicates zero obligations found
+- GIVEN a project with obligations in nested subdirectories WHEN `/proof-obligations` is invoked THEN obligations in all subdirectories are detected
+- GIVEN a detected `Admitted` in a proof WHEN the report is generated THEN it includes the file path, line number, the enclosing proof name, and at least 3 lines of surrounding context
+- GIVEN a detected `Axiom` declaration WHEN the report is generated THEN it includes the axiom name, file path, and line number
+- GIVEN a detected `admit` tactic WHEN the report is generated THEN it includes the enclosing proof name and the goal context at the point of admission
+
+**Traces to:** RPO-P0-1, RPO-P0-2
+
+### False Positive Exclusion
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN an `admit` appearing inside a Coq comment `(* ... *)` WHEN the project is scanned THEN that occurrence is not included in the report
+- GIVEN an `Admitted` appearing inside a string literal WHEN the project is scanned THEN that occurrence is not included in the report
+- GIVEN an `admit` used as a tactic in active proof code WHEN the project is scanned THEN that occurrence is included in the report
+
+**Traces to:** RPO-P2-3
+
+### Classification
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an `Axiom` declaration with a comment indicating it is a design choice (e.g., "We assume classical logic") WHEN classified THEN it is labeled as an intentional axiom
+- GIVEN an `Admitted` with a preceding `(* TODO *)` comment WHEN classified THEN it is labeled as a TODO placeholder
+- GIVEN an `admit` with no contextual signals about intent WHEN classified THEN it is labeled as unknown
+- GIVEN the full set of classified obligations WHEN reviewed by a domain expert THEN at least 90% of classifications agree with expert judgment
+- GIVEN an `admit` classified as a TODO in a theorem that many other theorems depend on WHEN severity is assigned THEN it receives high severity
+- GIVEN an `Axiom` classified as an intentional axiom WHEN severity is assigned THEN it receives low severity
+- GIVEN two obligations with different severity levels WHEN the report is generated THEN higher-severity obligations are always ranked above lower-severity ones
+- GIVEN an obligation with unknown intent WHEN severity is assigned THEN it receives at least medium severity to ensure it receives attention
+
+**Traces to:** RPO-P0-3, RPO-P0-4
+
+### Reporting
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a project with obligations at multiple severity levels WHEN the report is generated THEN obligations are grouped by severity (high, medium, low) with a count for each group
+- GIVEN a project with 15 obligations across 8 files WHEN the report is generated THEN every obligation appears in the report with its file location
+- GIVEN a project scan WHEN the summary is presented THEN it includes a total obligation count, a breakdown by classification (intentional axiom / TODO / unknown), and a breakdown by severity
+
+**Traces to:** RPO-P0-5
+
+### Report Filtering
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a report with obligations across multiple directories WHEN filtered by a specific directory THEN only obligations in that directory (and its subdirectories) are shown
+- GIVEN a report with obligations at all severity levels WHEN filtered to high severity THEN only high-severity obligations are shown
+- GIVEN a report with multiple classifications WHEN filtered to TODO obligations THEN only obligations classified as TODOs are shown
+
+**Traces to:** RPO-P1-4
+
+### Axiom Dependency Reporting
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN an `Axiom` declaration in a compiled project WHEN the report is generated THEN it lists the theorems that transitively depend on that axiom
+- GIVEN an `Axiom` that no theorem depends on WHEN the report is generated THEN it is flagged as unused
+- GIVEN an `Axiom` with a large number of dependents WHEN severity is assessed THEN the dependency count contributes to a higher severity ranking
+
+**Traces to:** RPO-P1-5
+
+### Machine-Readable Output
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a project scan WHEN machine-readable output is requested THEN the report is produced in valid JSON format
+- GIVEN the JSON output WHEN parsed THEN each obligation entry includes file path, line number, classification, severity, and enclosing definition name
+- GIVEN a CI pipeline WHEN it consumes the JSON output THEN it can fail the build if high-severity TODO obligations exceed a configurable threshold
+
+**Traces to:** RPO-P2-1
+
+### Progress Tracking
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a previous scan recorded 20 obligations and the current scan finds 17 WHEN the report is generated THEN it shows "3 obligations resolved since last scan"
+- GIVEN a previous scan and a current scan where 2 new `admit` declarations were introduced WHEN the report is generated THEN it shows "2 new obligations introduced since last scan"
+- GIVEN no previous scan data exists WHEN the slash command is run THEN it produces the full report without progress delta and notes that this is the first recorded scan
+
+**Traces to:** RPO-P1-1
+
+### Scan Persistence
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a completed scan WHEN it finishes THEN the results are persisted to a location within the project (e.g., a `.poule/` directory or similar)
+- GIVEN persisted scan data from a previous session WHEN `/proof-obligations` is run in a new session THEN the previous data is loaded and used for progress comparison
+- GIVEN persisted scan data WHEN the project is checked into version control THEN the persisted data format is suitable for committing alongside the project (human-readable, diff-friendly)
+
+**Traces to:** RPO-P1-2
+
+### Resolution Priority Suggestion
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN multiple TODO obligations with different severity levels WHEN prioritization is requested THEN obligations are ordered by severity (high first), with ties broken by dependency impact
+- GIVEN a TODO obligation that blocks many downstream theorems WHEN prioritized THEN it appears higher in the suggested order than an isolated obligation of the same severity
+- GIVEN the prioritized list WHEN each entry is reviewed THEN it includes a brief rationale for its position (e.g., "blocks 12 downstream theorems")
+
+**Traces to:** RPO-P1-3

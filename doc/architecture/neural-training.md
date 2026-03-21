@@ -3,7 +3,6 @@
 Technical design for the training, evaluation, fine-tuning, and quantization pipeline for the neural premise selection model.
 
 **Feature**: [Model Training CLI](../features/model-training-cli.md), [Pre-trained Model](../features/pre-trained-model.md)
-**Stories**: [Epics 1–2, 5](../requirements/stories/neural-premise-selection.md)
 
 ---
 

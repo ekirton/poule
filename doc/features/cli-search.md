@@ -2,8 +2,6 @@
 
 Standalone command-line access to the same search capabilities exposed by the MCP server, for Coq developers working in a terminal without Claude Code.
 
-**Stories**: [Epic 7: Standalone CLI Search](../requirements/stories/tree-search-mcp.md#epic-7-standalone-cli-search)
-
 ---
 
 ## Problem
@@ -36,3 +34,76 @@ The CLI is a **presentation layer** over the existing retrieval pipeline. It doe
 - Provide interactive or REPL-style search sessions
 - Replace the MCP server for Claude Code users
 - Support query reformulation or iterative refinement (those are LLM-mediated behaviors)
+
+## Acceptance Criteria
+
+### Search by Name via CLI
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an indexed database WHEN the user runs the CLI search-by-name command with a pattern THEN matching declarations are printed to stdout ranked by relevance
+- GIVEN a search command WHEN the `--json` flag is provided THEN results are output as a JSON array of `SearchResult` objects
+- GIVEN a search command WHEN no format flag is provided THEN results are output in a human-readable tabular format
+- GIVEN a search command WHEN a `--limit` option is provided THEN the result count respects the specified limit
+- GIVEN a search command WHEN no `--limit` is provided THEN the default limit is 50
+
+### Search by Type via CLI
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an indexed database WHEN the user runs the CLI search-by-type command with a Coq type expression THEN matching declarations are printed to stdout ranked by fused score
+- GIVEN search results WHEN the `--json` flag is provided THEN results are output as a JSON array
+- GIVEN search results WHEN no format flag is provided THEN results are output in human-readable format
+
+### Search by Structure via CLI
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an indexed database WHEN the user runs the CLI search-by-structure command with a Coq expression THEN matching declarations are printed to stdout ranked by structural score
+- GIVEN search results WHEN the `--json` flag is provided THEN results are output as a JSON array
+
+### Search by Symbols via CLI
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an indexed database WHEN the user runs the CLI search-by-symbols command with one or more symbol names THEN matching declarations are printed to stdout ranked by relevance
+- GIVEN search results WHEN the `--json` flag is provided THEN results are output as a JSON array
+
+### Get Lemma Details via CLI
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an indexed database WHEN the user runs the CLI get-lemma command with a fully qualified name THEN the full declaration details are printed to stdout
+- GIVEN a name that does not exist WHEN the get-lemma command is run THEN a clear error message is printed to stderr and the command exits with a non-zero status
+- GIVEN the `--json` flag WHEN get-lemma is run THEN the output is a JSON `LemmaDetail` object
+
+### Find Related Declarations via CLI
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an indexed database WHEN the user runs the CLI find-related command with a declaration name and relation type THEN related declarations are printed to stdout
+- GIVEN search results WHEN the `--json` flag is provided THEN results are output as a JSON array
+
+### List Modules via CLI
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an indexed database WHEN the user runs the CLI list-modules command with a prefix THEN matching modules and their declaration counts are printed to stdout
+- GIVEN an empty prefix WHEN list-modules is run THEN all top-level modules are listed
+- GIVEN the `--json` flag WHEN list-modules is run THEN the output is a JSON array of module objects
+
+### CLI Error Handling
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN no index database at the specified path WHEN any CLI search command is run THEN an error message is printed to stderr indicating the index is missing and how to create it, and the command exits with a non-zero status
+- GIVEN a malformed query expression WHEN a CLI search command is run THEN a parse error message is printed to stderr and the command exits with a non-zero status
+- GIVEN a successful search WHEN results are empty THEN the command exits with zero status and prints no results (or an empty JSON array with `--json`)

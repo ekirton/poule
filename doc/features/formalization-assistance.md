@@ -2,8 +2,6 @@
 
 The gap between mathematical intuition and formal proof is the single largest barrier to Coq adoption. Users know what they want to prove — they can state it on a whiteboard or in a textbook — but translating that understanding into Coq's type theory requires navigating unfamiliar syntax, locating the right library lemmas, and managing an interactive proof session where each step depends on the evolving proof state. Formalization Assistance is a `/formalize` slash command that guides the user through the entire journey from a natural language description of a theorem to a completed, type-checked Coq proof, turning what is normally a multi-hour struggle into a single guided dialogue.
 
-**Stories**: [Epic 1: Natural Language Input and Statement Suggestion](../requirements/stories/formalization-assistance.md#epic-1-natural-language-input-and-statement-suggestion), [Epic 2: Lemma Search and Discovery](../requirements/stories/formalization-assistance.md#epic-2-lemma-search-and-discovery), [Epic 3: Interactive Proof Building](../requirements/stories/formalization-assistance.md#epic-3-interactive-proof-building), [Epic 4: Partial and Alternative Formalizations](../requirements/stories/formalization-assistance.md#epic-4-partial-and-alternative-formalizations)
-
 ---
 
 ## Problem
@@ -85,3 +83,150 @@ The target audience includes mathematicians, students, and developers who think 
 ### Why support partial descriptions
 
 Mathematicians rarely state theorems in full formal detail in conversation. They say "associativity of append" and expect the listener to fill in the quantifiers, types, and variable names. Requiring a complete and precise natural language description before Claude can help would impose a formality burden that defeats the purpose of the tool. By accepting partial descriptions and inferring the rest from context — the current file, loaded libraries, naming conventions — the workflow meets users where they are and makes the first interaction as low-friction as possible.
+
+---
+
+## Acceptance Criteria
+
+### Describe a Theorem in Natural Language
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN the `/formalize` command is invoked WHEN the user provides a natural language description of a theorem THEN Claude acknowledges the intent and begins the formalization workflow
+- GIVEN a natural language description WHEN it is ambiguous or underspecified THEN Claude asks clarifying questions before suggesting a formal statement
+- GIVEN a natural language description that references standard mathematical concepts WHEN Claude processes it THEN Claude correctly identifies the relevant Coq types, propositions, and quantifiers
+
+**Traces to:** RFA-P0-1
+
+### Receive a Candidate Formal Statement
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a natural language theorem description WHEN Claude generates a candidate statement THEN the statement is syntactically valid Coq
+- GIVEN a generated candidate statement WHEN it is checked against the active Coq environment THEN it is well-typed (no unresolved references or type errors)
+- GIVEN a candidate statement WHEN it is presented to the user THEN Claude explains how each part of the formal statement corresponds to the natural language description
+
+**Traces to:** RFA-P0-1, RFA-P0-5
+
+### Validate the Formal Statement Against the Coq Environment
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a candidate formal statement WHEN Claude generates it THEN Claude submits it to the Coq environment via the proof interaction protocol for type-checking before presenting it
+- GIVEN a candidate statement that fails type-checking WHEN the error is returned THEN Claude revises the statement and retries, or explains the issue to the user
+- GIVEN a candidate statement that passes type-checking WHEN it is presented to the user THEN it is marked as verified well-typed
+
+**Traces to:** RFA-P0-5
+
+### Refine the Statement Through Dialogue
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a candidate statement that does not match the user's intent WHEN the user describes the needed correction in natural language THEN Claude produces a revised statement incorporating the feedback
+- GIVEN an iterative refinement dialogue WHEN the user provides multiple rounds of feedback THEN Claude maintains context across rounds and does not regress on previously resolved issues
+- GIVEN a refinement request WHEN the revised statement is generated THEN it is type-checked before being presented, just like the initial suggestion
+
+**Traces to:** RFA-P1-1
+
+### Search for Relevant Existing Lemmas
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a natural language theorem description WHEN the `/formalize` workflow begins THEN Claude searches loaded libraries and the current project for relevant lemmas before suggesting a formal statement
+- GIVEN a search for relevant lemmas WHEN results are found THEN at least the top 5 most relevant results are presented
+- GIVEN a search for relevant lemmas WHEN no relevant results are found THEN Claude explicitly states that no existing formalization was found and proceeds to suggest a new statement
+
+**Traces to:** RFA-P0-2
+
+### Explain Relevance of Search Results
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a set of lemma search results WHEN they are presented to the user THEN each result includes a natural language explanation of its relevance to the described theorem
+- GIVEN a search result WHEN the lemma is a direct match or generalization of the user's theorem THEN Claude highlights this explicitly (e.g., "this lemma already states your theorem" or "this is a more general version")
+- GIVEN a search result WHEN the lemma is a supporting result needed in the proof THEN Claude explains how it could be used
+
+**Traces to:** RFA-P0-6
+
+### Suggest Required Imports
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a candidate formal statement that references library definitions WHEN the statement is presented THEN Claude includes the necessary `Require Import` statements
+- GIVEN relevant lemmas found during search WHEN they come from specific libraries THEN the import statements for those libraries are included in the suggestion
+- GIVEN suggested imports WHEN they are applied to the Coq environment THEN the formal statement type-checks successfully
+
+**Traces to:** RFA-P1-2
+
+### Initiate a Proof Session for the Accepted Statement
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a formal statement that the user has accepted WHEN the user indicates they want to prove it THEN Claude opens a proof session for that statement via the proof interaction protocol
+- GIVEN a proof session is opened WHEN the initial proof state is available THEN Claude displays the goal and context to the user
+- GIVEN a formal statement with required imports WHEN the proof session is initiated THEN the imports are loaded before the statement is introduced
+
+**Traces to:** RFA-P0-3
+
+### Suggest Tactic Steps Based on Proof State and Intent
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an open proof goal WHEN Claude suggests a tactic step THEN the suggestion is accompanied by a natural language explanation of what the tactic does and why it is appropriate
+- GIVEN an open proof goal WHEN Claude suggests a tactic THEN the tactic is informed by both the current proof state and the user's original natural language description of the theorem
+- GIVEN a suggested tactic that the user applies WHEN it produces subgoals THEN Claude explains the resulting subgoals in terms of the overall proof strategy
+
+**Traces to:** RFA-P0-4
+
+### Attempt Automated Proof Strategies
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN an open proof goal during the proof-building phase WHEN Claude evaluates the goal THEN it first attempts automated strategies (e.g., `hammer`, `sauto`, `auto`, `omega`) before suggesting manual tactic steps
+- GIVEN an automated strategy that succeeds WHEN the result is returned THEN Claude reports the proof script and explains what it does
+- GIVEN automated strategies that all fail WHEN Claude falls back to manual suggestions THEN it explains briefly why automation did not work (e.g., "this goal appears to require case analysis that the automated tactics cannot discover")
+
+**Traces to:** RFA-P1-3
+
+### Explain Proof Failures in Mathematical Terms
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a tactic that fails WHEN the Coq error is returned THEN Claude translates the error into a natural language explanation referencing the mathematical concepts involved
+- GIVEN a tactic failure due to a type mismatch WHEN Claude explains the failure THEN it identifies which mathematical objects have incompatible types and why
+- GIVEN a tactic failure WHEN Claude explains it THEN Claude also suggests an alternative tactic or approach
+
+**Traces to:** RFA-P1-4
+
+### Complete a Partial Theorem Description
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a partial natural language description (e.g., "the associativity of append for lists") WHEN Claude processes it THEN Claude infers the full statement including the universally quantified variables and the correct types
+- GIVEN a partial description WHEN Claude completes it THEN Claude explains what was inferred and asks the user to confirm before proceeding
+- GIVEN a partial description in the context of a Coq file WHEN Claude processes it THEN Claude uses the file's existing definitions and imports to guide the completion
+
+**Traces to:** RFA-P1-5
+
+### Suggest Alternative Formalizations
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a natural language theorem description WHEN there are multiple reasonable formalizations (e.g., using `Prop` vs `bool`, bundled vs unbundled structures, classical vs constructive) THEN Claude presents at least two alternatives with trade-off explanations
+- GIVEN multiple formalization alternatives WHEN the user selects one THEN the workflow proceeds with the selected formalization
+- GIVEN alternatives WHEN they are presented THEN Claude explains the practical consequences of each choice (e.g., "the classical version requires the excluded middle axiom")
+
+**Traces to:** RFA-P2-1

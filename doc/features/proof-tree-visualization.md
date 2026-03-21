@@ -2,8 +2,6 @@
 
 Visual diagrams of Coq proof trees — the branching structure of tactic applications and subgoals — rendered as Mermaid diagrams for understanding proof strategy at a glance.
 
-**Stories**: [Epic 2: Proof Tree Visualization](../requirements/stories/proof-visualization-widgets.md#epic-2-proof-tree-visualization)
-
 ---
 
 ## Problem
@@ -51,3 +49,26 @@ It does **not** provide:
 - Subtree extraction or selective tree rendering (future consideration)
 - Comparison of two different proof trees for the same theorem (P2 requirement in the PRD)
 - Proof term trees (the Curry-Howard view) — focus is on the tactic-level tree
+
+## Acceptance Criteria
+
+### Render Proof Tree for a Completed Proof
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a completed proof trace with 8 tactic steps WHEN the proof tree visualization MCP tool is called THEN it returns valid Mermaid syntax showing tactic applications as edges and subgoals as nodes
+- GIVEN a proof tree where 3 of 5 subgoals are discharged WHEN the diagram is rendered THEN discharged goals are visually distinct from open goals (e.g., different node style or color)
+- GIVEN a proof that uses nested tactic combinators (e.g., `split; [apply H1 | apply H2]`) WHEN the proof tree is rendered THEN branching structure is correctly represented
+
+**Traces to:** R4-P0-2, R4-P0-4, R4-P0-5
+
+### Render Proof Trees for Standard Library Proofs
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a completed proof trace from a Coq standard library theorem with at least 5 tactic steps WHEN the proof tree tool is called THEN it produces a valid, renderable Mermaid diagram
+- GIVEN proof traces from 10 distinct standard library theorems WHEN proof tree diagrams are generated for each THEN at least 9 out of 10 render successfully
+
+**Traces to:** R4-P0-2, R4-P0-9

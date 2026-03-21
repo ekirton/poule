@@ -2,8 +2,6 @@
 
 Unified management of Coq's three build tools — `coq_makefile`, Dune, and opam — through MCP tools that Claude Code can invoke to generate project configuration files, run builds, interpret errors in plain language, and manage package dependencies. Instead of requiring developers to learn three separate configuration formats and debug opaque error messages, the build system integration handles the mechanical details so the developer can focus on their Coq code.
 
-**Stories:** [Epic 1: Project File Generation](../requirements/stories/build-system-integration.md#epic-1-project-file-generation), [Epic 2: Build Execution and Error Interpretation](../requirements/stories/build-system-integration.md#epic-2-build-execution-and-error-interpretation), [Epic 3: Package and Dependency Management](../requirements/stories/build-system-integration.md#epic-3-package-and-dependency-management), [Epic 4: Configuration Maintenance](../requirements/stories/build-system-integration.md#epic-4-configuration-maintenance)
-
 ---
 
 ## Problem
@@ -53,3 +51,129 @@ This feature does not manage opam switches — creating, deleting, or switching 
 This feature does not generate continuous integration configuration (GitHub Actions, GitLab CI, etc.). CI pipelines depend on organizational preferences, runner infrastructure, and deployment workflows that vary too widely to address within a build system integration.
 
 This feature does not support build systems other than `coq_makefile` and Dune (e.g., Nix-based Coq builds), does not publish packages to the opam repository, and does not integrate with IDE-specific build features (VS Code tasks, Emacs compile mode).
+
+---
+
+## Acceptance Criteria
+
+### Generate _CoqProject File
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a Coq project directory containing `.v` files in subdirectories WHEN project file generation is invoked THEN a `_CoqProject` file is produced listing all source directories with correct `-Q` or `-R` flag mappings
+- GIVEN a generated `_CoqProject` file WHEN `coq_makefile -f _CoqProject -o Makefile` is run THEN it succeeds without errors
+- GIVEN a project with a single top-level source directory WHEN generation is invoked THEN the logical path mapping uses the directory name as the logical prefix
+
+**Traces to:** R-P0-1
+
+### Generate Dune Build Files
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a Coq project directory structure WHEN Dune file generation is invoked THEN a `dune-project` file and per-directory `dune` files are produced with correct `coq.theory` stanzas
+- GIVEN generated Dune files WHEN `dune build` is run THEN it succeeds without configuration errors
+- GIVEN a project with inter-library dependencies WHEN generation is invoked THEN the `(theories ...)` field in each `dune` file correctly lists the dependencies
+
+**Traces to:** R-P0-2
+
+### Generate .opam File
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a Coq project with known dependencies WHEN `.opam` generation is invoked THEN the produced file includes correct `depends`, `build`, `synopsis`, and `maintainer` fields
+- GIVEN a generated `.opam` file WHEN `opam lint` is run against it THEN no errors are reported
+- GIVEN a project that depends on `coq-mathcomp-ssreflect` version 2.x WHEN generation is invoked THEN the `depends` field includes the constraint `"coq-mathcomp-ssreflect" {>= "2.0.0"}`
+
+**Traces to:** R-P0-3
+
+### Run a Build
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a project with a `_CoqProject` file WHEN a build is requested THEN `coq_makefile` generates a Makefile and `make` is executed, with the complete stdout and stderr captured
+- GIVEN a project with a `dune-project` file WHEN a build is requested THEN `dune build` is executed, with the complete stdout and stderr captured
+- GIVEN a successful build WHEN the result is returned THEN it indicates success and includes the build output
+- GIVEN a failed build WHEN the result is returned THEN it includes the complete error output
+
+**Traces to:** R-P0-4
+
+### Interpret Build Errors
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN build output containing a "Cannot find a physical path bound to logical path" error WHEN interpretation is invoked THEN the explanation identifies the missing logical path mapping and suggests adding the correct `-Q` or `-R` flag to `_CoqProject` or the correct `(theories ...)` entry in `dune`
+- GIVEN build output containing a "Required library" not-found error WHEN interpretation is invoked THEN the explanation identifies the missing dependency and suggests the opam package to install
+- GIVEN build output containing multiple errors WHEN interpretation is invoked THEN each error receives a separate explanation with a specific fix suggestion
+
+**Traces to:** R-P0-5
+
+### Query Installed Packages
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an active opam switch WHEN installed package listing is requested THEN the result includes each installed package name and its version
+- GIVEN an active opam switch with `coq` version 8.19.0 installed WHEN the listing is inspected THEN it includes `coq 8.19.0`
+- GIVEN the installed package listing WHEN it is returned THEN packages are sorted alphabetically by name
+
+**Traces to:** R-P0-6
+
+### Add a Dependency
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a project with an existing `.opam` file WHEN a dependency on `coq-equations` is added THEN the `depends` field is updated to include `"coq-equations"` with an appropriate version constraint
+- GIVEN a project with an existing `dune-project` file WHEN a dependency is added THEN the `(depends ...)` stanza is updated accordingly
+- GIVEN an add-dependency request WHEN the package is already listed as a dependency THEN the tool reports that the dependency already exists rather than duplicating it
+
+**Traces to:** R-P1-2
+
+### Detect Version Conflicts
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a set of dependencies where package A requires `coq >= 8.18` and package B requires `coq < 8.18` WHEN conflict detection is invoked THEN the result identifies the conflicting `coq` version constraints from packages A and B
+- GIVEN a set of dependencies with no conflicts WHEN conflict detection is invoked THEN the result reports that all constraints are satisfiable
+- GIVEN a conflict detection result WHEN it identifies a conflict THEN it names the specific packages and their incompatible constraints
+
+**Traces to:** R-P1-3
+
+### Check Package Availability
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a package name that exists in the configured opam repositories WHEN availability is checked THEN the result lists all available versions of that package
+- GIVEN a package name that does not exist WHEN availability is checked THEN the result reports that the package was not found
+- GIVEN a package with multiple versions WHEN availability is checked THEN the versions are listed in descending order (newest first)
+
+**Traces to:** R-P1-1
+
+### Update _CoqProject on File Addition
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a project with an existing `_CoqProject` and a newly added subdirectory containing `.v` files WHEN update is invoked THEN the `_CoqProject` is updated with the new directory's logical path mapping
+- GIVEN an update request WHEN the existing `_CoqProject` contains custom flags or comments THEN those are preserved in the updated file
+- GIVEN a project where no new files or directories have been added WHEN update is invoked THEN the `_CoqProject` is not modified
+
+**Traces to:** R-P1-4
+
+### Migrate from coq_makefile to Dune
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a project with a `_CoqProject` file containing `-Q` and `-R` mappings WHEN migration is invoked THEN equivalent `dune-project` and `dune` files are generated with matching `coq.theory` stanzas
+- GIVEN a migrated project WHEN `dune build` is run THEN it builds the same set of `.vo` files that `make` produced under the original configuration
+- GIVEN a `_CoqProject` with flags not representable in Dune WHEN migration is invoked THEN the tool reports which flags could not be migrated
+
+**Traces to:** R-P1-5

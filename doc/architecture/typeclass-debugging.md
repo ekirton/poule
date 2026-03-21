@@ -3,7 +3,6 @@
 The component that wraps Coq's typeclass-related vernacular commands, parses their unstructured output into structured data, and provides the MCP server with instance listing, resolution tracing, failure explanation, and conflict detection capabilities.
 
 **Feature**: [Typeclass Debugging](../features/typeclass-debugging.md)
-**Stories**: [Epics 1--4](../requirements/stories/typeclass-debugging.md)
 
 ---
 

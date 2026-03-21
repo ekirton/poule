@@ -2,8 +2,6 @@
 
 Extraction of premise annotations — which lemmas and hypotheses each tactic used — for completed proofs and individual tactic steps.
 
-**Stories**: [Epic 4: Premise Tracking](../requirements/stories/proof-interaction-protocol.md#epic-4-premise-tracking)
-
 ---
 
 ## Problem
@@ -53,3 +51,22 @@ AI researchers building datasets will use the full-proof query. But tool builder
 ### Why fully qualified names rather than short names
 
 Short names are ambiguous — `add_comm` could be `Nat.add_comm`, `Z.add_comm`, or a local hypothesis. Fully qualified names are unique identifiers that can be resolved across different files and libraries. This is essential for building cross-project training datasets where the same short name appears in multiple contexts.
+
+## Acceptance Criteria
+
+### Get Premise Annotations for Completed Proof
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a session with a completed proof WHEN the get-premises tool is called THEN it returns a per-tactic list of premise annotations
+- GIVEN a premise annotation WHEN it is inspected THEN each premise includes its fully qualified name and kind (lemma, hypothesis, constructor, definition)
+- GIVEN the premise annotations WHEN they are compared against hand-curated ground truth on a set of ≥ 50 proofs THEN they match the ground truth
+
+### Get Premise Annotations for a Single Step
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a session with a completed proof at step k WHEN the get-step-premises tool is called with step k THEN it returns the premise annotations for that specific tactic step
+- GIVEN a step index outside the valid range WHEN the get-step-premises tool is called THEN a structured error is returned indicating the step is out of range

@@ -2,8 +2,6 @@
 
 The search backend uses multiple independent retrieval channels, each capturing a different notion of similarity, to maximize recall across diverse query types.
 
-**Stories**: [Epic 3: Retrieval Quality](../requirements/stories/tree-search-mcp.md#epic-3-retrieval-quality)
-
 ---
 
 ## Channels

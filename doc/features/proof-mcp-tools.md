@@ -2,8 +2,6 @@
 
 The set of MCP tools that expose proof interaction capabilities through the existing MCP server, alongside the [search tools](mcp-tool-surface.md) from Phase 1.
 
-**Stories**: [Epic 6: MCP Tool Surface](../requirements/stories/proof-interaction-protocol.md#epic-6-mcp-tool-surface)
-
 ---
 
 ## Combined Server
@@ -98,3 +96,31 @@ With 7 search tools + ~11 proof interaction tools, the server approaches ~18 too
 ### Why consistent ProofState schema across all tools
 
 A tool builder or AI researcher should be able to write one ProofState parser and use it everywhere. Schema consistency eliminates a class of integration bugs where different tools return subtly different state representations.
+
+## Acceptance Criteria
+
+### MCP Server with Proof Interaction Tools
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a valid MCP configuration WHEN the server starts via stdio transport THEN it exposes all search tools and all proof interaction tools
+- GIVEN a connected server WHEN the tool list is requested THEN proof interaction tools include at minimum: open-session, close-session, list-sessions, observe-state, submit-tactic, step-backward, step-forward, extract-trace, get-premises
+- GIVEN a connected server WHEN any proof interaction tool is called THEN it returns well-formed MCP tool responses
+
+### Proof State Response Format
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN any tool that returns proof state WHEN the response is inspected THEN it uses the ProofState schema containing: schema version, session ID, step index, focused goal index, and a list of Goal objects
+- GIVEN a Goal object WHEN it is inspected THEN it contains: goal index, goal type (as a string), and a list of Hypothesis objects
+- GIVEN a Hypothesis object WHEN it is inspected THEN it contains: name, type (as a string), and optionally a body (for let-bound hypotheses)
+
+### Coq Backend Errors
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a tactic that fails in Coq WHEN the error is returned THEN the MCP response includes a structured error object with the Coq error message, error location (if available), and the unchanged proof state
+- GIVEN a file that fails to load WHEN the error is returned THEN the response includes a structured error with the Coq error message

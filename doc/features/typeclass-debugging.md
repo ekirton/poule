@@ -2,8 +2,6 @@
 
 Typeclass debugging gives Claude the ability to inspect registered instances, trace the resolution engine's search process, and explain — in plain language — why resolution succeeded, failed, or chose one instance over another. A Coq developer encountering a typeclass error asks Claude what went wrong; Claude runs the appropriate debugging commands, interprets the output, and returns a clear explanation without the developer ever needing to know which Coq vernacular to invoke.
 
-**Stories:** [Epic 1: Instance Inspection](../requirements/stories/typeclass-debugging.md#epic-1-instance-inspection), [Epic 2: Resolution Tracing](../requirements/stories/typeclass-debugging.md#epic-2-resolution-tracing), [Epic 3: Instance Conflict Detection](../requirements/stories/typeclass-debugging.md#epic-3-instance-conflict-detection)
-
 ---
 
 ## Problem
@@ -55,3 +53,105 @@ Typeclass resolution failures are consistently cited as one of the most frustrat
 ### Why LLM interpretation of debug traces is the key value add
 
 The underlying Coq commands are mature and reliable. The problem is not that the information is unavailable — it is that the information is presented in a form that requires significant expertise to interpret. An LLM that can read a verbose, deeply nested resolution trace and produce a two-sentence explanation of what went wrong provides exactly the translation layer that is missing. The development cost is low because no new Coq functionality is required; the value comes entirely from making existing output accessible through natural language. This is one of the highest-leverage applications of an LLM-powered tool: the machine does the tedious parsing and pattern-matching; the user gets the insight.
+
+## Acceptance Criteria
+
+### Instance Inspection
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a valid typeclass name WHEN instance listing is invoked THEN it returns all registered instances including instance name, type signature, and defining module
+- GIVEN a typeclass with no registered instances WHEN instance listing is invoked THEN it returns an empty list with a clear indication that no instances exist
+- GIVEN a name that is not a typeclass WHEN instance listing is invoked THEN it returns an informative error indicating the name does not refer to a typeclass
+
+**Traces to:** R-TC-P0-1
+
+### Typeclass Listing
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a Coq environment with loaded libraries WHEN typeclass listing is invoked THEN it returns all registered typeclasses with summary information
+- GIVEN the typeclass list WHEN it is inspected THEN each entry includes at minimum the typeclass name and the number of registered instances
+
+**Traces to:** R-TC-P1-4
+
+### Resolution Tracing
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a proof state with an unresolved typeclass goal WHEN resolution tracing is invoked THEN it returns a structured trace showing which instances were tried, in what order, and whether each succeeded or failed
+- GIVEN a resolution trace WHEN it is inspected THEN each step includes the instance name, the goal it was applied to, and the outcome (success, unification failure, or sub-goal failure)
+- GIVEN the raw output of `Set Typeclasses Debug` WHEN it is processed THEN it is parsed into a structured representation rather than returned as raw text
+
+**Traces to:** R-TC-P0-2, R-TC-P0-5
+
+### Resolution Failure Explanation
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a resolution failure caused by no matching instance WHEN the explanation is returned THEN it states that no instance was found and identifies the specific typeclass and type arguments that lack an instance
+- GIVEN a resolution failure caused by unification failure against a specific instance WHEN the explanation is returned THEN it identifies the instance and explains which type arguments failed to unify
+- GIVEN a resolution failure caused by exceeding the maximum resolution depth WHEN the explanation is returned THEN it states that depth was exceeded and shows the resolution path that led to the loop or deep chain
+
+**Traces to:** R-TC-P0-3
+
+### Resolution Search Tree
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a goal requiring typeclass resolution WHEN the search tree is requested THEN it returns a tree structure showing each resolution step, branching points, and outcomes
+- GIVEN a branching point in the search tree WHEN it is inspected THEN it shows all candidate instances at that point and indicates which was selected and why alternatives were rejected
+- GIVEN a search tree WHEN it is presented THEN the depth and branching structure are clearly communicated (e.g., via indentation or explicit parent-child relationships)
+
+**Traces to:** R-TC-P1-1
+
+### Instance Conflict Detection
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a goal for which multiple instances match WHEN conflict detection is invoked THEN it identifies all matching instances and indicates which one resolution selects
+- GIVEN conflicting instances WHEN the result is inspected THEN it explains the basis for selection (declaration order, priority hint, or specificity)
+- GIVEN a single matching instance for a goal WHEN conflict detection is invoked THEN it confirms that resolution is unambiguous
+- GIVEN a specific instance and a goal WHEN instance explanation is requested THEN it explains whether the instance matches the goal, and if so, with what unification
+- GIVEN an instance that was not selected despite matching WHEN the explanation is returned THEN it identifies the instance that was selected instead and explains the priority or ordering reason
+- GIVEN an instance that does not match the goal WHEN the explanation is returned THEN it identifies which type arguments or prerequisite constraints prevented matching
+
+**Traces to:** R-TC-P1-2, R-TC-P1-3
+
+### Typeclass Debugging MCP Tools
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a running MCP server WHEN its tool list is inspected THEN typeclass debugging tools are present with documented schemas
+- GIVEN a typeclass debugging tool WHEN it is invoked with valid parameters THEN it returns structured results within 5 seconds for standard library-scale typeclass hierarchies
+- GIVEN a typeclass debugging tool WHEN it is invoked with invalid parameters THEN it returns a clear error message indicating the problem
+
+**Traces to:** R-TC-P0-4
+
+### Resolution Fix Suggestions
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a resolution failure caused by a missing instance WHEN a fix suggestion is requested THEN it suggests adding an instance declaration with the appropriate type signature
+- GIVEN a resolution failure caused by a missing import WHEN a fix suggestion is requested THEN it identifies the module that provides the needed instance and suggests importing it
+- GIVEN a resolution failure with no straightforward fix WHEN a fix suggestion is requested THEN it explains why no simple fix is available and describes what would be needed
+
+**Traces to:** R-TC-P2-1
+
+### Instance Priority Issues
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a newly registered instance WHEN priority analysis is performed THEN it identifies any existing instances that the new instance would shadow for common goal patterns
+- GIVEN a shadowing relationship WHEN it is reported THEN it includes the specific goal pattern affected and both the shadowing and shadowed instance names
+
+**Traces to:** R-TC-P2-2

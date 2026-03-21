@@ -2,8 +2,6 @@
 
 Retrieval of similar proof states and their successful tactics from extracted training data, used as few-shot context to improve tactic candidate generation during proof search.
 
-**Stories**: [Epic 2: Tactic Candidate Generation](../requirements/stories/proof-search-automation.md#epic-2-tactic-candidate-generation) (2.4)
-
 ---
 
 ## Problem

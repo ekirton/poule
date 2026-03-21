@@ -3,7 +3,6 @@
 The component that wraps `coqchk` for independent verification of compiled `.vo` files. It constructs `coqchk` invocations, manages the subprocess lifecycle, and parses output into structured results that the MCP server returns to Claude Code.
 
 **Feature**: [Independent Proof Checking](../features/independent-proof-checking.md)
-**Stories**: [Epic 1: Single-File Proof Checking](../requirements/stories/proof-checking.md#epic-1-single-file-proof-checking), [Epic 2: Project-Wide Proof Checking](../requirements/stories/proof-checking.md#epic-2-project-wide-proof-checking), [Epic 3: Failure Handling and Recovery](../requirements/stories/proof-checking.md#epic-3-failure-handling-and-recovery), [Epic 4: CI Integration](../requirements/stories/proof-checking.md#epic-4-ci-integration)
 
 ---
 

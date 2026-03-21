@@ -2,8 +2,6 @@
 
 When `setoid_rewrite` fails with "Unable to satisfy Proper constraint", Coq dumps a wall of existential variables and substitution contexts that tells the user almost nothing about what went wrong. The actual problem is usually simple — a single function lacks a `Proper` instance for a specific relation — but extracting that answer from the error requires expert knowledge of three interacting systems: generalized rewriting, the `Proper`/`respectful` combinator vocabulary, and typeclass resolution. The Setoid Rewriting Assistant closes this gap: it identifies the missing morphism instance, generates the `Instance Proper ...` declaration with the correct signature, and checks whether existing instances make the declaration unnecessary. It also catches the common case where `rewrite` fails under a binder and the user does not know that `setoid_rewrite` exists.
 
-**Stories:** [Epic 1: Failure Diagnosis](../requirements/stories/setoid-rewriting-assistant.md#epic-1-failure-diagnosis), [Epic 2: Instance Generation](../requirements/stories/setoid-rewriting-assistant.md#epic-2-instance-generation), [Epic 3: Explanation and Education](../requirements/stories/setoid-rewriting-assistant.md#epic-3-explanation-and-education), [Epic 4: Proof Assistance](../requirements/stories/setoid-rewriting-assistant.md#epic-4-proof-assistance)
-
 ---
 
 ## Problem
@@ -81,3 +79,75 @@ An assistant that generates `Proper` instances without ever explaining what `Pro
 ### Why this feature synergizes with typeclass debugging
 
 Setoid rewriting failures are, at their core, typeclass resolution failures: `setoid_rewrite` asks the typeclass engine to find a `Proper` instance, and the engine fails. The typeclass debugging feature (resolution tracing, instance listing, failure explanation) provides the diagnostic infrastructure that this feature builds on. When the setoid rewriting assistant needs to determine why a `Proper` instance was not found — was it missing, was it present but with the wrong signature, did resolution try it but fail on a sub-goal? — it can leverage the typeclass debugging tools for the answer.
+
+## Acceptance Criteria
+
+### Failure Diagnosis
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a `setoid_rewrite` failure message referencing unsatisfied `Proper` constraints WHEN diagnosis is requested THEN it identifies the specific function and the expected relation signature in plain language (e.g., "Function `union` needs a `Proper` instance mapping `eq_set`-related arguments to `eq_set`-related results")
+- GIVEN a failure involving multiple missing instances WHEN diagnosis is requested THEN it lists all missing instances, not just the first one
+- GIVEN a failure where the base relation itself is not registered WHEN diagnosis is requested THEN it identifies that the relation lacks an `Equivalence` (or `PreOrder`) instance and flags this as the root cause
+- GIVEN a `rewrite` failure where the target subterm appears under a `forall`, `exists`, or `fun` WHEN diagnosis is requested THEN it explains that `rewrite` cannot look inside binders and suggests `setoid_rewrite` as the alternative
+- GIVEN the suggestion to use `setoid_rewrite` WHEN it is presented THEN it notes any `Proper` instances that may be needed and checks whether the standard library already provides them (via `Morphisms_Prop`)
+- GIVEN a `rewrite` failure where the subterm genuinely does not appear in the goal WHEN diagnosis is requested THEN it does not incorrectly suggest `setoid_rewrite`
+
+**Traces to:** R-SR-P0-1, R-SR-P0-4
+
+### Instance Generation
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN the function name, its type signature, and the target relation WHEN generation is requested THEN it produces a syntactically correct `Instance Proper (R1 ==> R2 ==> ... ==> Rout) f` declaration
+- GIVEN a function with `n` arguments WHEN the signature is generated THEN each argument position has the correct relation (matching the user's equivalence relation for the relevant type)
+- GIVEN the generated declaration WHEN the user pastes it into their development THEN it is accepted by Coq and opens the correct proof obligation
+- GIVEN a missing `Proper` instance for a standard-library function (e.g., `and`, `or`, `forall`) WHEN diagnosis is requested THEN it identifies the existing instance in `Coq.Classes.Morphisms_Prop` or `Coq.Classes.Morphisms` and suggests importing it
+- GIVEN a missing `Proper` instance for a user-defined function WHEN no existing instance is found THEN it confirms that a new instance must be declared
+- GIVEN an existing instance with a compatible but not identical signature WHEN it is found THEN it explains the relationship and whether it suffices
+
+**Traces to:** R-SR-P0-2, R-SR-P0-3
+
+### Explanation and Education
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a `Proper` signature like `Proper (eq ==> eq_set ==> eq_set) union` WHEN explanation is requested THEN it translates to: "If the first arguments are Leibniz-equal and the second arguments are `eq_set`-related, then the results are `eq_set`-related"
+- GIVEN a signature involving `-->` (contravariant) WHEN explanation is requested THEN it correctly explains the direction reversal
+- GIVEN a signature involving `pointwise_relation` WHEN explanation is requested THEN it explains that the relation is lifted pointwise to function types
+- GIVEN a rewrite target under `forall` WHEN explanation is requested THEN it explains that `forall` is a morphism from `pointwise_relation A iff` to `iff` and shows the standard-library instance `all_iff_morphism`
+- GIVEN a rewrite target under a dependent product WHEN explanation is requested THEN it explains the need for `forall_relation` instead of `pointwise_relation` and shows the signature pattern
+- GIVEN a rewrite target under a custom binder (e.g., monadic bind) WHEN explanation is requested THEN it explains how to declare a `Proper` instance for the binder using `pointwise_relation`
+
+**Traces to:** R-SR-P1-1, R-SR-P1-2
+
+### Proof Assistance
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a `Proper` proof obligation WHEN strategy is requested THEN it suggests the standard opening (`unfold Proper, respectful; intros`) and identifies whether `solve_proper` or `f_equiv` can close the goal automatically
+- GIVEN a `Proper` obligation that `solve_proper` cannot handle WHEN strategy is requested THEN it suggests manual proof steps based on the structure of the function (e.g., "unfold `f`, then use the `Proper` instances of the functions it calls")
+- GIVEN a simple compositional `Proper` obligation WHEN `solve_proper` succeeds THEN it recommends using `solve_proper` as the complete proof
+- GIVEN a relation used in a `Proper` context that has no `Equivalence` or `PreOrder` instance WHEN diagnosis is requested THEN it identifies the missing relational instance as the root cause
+- GIVEN the missing relational instance WHEN generation is requested THEN it produces an `Instance Equivalence my_rel` (or `PreOrder`) declaration skeleton with `reflexivity`, `symmetry`, and `transitivity` obligations
+- GIVEN a relation that is only a preorder (not symmetric) WHEN diagnosis is requested THEN it suggests `PreOrder` rather than `Equivalence` and notes the implications for rewrite direction
+
+**Traces to:** R-SR-P1-3, R-SR-P1-4
+
+### Bulk Analysis
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a Coq module or file WHEN morphism audit is requested THEN it identifies all functions used in contexts where `setoid_rewrite` might be applied and reports which ones lack `Proper` instances
+- GIVEN the audit report WHEN it lists missing instances THEN each entry includes the function name, the expected relation signature, and the location where the function is used in a rewrite context
+- GIVEN a function used in a contravariant position (e.g., as a hypothesis in an implication) WHEN instance generation is requested THEN it uses `-->` for the contravariant argument rather than defaulting to `==>`
+- GIVEN a function used in both covariant and contravariant positions WHEN instance generation is requested THEN it suggests the most general variance that works in both contexts, or recommends declaring separate instances
+- GIVEN a `Proper` instance for the right function but wrong relation WHEN diagnosis is requested THEN it identifies the mismatch (e.g., "Instance exists for `eq` but the rewrite context needs `equiv`")
+- GIVEN a variance mismatch WHEN diagnosis is requested THEN it explains the expected variance and suggests declaring an additional instance with the correct variance
+
+**Traces to:** R-SR-P2-1, R-SR-P2-2, R-SR-P2-3

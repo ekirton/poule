@@ -3,7 +3,6 @@
 The component that extracts, classifies, and compares axiom dependencies for Coq theorems. Claude Code invokes assumption auditing as MCP tools; the component handles Coq interaction, output parsing, classification, and result assembly internally.
 
 **Feature**: [Assumption Auditing](../features/assumption-auditing.md)
-**Stories**: [Epic 1: Single-Theorem Assumption Auditing](../requirements/stories/assumption-auditing.md#epic-1-single-theorem-assumption-auditing), [Epic 2: Batch Auditing](../requirements/stories/assumption-auditing.md#epic-2-batch-auditing), [Epic 3: Assumption Comparison](../requirements/stories/assumption-auditing.md#epic-3-assumption-comparison), [Epic 4: Index-Based Auditing](../requirements/stories/assumption-auditing.md#epic-4-index-based-auditing)
 
 ---
 

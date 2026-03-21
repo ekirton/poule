@@ -65,8 +65,8 @@ async def list_instances(
     if not typeclass_name:
         raise TypeclassError("INVALID_INPUT", "Typeclass name must be non-empty.")
 
-    response = await session_manager.execute_vernacular(
-        session_id, f"Print Instances {typeclass_name}."
+    response = await session_manager.send_command(
+        session_id, f"Print Instances {typeclass_name}.", prefer_coqtop=True,
     )
 
     # Check for error responses
@@ -165,8 +165,8 @@ async def list_typeclasses(
     ENSURES: Returns a list of TypeclassSummary records.
     MAINTAINS: Session proof state is unchanged.
     """
-    response = await session_manager.execute_vernacular(
-        session_id, "Print Typeclasses."
+    response = await session_manager.send_command(
+        session_id, "Print Typeclasses.", prefer_coqtop=True,
     )
 
     if not response or not response.strip():
@@ -186,8 +186,8 @@ async def list_typeclasses(
     # Issue follow-up Print Instances for each typeclass
     results: List[TypeclassSummary] = []
     for name in typeclass_names:
-        instance_response = await session_manager.execute_vernacular(
-            session_id, f"Print Instances {name}."
+        instance_response = await session_manager.send_command(
+            session_id, f"Print Instances {name}.", prefer_coqtop=True,
         )
         if not instance_response or not instance_response.strip():
             count = 0
@@ -216,15 +216,15 @@ async def trace_resolution(
     MAINTAINS: Debug mode is never left enabled. Proof state is unchanged.
     """
     # Enable debug output
-    await session_manager.execute_vernacular(
-        session_id, "Set Typeclasses Debug Verbosity 2."
+    await session_manager.send_command(
+        session_id, "Set Typeclasses Debug Verbosity 2.", prefer_coqtop=True,
     )
 
     debug_output = ""
     try:
         # Re-trigger resolution to capture debug output
-        debug_output = await session_manager.execute_vernacular(
-            session_id, "typeclasses eauto."
+        debug_output = await session_manager.send_command(
+            session_id, "typeclasses eauto.", prefer_coqtop=True,
         )
     except SessionError as e:
         if e.code == BACKEND_CRASHED:
@@ -232,8 +232,8 @@ async def trace_resolution(
             raise
         # For other session errors, attempt cleanup then re-raise
         try:
-            await session_manager.execute_vernacular(
-                session_id, "Unset Typeclasses Debug."
+            await session_manager.send_command(
+                session_id, "Unset Typeclasses Debug.", prefer_coqtop=True,
             )
         except Exception:
             pass
@@ -241,8 +241,8 @@ async def trace_resolution(
     except asyncio.TimeoutError:
         # Attempt cleanup, then raise timeout error
         try:
-            await session_manager.execute_vernacular(
-                session_id, "Unset Typeclasses Debug."
+            await session_manager.send_command(
+                session_id, "Unset Typeclasses Debug.", prefer_coqtop=True,
             )
         except Exception:
             pass
@@ -254,16 +254,16 @@ async def trace_resolution(
     except Exception:
         # Generic error: attempt cleanup
         try:
-            await session_manager.execute_vernacular(
-                session_id, "Unset Typeclasses Debug."
+            await session_manager.send_command(
+                session_id, "Unset Typeclasses Debug.", prefer_coqtop=True,
             )
         except Exception:
             pass
         raise
     else:
         # Normal path: disable debug output
-        await session_manager.execute_vernacular(
-            session_id, "Unset Typeclasses Debug."
+        await session_manager.send_command(
+            session_id, "Unset Typeclasses Debug.", prefer_coqtop=True,
         )
 
     # Check if there was any typeclass-related output

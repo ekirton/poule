@@ -2,8 +2,6 @@
 
 A ready-to-use neural premise selection model checkpoint, trained on the Coq standard library and MathComp, shipped with the tool so users get improved search quality without training a model themselves.
 
-**Stories**: [Epic 5: Pre-trained Model Distribution](../requirements/stories/neural-premise-selection.md#epic-5-pre-trained-model-distribution) (5.1)
-
 ---
 
 ## Problem
@@ -51,3 +49,16 @@ These are the two most widely used Coq libraries. The standard library provides 
 ### Why not a larger model
 
 Research consistently shows that 100M-class models match or exceed much larger models for formal math retrieval when paired with hybrid ranking. LeanExplore's 109M off-the-shelf model matched or beat 7B fine-tuned models. LeanHammer's 82M model outperformed ReProver's 299M by 150%. Shipping a 7B model would require GPU inference, excluding most users. The quality advantage of larger models is marginal and fully compensated by hybrid ranking with the existing structural and symbolic channels.
+
+---
+
+## Acceptance Criteria
+
+### Ship a Pre-trained Model for Standard Library and MathComp
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a fresh installation of the search tool WHEN the user runs the indexing command with the default model THEN the pre-trained model is used to compute premise embeddings without requiring any training step
+- GIVEN the pre-trained model WHEN evaluated on a held-out test set from the Coq standard library and MathComp THEN it achieves ≥ 50% Recall@32
+- GIVEN the pre-trained model checkpoint WHEN its size is measured THEN the INT8 quantized model is under 500MB

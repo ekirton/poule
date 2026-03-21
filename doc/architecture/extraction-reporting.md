@@ -3,7 +3,6 @@
 How dataset quality reports are generated from extraction output, how extraction scope is configured, and how benchmark subsets and ML exports are produced.
 
 **Feature**: [Extraction Quality Reports](../features/extraction-quality-reports.md), [Extraction Benchmarks and Export](../features/extraction-benchmarks-export.md)
-**Stories**: [Epic 9: Dataset Quality and Filtering](../requirements/stories/training-data-extraction.md#epic-9-dataset-quality-and-filtering), [Epic 10: Advanced Extraction and Export](../requirements/stories/training-data-extraction.md#epic-10-advanced-extraction-and-export)
 **Data models**: [extraction-types.md](data-models/extraction-types.md) (QualityReport, DistributionStats, TacticFrequency)
 
 ---

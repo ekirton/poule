@@ -3,7 +3,6 @@
 The component that diagnoses `auto`/`eauto` hint search failures by capturing debug traces, parsing them into search trees, cross-referencing with hint database contents, and classifying each hint rejection with an actionable fix suggestion.
 
 **Feature**: [Auto/Eauto Trace Explanation](../features/auto-trace-explanation.md)
-**Stories**: [Epics 1–4](../requirements/stories/auto-trace-explanation.md)
 
 ---
 

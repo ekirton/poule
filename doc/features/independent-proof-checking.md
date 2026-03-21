@@ -2,8 +2,6 @@
 
 Wraps Coq's independent proof checker (`coqchk`) so that Claude Code can re-validate compiled `.vo` files against the kernel on the user's behalf. The user asks Claude to independently verify a proof; the tool invokes `coqchk`, interprets its output, and returns a clear verdict — either confirmation that the proof is kernel-valid, or a plain-language explanation of what went wrong.
 
-**Stories:** [Epic 1: Single-File Proof Checking](../requirements/stories/proof-checking.md#epic-1-single-file-proof-checking), [Epic 2: Project-Wide Proof Checking](../requirements/stories/proof-checking.md#epic-2-project-wide-proof-checking), [Epic 3: Failure Handling and Recovery](../requirements/stories/proof-checking.md#epic-3-failure-handling-and-recovery), [Epic 4: CI Integration](../requirements/stories/proof-checking.md#epic-4-ci-integration)
-
 ---
 
 ## Problem
@@ -49,3 +47,84 @@ For most everyday Coq development, trusting `coqc` alone is perfectly reasonable
 Independent checking is most valuable for high-assurance formalizations: projects where proof validity has real-world consequences. Certified compilers like CompCert, cryptographic protocol verifications, and safety-critical system models are canonical examples. For these projects, running `coqchk` before releases, after major refactors, and as a CI gate is straightforward best practice.
 
 For exploratory development and learning exercises, independent checking is less urgent — but still useful as a teaching tool. When a newcomer's proof passes `coqc` but fails `coqchk`, the explanation of why provides a window into how Coq's trust model works. The feature supports both use cases, but its primary value is in the high-assurance context where defense in depth is not optional.
+
+---
+
+## Acceptance Criteria
+
+### Check a Single Compiled File
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a compiled `.vo` file WHEN independent checking is invoked for that file THEN `coqchk` is executed against the file and the result (pass or fail) is returned
+- GIVEN a `.vo` file that passes `coqchk` WHEN the result is returned THEN it confirms that the proofs in the module are independently verified as kernel-valid
+- GIVEN a `.vo` file path that does not exist WHEN checking is invoked THEN a clear error is returned indicating the file was not found
+
+**Traces to:** RC-P0-1
+
+### Interpret Checker Output
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a successful `coqchk` run WHEN the result is presented THEN it includes a plain-language confirmation of what was verified (e.g., which module, how many definitions checked)
+- GIVEN a `coqchk` failure WHEN the result is presented THEN it includes the module name, the nature of the inconsistency, and a plain-language explanation of what it means and why it matters
+- GIVEN a `coqchk` failure involving an axiom inconsistency WHEN the result is presented THEN the explanation distinguishes between an axiom mismatch and a proof-level error
+
+**Traces to:** RC-P0-3
+
+### Check an Entire Project
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a Coq project directory containing compiled `.vo` files WHEN project-wide checking is invoked THEN `coqchk` is executed across all `.vo` files respecting the dependency graph
+- GIVEN a project with a `_CoqProject` file WHEN project-wide checking is invoked THEN include paths and logical path mappings are derived from the project configuration
+- GIVEN a project-wide check WHEN it completes THEN every `.vo` file in the project has been checked
+
+**Traces to:** RC-P0-2, RC-P1-3
+
+### Batch Checking with Summary Report
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a project-wide check that completes WHEN the summary is returned THEN it includes the total number of files checked, the number that passed, and the number that failed
+- GIVEN a project-wide check with failures WHEN the summary is returned THEN each failed file is listed with its specific failure reason
+- GIVEN a project-wide check where all files pass WHEN the summary is returned THEN it confirms that the entire project is independently verified
+
+**Traces to:** RC-P1-1
+
+### Handle Checker Failures
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a `coqchk` run that reports an inconsistency WHEN the failure is presented THEN the response includes the specific module and definition where the inconsistency was detected
+- GIVEN a `coqchk` failure due to a missing dependency WHEN the failure is presented THEN the response identifies the missing dependency and suggests compiling or checking it first
+- GIVEN a `coqchk` timeout WHEN the failure is presented THEN the response indicates the timeout was reached and suggests increasing the timeout or checking fewer files
+
+**Traces to:** RC-P0-3, RC-P0-4, RC-P2-1
+
+### Detect Stale Compiled Files
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a `.vo` file whose modification time is older than its corresponding `.v` file WHEN checking is invoked THEN a warning is returned indicating the compiled file may be stale
+- GIVEN stale files detected during a project-wide check WHEN the summary is returned THEN the stale files are listed separately from pass/fail results
+- GIVEN a stale file warning WHEN it is presented THEN the response suggests recompiling the source file before checking
+
+**Traces to:** RC-P1-2
+
+### CI-Friendly Output
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a project-wide check invoked in a CI context WHEN it completes THEN the result includes a structured JSON payload with per-file status, overall pass/fail, and timing information
+- GIVEN a project-wide check where any file fails WHEN the result is inspected programmatically THEN the overall status is "fail" and the failing files are enumerable
+- GIVEN a project-wide check where all files pass WHEN the result is inspected programmatically THEN the overall status is "pass"
+
+**Traces to:** RC-P1-4

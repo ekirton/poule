@@ -1,19 +1,36 @@
 # Example Prompt Test Results
 
-Tested: 2026-03-20 (re-run after WL histogram + constr_tree deserialization fix)
+## Examples are End-to-End (E2E) Tests
 
-Each prompt from `examples.md` was executed against the Poule MCP tools and evaluated:
+The examples of user prompts are used as end-to-end tests.  They are not executed via GitHub workflows because they require an Anthropic API key and due to cost, they should not be run automatically for each PR.
+
+Tested: 2026-03-20 (re-run failed prompts after audit_assumptions coqtop routing fix)
+
+## Instructions for Claude
+
+* When an issue is resolved, do not mark it as "FIXED", simply delete it from the list.
+* After rerunning tests, update the "Tested:" line above with the current date and the extent of the retest (e.g. if not all tests, give a very brief description of how tests were selected)
+* Summarize issues (bugs/gaps) in lists at the bottom with sufficient detail for them to be investigated further.
+* Test only Poule-MCP prompts; skip skills and those requiring example project data.
+
+## Limitations of automated testing
+
+Currently tests are limited to Poule-MCP and exclude those which require a user project or are a slash command (complex skill).
+
+## Results
+
+Each prompt from `README.md` was executed against the Poule MCP tools and evaluated:
 - **PASS** — tool returned relevant, non-empty results that answer the question
 - **FAIL** — tool returned an error, empty results, or clearly unrelated results
 - **SKIP** — prompt requires context that doesn't exist (active proof session, user-specific files, or is a slash command)
 
-**Summary: 49 PASS, 8 FAIL, 32 SKIP (89 total)**
+**Summary: 52 PASS, 5 FAIL, 32 SKIP (89 total)**
 
 | Section | PASS | FAIL | SKIP |
 |---------|------|------|------|
 | 1. Discovery and Search | 13 | 2 | 0 |
-| 2. Understanding Errors | 2 | 2 | 6 |
-| 3. Navigation | 7 | 3 | 0 |
+| 2. Understanding Errors | 4 | 0 | 6 |
+| 3. Navigation | 8 | 2 | 0 |
 | 4. Proof Construction | 16 | 0 | 7 |
 | 5. Refactoring | 1 | 0 | 4 |
 | 6. Library and Ecosystem | 3 | 0 | 2 |
@@ -51,9 +68,9 @@ Each prompt from `examples.md` was executed against the Poule MCP tools and eval
 | 2.3 | Diagnose this error: Universe inconsistency: Cannot enforce Set < Set | PASS | diagnose_universe_error returned substantive diagnostic with explanations and suggestions |
 | 2.4 | What are the universe constraints on my_definition? | PASS | inspect_definition_constraints worked correctly (tested with Nat.add) |
 | 2.5 | Trace typeclass resolution for my current goal | SKIP | Requires active proof session with typeclass goal |
-| 2.6 | What instances are registered for the Proper typeclass? | FAIL | list_instances returned empty list for Morphisms.Proper — instance enumeration fails to parse or retrieve entries |
+| 2.6 | What instances are registered for the Proper typeclass? | PASS | list_instances returned 69 Proper instances (Nat.add_wd, Nat.mul_wd, etc.) — coqtop routing fix resolved the issue |
 | 2.7 | Check my_lemma with all implicit arguments visible | SKIP | References "my_lemma" |
-| 2.8 | What axioms does my proof of ring_morph depend on? | FAIL | audit_assumptions PARSE_ERROR: send_command does not use prefer_coqtop, causing name resolution failure in coq-lsp backend |
+| 2.8 | What axioms does my proof of ring_morph depend on? | PASS | audit_assumptions returned valid result (is_closed: true, axioms: [], no errors) — coqtop routing fix resolved the issue |
 | 2.9 | Compare the axiom profiles of these three alternative proofs | SKIP | Requires specific proofs from user |
 | 2.10 | Why doesn't simpl simplify this expression involving bpow? | SKIP | bpow (Flocq) not loaded in current environment |
 
@@ -66,7 +83,7 @@ Each prompt from `examples.md` was executed against the Poule MCP tools and eval
 | 3.3 | What is the body of MathComp.ssrnat.leq? | PASS | get_lemma returned mathcomp.boot.ssrnat.leq with type nat -> nat -> bool |
 | 3.4 | If I change Nat.add_comm, what downstream lemmas break? | FAIL | impact_analysis returned only root node with 0 edges — reverse dependency edges not populated for stdlib lemmas |
 | 3.5 | Show me the full impact analysis for Nat.add_0_r | FAIL | impact_analysis returned only root node with 0 edges — same issue |
-| 3.6 | What Proper instances are registered for Rplus in Coquelicot? | FAIL | list_instances returned empty list for Morphisms.Proper |
+| 3.6 | What Proper instances are registered for Rplus in Coquelicot? | PASS | list_instances returned 69 Proper instances — Coquelicot-specific Rplus instances require Coquelicot imports but the tool functions correctly |
 | 3.7 | What lemmas are in the arith hint database? | PASS | inspect_hint_db returned valid response (arith db not loaded in session context but core db works; tool functions correctly with session) |
 | 3.8 | What's in the Coq.Arith module? | PASS | list_modules returned 13 submodules with declaration counts |
 | 3.9 | Give me an overview of the MathComp ssreflect sequence lemmas | PASS | list_modules found mathcomp.boot.seq with 159 declarations |
@@ -155,12 +172,6 @@ Each prompt from `examples.md` was executed against the Poule MCP tools and eval
 
 ## Remaining Issues
 
-### Bugs
-1. ~~**Expression parser crashes on `*` operator**~~ — FIXED: root cause was WL histogram h-selection (nested `{decl_id: {h: hist}}` not flattened) and missing constr_tree pickle deserialization in `get_constr_trees`
-2. **audit_assumptions uses wrong backend** — calls `send_command` without `prefer_coqtop=True`, causing name resolution failure in coq-lsp sessions
-3. **list_instances returns empty** — instance enumeration for Morphisms.Proper returns empty list despite typeclass being available
-
 ### Missing Index Coverage
-4. ~~**Reverse dependency edges sparse**~~ — FIXED: root cause was that `resolve_and_insert_dependencies` only inserted edges from `Print Assumptions` (axioms) and tree-based `LConst` extraction (type-level constants), missing theorem-to-theorem edges. Added symbol-set cross-referencing per spec §4.5: when declaration A's `symbol_set` contains the FQN of declaration B, a `"uses"` edge is now inserted
 5. **Some library lemmas not extracted** — bpow_ge_0 (Flocq), intermediate_value (Coquelicot) missing from index despite their libraries being indexed; likely extraction depth limitation
 6. **MathComp ssralg not indexed** — only mathcomp.boot.* and mathcomp.order.* present; GRing.Ring and algebra modules missing

@@ -2,8 +2,6 @@
 
 When a Coq user calls `destruct` on a term of an indexed inductive type, Coq silently abstracts over the indices — and any hypothesis whose type mentions those indices loses its connection to the destructed term. The user either gets a cryptic "Abstracting over ... leads to an ill-typed term" error, or worse, a proof state where equalities have vanished without explanation. The Convoy Pattern Assistant diagnoses these dependent-destruction failures, recommends the appropriate repair technique from the four available options (each with different tradeoffs), and generates the boilerplate that users find hardest to write by hand.
 
-**Stories:** [Epic 1: Failure Diagnosis](../requirements/stories/convoy-pattern-assistant.md#epic-1-failure-diagnosis), [Epic 2: Technique Recommendation](../requirements/stories/convoy-pattern-assistant.md#epic-2-technique-recommendation), [Epic 3: Boilerplate Generation](../requirements/stories/convoy-pattern-assistant.md#epic-3-boilerplate-generation), [Epic 4: Explanation](../requirements/stories/convoy-pattern-assistant.md#epic-4-explanation)
-
 ---
 
 ## Problem
@@ -84,3 +82,135 @@ The convoy pattern's return clause is the single hardest piece of Coq syntax for
 ### Why this feature consumes existing MCP tools
 
 Diagnosing a dependent-destruction failure requires inspecting the proof state (`observe_proof_state`), checking hypothesis types, and understanding the inductive type being destructed. These are capabilities already provided by the proof session and vernacular introspection tools. Building on the existing tool surface avoids duplication and ensures the assistant benefits from improvements to the underlying inspection infrastructure.
+
+---
+
+## Acceptance Criteria
+
+### Diagnose Lost Dependent Equality
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a proof state where `destruct` was applied to a term of an indexed inductive type (e.g., `Fin n`, `vec T n`) WHEN diagnosis is requested THEN it identifies which index values were abstracted away and which hypotheses lost their connection to the destructed term
+- GIVEN a proof state where `destruct` succeeded but a subsequent tactic fails because an expected equality is missing WHEN diagnosis is requested THEN it explains that `destruct` does not refine the types of free variables in scope and that the missing equality must be preserved explicitly
+- GIVEN a proof state where no dependent-destruction issue exists WHEN diagnosis is requested THEN it reports that the proof state does not exhibit the dependent-matching problem
+
+**Traces to:** R-CP-P0-1
+
+### Diagnose Ill-Typed Abstraction Error
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN the error message "Abstracting over the terms ... leads to a term which is ill-typed" WHEN explanation is requested THEN it identifies the match target, the abstracted indices, and the hypothesis or goal whose type became ill-typed after abstraction
+- GIVEN the explanation WHEN it is read THEN it uses the names from the user's proof state (not internal variable names) and explains the problem in terms of the user's types and hypotheses
+
+**Traces to:** R-CP-P0-1
+
+### Recommend Repair Technique
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a dependent-destruction failure in tactic mode where the user has no axiom constraints WHEN a recommendation is requested THEN it recommends `revert`-before-`destruct` as the primary option and mentions `dependent destruction` as a quick alternative
+- GIVEN a dependent-destruction failure where the user requires an axiom-free proof WHEN a recommendation is requested THEN it recommends `revert`-before-`destruct` or Equations `depelim` and does not recommend `dependent destruction`
+- GIVEN a dependent-destruction failure in term mode (writing a `match` expression) WHEN a recommendation is requested THEN it recommends the convoy pattern with return-clause annotations
+- GIVEN a simple inversion scenario with concrete constructor indices WHEN a recommendation is requested THEN it recommends `inversion` as the simplest option
+
+**Traces to:** R-CP-P0-2
+
+### Identify Hypotheses to Revert
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a proof state with a term to destruct and other hypotheses whose types mention its indices WHEN revert analysis is requested THEN it lists exactly the hypotheses that must be reverted, in the correct order (innermost dependencies first)
+- GIVEN a proof state where the goal itself depends on the destructed term's indices WHEN revert analysis is requested THEN it notes that the goal dependency is handled automatically by `destruct` and only lists hypotheses that need explicit `revert`
+- GIVEN the list of hypotheses to revert WHEN the tactic sequence is generated THEN it produces a valid `revert H1 H2. destruct x.` command
+
+**Traces to:** R-CP-P0-3
+
+### Warn About Axiom Dependencies
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a recommendation of `dependent destruction` WHEN it is presented THEN it includes a warning that the proof will depend on `JMeq_eq` from `Coq.Logic.JMeq`
+- GIVEN the axiom warning WHEN it is read THEN it explains that `JMeq_eq` is consistent but is not provable in Coq's core theory, and that `Print Assumptions` will show it
+- GIVEN a recommendation of `revert`-before-`destruct` or Equations `depelim` WHEN it is presented THEN it confirms that the technique is axiom-free
+
+**Traces to:** R-CP-P0-4
+
+### Generate Convoy Pattern Term
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a match target, the dependent terms that must be "convoyed", and the desired result type WHEN generation is requested THEN it produces a syntactically valid `match` expression with `as`, `in`, and `return` clauses
+- GIVEN the generated match expression WHEN it includes equality evidence THEN it applies the match to `eq_refl` to discharge the equality obligation
+- GIVEN a generated convoy-pattern term WHEN the user pastes it into their development THEN it type-checks (assuming the user fills in the branch bodies correctly)
+
+**Traces to:** R-CP-P1-1
+
+### Generate Revert/Destruct Tactic Sequence
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN the proof state analysis from story 2.2 WHEN tactic generation is requested THEN it produces a complete tactic sequence (e.g., `revert H1 H2. destruct x. intros H1 H2.`) that preserves all dependent information
+- GIVEN the generated tactic sequence WHEN it is applied THEN the resulting subgoals contain properly refined types in each branch
+
+**Traces to:** R-CP-P1-2
+
+### Generate Equations Definition
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a function that requires dependent pattern matching and the types involved WHEN generation is requested THEN it produces an `Equations` definition with correct pattern clauses
+- GIVEN the generated definition WHEN it is inspected THEN it includes the necessary `Derive NoConfusion` and `Derive Signature` commands for the relevant inductive types
+- GIVEN the Equations plugin is not available WHEN generation is requested THEN it reports that the plugin is required and suggests how to install it
+
+**Traces to:** R-CP-P1-3
+
+### Explain the Convoy Pattern
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a request to explain the convoy pattern WHEN the explanation is returned THEN it covers: why Coq's `match` only refines the return type (not free variables), what the `as`/`in`/`return` annotations do, and how adding dependent terms as function arguments in the return clause causes them to be refined in each branch
+- GIVEN the explanation WHEN it includes an example THEN the example uses a concrete indexed type (e.g., `Fin n` or `vec T n`) and shows both the failing naive `destruct` and the working convoy-pattern fix
+- GIVEN a user who knows Agda WHEN the explanation is returned THEN it notes that Agda performs this refinement automatically via unification, which is why the technique is not needed there
+
+**Traces to:** R-CP-P1-4
+
+### Detect Dependent-Destruction Problems Proactively
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a proof state where a `destruct` was just applied to a term of an indexed inductive type and the resulting subgoals contain hypotheses with freshly abstracted index variables WHEN the proof state is observed THEN Claude proactively suggests that dependent information may have been lost
+- GIVEN a proactive suggestion WHEN the user dismisses it THEN Claude does not repeat the suggestion for the same proof state
+
+**Traces to:** R-CP-P2-1
+
+### Suggest Decidable-Equality Optimization
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a dependent-destruction scenario where the index type has a decidable equality instance WHEN recommendations are presented THEN it mentions that `Eqdep_dec.eq_rect_eq_dec` can be used to avoid the `JMeq_eq` axiom
+- GIVEN the suggestion WHEN it is applied THEN it produces an axiom-free proof (verified by `Print Assumptions`)
+
+**Traces to:** R-CP-P2-2
+
+### Generate Reusable Elimination Lemma
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN an indexed inductive type and a recurring destruction pattern WHEN generation is requested THEN it produces a standalone lemma with the appropriate dependent return type
+- GIVEN the generated lemma WHEN it is used via `apply` or a thin Ltac wrapper THEN it provides the same benefit as the convoy pattern in a single tactic step
+
+**Traces to:** R-CP-P2-3

@@ -2,8 +2,6 @@
 
 The structured output format for extracted proof traces: what each record contains, how records are organized, and what metadata accompanies the dataset.
 
-**Stories**: [Epic 2: Proof Trace Record Structure](../requirements/stories/training-data-extraction.md#epic-2-proof-trace-record-structure), [Epic 3: Output Format and Schema](../requirements/stories/training-data-extraction.md#epic-3-output-format-and-schema)
-
 ---
 
 ## Problem
@@ -66,3 +64,59 @@ It does **not** provide:
 - Compressed or columnar formats (Parquet, Arrow)
 - Tokenized or embedded representations of proof states
 - Cross-proof or cross-project aggregation (that is a dataset-level concern)
+
+## Acceptance Criteria
+
+### Per-Step Proof State and Tactic Capture
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a proof of N tactic steps WHEN the trace record is inspected THEN it contains N+1 proof states and N tactic texts, one per step
+- GIVEN a proof state at step k WHEN it is inspected THEN it includes all open goals, hypotheses, and local context at that step
+- GIVEN a proof trace record WHEN it is inspected THEN it includes the theorem's fully qualified name and source file path
+
+**Traces to:** R3-P0-2
+
+### Per-Step Premise Annotations
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a proof trace record WHEN the premise annotations are inspected THEN each tactic step includes a list of premises used by that tactic
+- GIVEN a premise annotation WHEN it is inspected THEN each premise includes its fully qualified name and kind (lemma, hypothesis, constructor, or definition)
+- GIVEN the premise annotations for a validation set of ≥ 100 proofs WHEN compared against hand-curated ground truth THEN they match the ground truth
+
+**Traces to:** R3-P0-2
+
+### Proof State Diffs
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN consecutive proof states at steps k and k+1 WHEN the diff is inspected THEN it includes goals added, goals removed, goals changed, hypotheses added, hypotheses removed, and hypotheses changed
+- GIVEN the diffs in a proof trace WHEN they are inspected alongside full proof state snapshots THEN both representations are present in the output
+
+**Traces to:** R3-P1-6
+
+### JSON Lines Output
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a completed extraction WHEN the output file is inspected THEN each line is a valid JSON object representing one proof trace
+- GIVEN the output WHEN it is inspected THEN it includes a declared schema version field in each record
+- GIVEN the output WHEN it is processed line by line THEN each line is independently parseable without reference to other lines
+
+**Traces to:** R3-P0-3
+
+### Provenance Metadata
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a completed extraction WHEN the output metadata is inspected THEN it includes the Coq version used to build the project
+- GIVEN a completed extraction WHEN the output metadata is inspected THEN it includes the project's git commit hash
+- GIVEN a completed extraction WHEN the output metadata is inspected THEN it includes the extraction tool version and extraction timestamp
+
+**Traces to:** R3-P0-11

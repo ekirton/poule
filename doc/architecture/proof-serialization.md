@@ -3,7 +3,6 @@
 Cross-cutting concern: how proof interaction data types are serialized to JSON for MCP responses and trace export.
 
 **Feature**: [Proof Trace Serialization](../features/proof-trace-serialization.md), [Proof Interaction MCP Tools](../features/proof-mcp-tools.md)
-**Stories**: [Epic 5: Proof Trace Serialization](../requirements/stories/proof-interaction-protocol.md#epic-5-proof-trace-serialization), [Epic 6: MCP Tool Surface](../requirements/stories/proof-interaction-protocol.md#epic-6-mcp-tool-surface)
 **Data models**: [proof-types.md](data-models/proof-types.md)
 
 ---
@@ -112,7 +111,7 @@ Identical input must produce byte-identical output. This requires:
 
 ## Diff Computation (P1)
 
-Proof state diff is a P1 (should-have) capability, traceable to [Story 5.2: Proof State Diff](../requirements/stories/proof-interaction-protocol.md#52-proof-state-diff). The types (`ProofStateDiff`, `GoalChange`, `HypothesisChange`) are defined in [proof-types.md](data-models/proof-types.md) alongside P0 types for completeness.
+Proof state diff is a P1 (should-have) capability. The types (`ProofStateDiff`, `GoalChange`, `HypothesisChange`) are defined in [proof-types.md](data-models/proof-types.md) alongside P0 types for completeness.
 
 The diff is computed by the session manager from two consecutive ProofState snapshots. The algorithm:
 

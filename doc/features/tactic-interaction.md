@@ -2,8 +2,6 @@
 
 Submit tactics to the Coq proof engine and navigate through the proof script, forming the observe-submit-feedback loop that enables programmatic proof exploration.
 
-**Stories**: [Epic 3: Tactic Interaction](../requirements/stories/proof-interaction-protocol.md#epic-3-tactic-interaction)
-
 ---
 
 ## Problem
@@ -65,3 +63,41 @@ The alternative — skip failures and continue — would produce a non-linear ta
 ### Why batch is P1 (should-have) rather than P0
 
 The submit + step-backward primitives are sufficient for all use cases. Batch is a performance optimization for clients that know their tactic sequence in advance — primarily automated proof search. Interactive use rarely needs it.
+
+## Acceptance Criteria
+
+### Submit a Single Tactic
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an active session with open goals WHEN a valid tactic is submitted THEN the resulting proof state is returned with updated goals and hypotheses
+- GIVEN an active session WHEN an invalid tactic is submitted THEN a structured error is returned including the Coq error message and the proof state remains unchanged
+- GIVEN a tactic that closes all goals WHEN it is submitted THEN the response indicates the proof is complete
+
+### Step Backward
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an active session at step k > 0 WHEN the step-backward tool is called THEN the session returns to the proof state at step k-1
+- GIVEN an active session at step 0 (initial state) WHEN the step-backward tool is called THEN a structured error is returned indicating there is no previous state
+- GIVEN a step-backward operation WHEN the resulting state is returned THEN it is identical to the state that was observed at step k-1
+
+### Step Forward Through Existing Proof
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a session opened on a completed proof at step k < N WHEN the step-forward tool is called THEN the next tactic from the original proof script is applied and the resulting state is returned
+- GIVEN a session at the final step N WHEN the step-forward tool is called THEN a structured error is returned indicating the proof is already complete
+- GIVEN a step-forward operation WHEN the resulting state is returned THEN it includes the tactic that was applied
+
+### Submit Tactic Batch
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN an active session WHEN a batch of N tactics is submitted THEN the response includes N entries, each containing the tactic and the resulting proof state
+- GIVEN a batch where tactic k fails WHEN the batch is processed THEN the response includes successful results for tactics 1..k-1, a structured error for tactic k, and the remaining tactics are not executed
+- GIVEN a batch that completes the proof at tactic k < N WHEN the batch is processed THEN the response includes results for tactics 1..k and indicates the proof is complete

@@ -2,8 +2,6 @@
 
 Proof scripts accumulate tactical debt over time: chains of rewrites that a single lemma application could replace, sequences of introductions and destructions that hammer dispatches in one step, intermediate assertions that a more direct path renders unnecessary. Proof Compression provides a `/compress-proof` slash command that takes a working proof and systematically searches for shorter or cleaner alternatives — trying hammer tactics, searching for more direct lemmas, and simplifying tactic chains — then presents ranked options for the user to review. The original proof is always preserved; the user decides whether to adopt any alternative.
 
-**Stories**: [Epic 1: Proof Analysis](../requirements/stories/proof-compression.md#epic-1-proof-analysis), [Epic 2: Alternative Strategy Attempts](../requirements/stories/proof-compression.md#epic-2-alternative-strategy-attempts), [Epic 3: Verification and Comparison](../requirements/stories/proof-compression.md#epic-3-verification-and-comparison), [Epic 4: Safe Replacement](../requirements/stories/proof-compression.md#epic-4-safe-replacement), [Epic 5: Reporting](../requirements/stories/proof-compression.md#epic-5-reporting)
-
 ---
 
 ## Problem
@@ -83,3 +81,150 @@ Proof compression is exploratory. The user may want to see what is possible with
 ### Why shorter proofs matter
 
 Shorter proofs are not just an aesthetic preference. A proof that uses fewer tactics has fewer points where an upstream change can cause breakage. A proof that applies a library lemma directly is more robust than one that re-derives the same result through intermediate steps — if the library changes its internal representation, the direct application still works while the re-derivation may not. Shorter proofs are also faster to review, easier for newcomers to understand, and quicker for Coq to check. In large formalizations, these advantages compound across hundreds or thousands of proofs.
+
+---
+
+## Acceptance Criteria
+
+### Accept and Verify a Working Proof
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a theorem name that exists in the current Coq project WHEN `/compress-proof` is invoked THEN the command locates the proof and verifies it compiles before proceeding
+- GIVEN a theorem name whose proof does not compile WHEN `/compress-proof` is invoked THEN a clear error is returned indicating that the proof must compile before compression can be attempted
+- GIVEN a theorem name that does not exist in the project WHEN `/compress-proof` is invoked THEN a clear error is returned indicating that the theorem was not found
+
+**Traces to:** RPC-P0-1
+
+### Extract the Proof Goal and Context
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a valid proof WHEN the goal and context are extracted THEN the extracted goal matches the statement of the theorem
+- GIVEN a proof with local hypotheses introduced in the proof script WHEN the goal is extracted at the proof start THEN the full unintroduced goal is captured
+- GIVEN a proof with section variables in scope WHEN the goal and context are extracted THEN section variables are included in the context
+
+**Traces to:** RPC-P0-2
+
+### Attempt Hammer-Based Compression
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a valid proof WHEN hammer-based compression is attempted THEN `hammer`, `sauto`, and `qauto` are each tried against the proof goal
+- GIVEN a goal that `sauto` can discharge WHEN hammer-based compression is attempted THEN the `sauto` solution is returned as a candidate alternative
+- GIVEN a goal that none of the hammer tactics can discharge WHEN hammer-based compression is attempted THEN the command proceeds to other compression strategies without error
+
+**Traces to:** RPC-P0-3
+
+### Attempt Lemma-Search-Based Compression
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a valid proof WHEN lemma-search-based compression is attempted THEN a search for lemmas matching the goal type is performed
+- GIVEN a lemma that directly proves the goal WHEN it is found THEN a candidate alternative using `exact` or `apply` with that lemma is generated
+- GIVEN no directly applicable lemma WHEN the search completes THEN the command proceeds to other compression strategies without error
+
+**Traces to:** RPC-P0-4
+
+### Attempt Tactic Chain Simplification
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a proof containing `intros x; intros y; intros z` WHEN tactic chain simplification is attempted THEN a candidate replacing them with `intros x y z` is generated
+- GIVEN a proof containing a sequence of `rewrite` steps that can be chained WHEN tactic chain simplification is attempted THEN a candidate with a combined rewrite is generated
+- GIVEN a proof where no tactic sequences can be simplified WHEN tactic chain simplification is attempted THEN the command reports no simplification found for this strategy
+
+**Traces to:** RPC-P1-1
+
+### Compress a Sub-Proof or Single Step
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a proof with a bullet-delimited subproof WHEN `/compress-proof` is invoked targeting that subproof THEN only the targeted subproof is analyzed and compressed
+- GIVEN a specific tactic step WHEN `/compress-proof` is invoked targeting that step THEN alternatives for that step are explored in the context of the surrounding proof state
+- GIVEN a targeted sub-proof compression that succeeds WHEN the result is presented THEN the full proof with the compressed sub-proof substituted in is shown
+
+**Traces to:** RPC-P1-4
+
+### Verify All Candidate Alternatives
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a candidate alternative proof WHEN it is generated THEN it is submitted to Coq for verification before being presented to the user
+- GIVEN a candidate that Coq rejects WHEN verification is performed THEN the candidate is silently discarded and not shown to the user
+- GIVEN multiple candidate alternatives WHEN they are all verified THEN only those accepted by Coq are included in the results
+
+**Traces to:** RPC-P0-5
+
+### Compare and Present Results
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN one or more verified alternatives WHEN results are presented THEN each alternative shows the tactic count of the original proof alongside the tactic count of the alternative
+- GIVEN one or more verified alternatives WHEN results are presented THEN the full alternative proof script is shown so the user can review it
+- GIVEN no verified alternatives were found WHEN results are presented THEN the command reports that no shorter alternative was found and the original proof is already concise
+
+**Traces to:** RPC-P0-7
+
+### Rank Multiple Alternatives
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN multiple verified alternatives WHEN results are presented THEN they are ordered by a ranking that considers tactic count, estimated readability, and resilience to upstream changes
+- GIVEN multiple verified alternatives WHEN results are presented THEN each includes a brief note explaining the compression strategy used (e.g., "hammer replacement", "direct lemma application", "tactic chain simplification")
+- GIVEN a single verified alternative WHEN results are presented THEN it is shown without ranking metadata
+
+**Traces to:** RPC-P1-2, RPC-P1-3
+
+### Preserve the Original Proof
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a compression run that finds alternatives WHEN the command completes THEN the original source file is unchanged
+- GIVEN a compression run WHEN it encounters an error at any stage THEN the original source file is unchanged
+- GIVEN the user has not provided explicit consent to apply changes WHEN alternatives are presented THEN no file modifications are made
+
+**Traces to:** RPC-P0-6
+
+### Apply a Selected Alternative
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a set of compression results WHEN the user selects an alternative to apply THEN the original proof in the source file is replaced with the selected alternative
+- GIVEN a replacement is applied WHEN the file is saved THEN the replaced proof compiles successfully (it was already verified in the comparison step)
+- GIVEN a replacement is applied WHEN the user wants to undo THEN standard editor undo or version control can restore the original proof
+
+**Traces to:** RPC-P1-5
+
+### Batch Compression Report
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a file containing multiple theorems WHEN batch compression is invoked THEN each proof is analyzed and a summary report is produced
+- GIVEN a batch compression run WHEN the report is produced THEN it lists theorems where compression was found, ordered by compression ratio (most compressible first)
+- GIVEN a batch compression run WHEN some proofs cannot be compressed THEN they are listed separately with a note that no shorter alternative was found
+
+**Traces to:** RPC-P2-1
+
+### Report When No Compression Is Possible
+
+**Priority:** P2
+**Stability:** Draft
+
+- GIVEN a proof that is already a single tactic call WHEN `/compress-proof` is invoked THEN the command reports that the proof is already minimal
+- GIVEN a proof where all compression strategies were tried and none produced a shorter alternative WHEN the results are presented THEN the command reports which strategies were attempted and why none succeeded
+- GIVEN a proof that cannot be compressed WHEN the result is presented THEN the original proof is confirmed as unchanged
+
+**Traces to:** RPC-P2-4

@@ -3,7 +3,6 @@
 How the extraction pipeline supports incremental re-extraction of changed files and resumption of interrupted campaigns.
 
 **Feature**: [Incremental Extraction](../features/incremental-extraction.md)
-**Stories**: [Epic 7: Incremental Extraction and Resumption](../requirements/stories/training-data-extraction.md#epic-7-incremental-extraction-and-resumption)
 **Data models**: [extraction-types.md](data-models/extraction-types.md)
 
 ---

@@ -2,8 +2,6 @@
 
 A batch automation tool that scans a Coq proof script for `admit` calls, invokes proof search on each one, and returns the script with successfully filled admits replaced by verified tactic sequences.
 
-**Stories**: [Epic 3: Fill Admits](../requirements/stories/proof-search-automation.md#epic-3-fill-admits)
-
 ---
 
 ## Problem
@@ -56,3 +54,27 @@ Proof search operates on a single goal at a time. Fill-admits is an orchestratio
 ### Why return a modified script rather than a list of replacements
 
 Developers want to see the complete proof, not a patch file. A modified script can be directly loaded into Coq for verification, pasted into the source file, or diffed against the original. A list of (location, replacement) pairs requires the user to apply changes manually — an unnecessary friction point.
+
+## Acceptance Criteria
+
+### Fill-Admits Tool
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a proof script file containing `admit` calls WHEN fill-admits is invoked THEN it identifies each `admit` and invokes proof search on the corresponding sub-goal
+- GIVEN a fill-admits run WHEN it completes THEN the result indicates which admits were successfully filled and which remain open
+- GIVEN a successfully filled admit WHEN the replacement is inspected THEN it is a Coq-verified tactic sequence that closes the sub-goal
+
+**Traces to:** R4-P1-5
+
+### Sketch-Then-Prove
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a proof script with `admit` stubs as intermediate subgoals WHEN sketch-then-prove is invoked THEN proof search is applied independently to each stub
+- GIVEN a partially filled sketch WHEN the result is returned THEN it indicates which stubs were successfully filled and which remain open
+- GIVEN all stubs successfully filled WHEN the combined script is inspected THEN the complete proof is valid according to Coq
+
+**Traces to:** R4-P1-7

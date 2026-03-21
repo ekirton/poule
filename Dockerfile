@@ -42,7 +42,7 @@ RUN opam switch create coq ocaml-base-compiler.4.14.2 && \
 # and those below it.  Dependency chain: flocq → coquelicot → coq-interval.
 RUN eval $(opam env --switch=coq) && opam install -y coq-flocq.4.2.2 && opam clean -a -c -s --logs
 RUN eval $(opam env --switch=coq) && opam install -y coq-coquelicot.3.4.4 && opam clean -a -c -s --logs
-RUN eval $(opam env --switch=coq) && opam install -y coq-mathcomp-ssreflect.2.5.0 && opam clean -a -c -s --logs
+RUN eval $(opam env --switch=coq) && opam install -y coq-mathcomp-character.2.5.0 && opam clean -a -c -s --logs
 RUN eval $(opam env --switch=coq) && opam install -y coq-interval.4.11.4 && opam clean -a -c -s --logs
 RUN eval $(opam env --switch=coq) && opam install -y coq-stdpp.1.12.0 && opam clean -a -c -s --logs
 

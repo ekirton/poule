@@ -3,7 +3,6 @@
 Offline extraction of declarations from compiled Coq/Rocq libraries into the search index.
 
 **Feature**: [Library Indexing](../features/library-indexing.md)
-**Stories**: [Epic 1: Library Indexing](../requirements/stories/tree-search-mcp.md#epic-1-library-indexing)
 
 ---
 

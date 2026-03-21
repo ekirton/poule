@@ -3,7 +3,6 @@
 The component that dispatches Coq vernacular introspection commands through a single MCP tool, executing them against either an active proof session or a standalone Coq process.
 
 **Feature**: [Vernacular Introspection](../features/vernacular-introspection.md)
-**Stories**: [Epics 1–5](../requirements/stories/vernacular-introspection.md)
 
 ---
 

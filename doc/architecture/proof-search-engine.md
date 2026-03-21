@@ -3,7 +3,6 @@
 The component that executes best-first tree search over tactic candidates, verifying each candidate against Coq via the Proof Session Manager. Claude Code invokes proof search as an MCP tool; the engine runs the tight explore-verify loop internally.
 
 **Feature**: [Proof Search](../features/proof-search.md), [Few-Shot Context Retrieval](../features/few-shot-context-retrieval.md)
-**Stories**: [Epics 1–2](../requirements/stories/proof-search-automation.md)
 **Data models**: [proof-types.md](data-models/proof-types.md)
 
 ---

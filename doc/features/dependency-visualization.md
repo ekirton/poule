@@ -2,8 +2,6 @@
 
 Visual diagrams of theorem dependency subgraphs — which lemmas, definitions, and axioms a proof depends on — rendered as Mermaid diagrams for understanding proof context and library structure.
 
-**Stories**: [Epic 3: Dependency Visualization](../requirements/stories/proof-visualization-widgets.md#epic-3-dependency-visualization)
-
 ---
 
 ## Problem
@@ -59,3 +57,26 @@ It does **not** provide:
 - Cross-project dependency visualization
 - Reverse dependency queries ("what depends on this theorem?") as diagrams — this may be a future extension
 - Dependency-aware impact analysis for refactoring
+
+## Acceptance Criteria
+
+### Render Dependency Subgraph for a Theorem
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a theorem that depends on 5 lemmas, 2 definitions, and 1 axiom WHEN the dependency visualization MCP tool is called with the theorem name THEN it returns a Mermaid diagram showing all 8 dependencies with edges from the theorem to each dependency
+- GIVEN a dependency that is itself a theorem with its own dependencies WHEN the diagram is rendered THEN transitive dependencies are included up to the configured depth
+- GIVEN a theorem name WHEN the dependency tool is called THEN the input is a JSON object containing the theorem name and the output is Mermaid diagram text
+
+**Traces to:** R4-P0-6, R4-P0-7
+
+### Limit Dependency Graph Depth
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a theorem with transitive dependencies extending 10 levels deep WHEN the dependency tool is called with a depth limit of 3 THEN only dependencies within 3 hops of the target theorem are included
+- GIVEN a dependency graph with 200 transitive nodes WHEN a depth limit of 2 is applied THEN the resulting diagram has no more than 100 nodes and renders readably
+
+**Traces to:** R4-P1-4, R4-P1-5

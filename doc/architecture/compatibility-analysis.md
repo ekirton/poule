@@ -3,7 +3,6 @@
 The component that extracts dependency declarations from Coq project files, queries opam repository metadata for version constraints across the full transitive dependency tree, determines whether a mutually satisfying combination of package versions exists, and produces structured conflict reports with plain-language explanations and resolution suggestions. The `/check-compat` slash command (agentic, owned by Claude Code) is the user interface; this document covers the code components it delegates to.
 
 **Feature**: [Cross-Library Compatibility Analysis](../features/compatibility-analysis.md)
-**Stories**: [Epic 1: Dependency Scanning](../requirements/stories/compatibility-analysis.md#epic-1-dependency-scanning), [Epic 2: Constraint Analysis](../requirements/stories/compatibility-analysis.md#epic-2-constraint-analysis), [Epic 3: Conflict Detection](../requirements/stories/compatibility-analysis.md#epic-3-conflict-detection), [Epic 4: Conflict Explanation and Reporting](../requirements/stories/compatibility-analysis.md#epic-4-conflict-explanation-and-reporting), [Epic 5: Resolution Suggestions](../requirements/stories/compatibility-analysis.md#epic-5-resolution-suggestions)
 
 ---
 

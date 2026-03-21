@@ -2,8 +2,6 @@
 
 Interactive proof sessions that allow external tools to observe and interact with Coq proof states over time. Each session encapsulates a single proof within a single .v file, maintaining independent state from other sessions.
 
-**Stories**: [Epic 1: Session Management](../requirements/stories/proof-interaction-protocol.md#epic-1-session-management), [Epic 7: Error Handling and Resilience](../requirements/stories/proof-interaction-protocol.md#epic-7-error-handling-and-resilience)
-
 ---
 
 ## Problem
@@ -71,3 +69,57 @@ Tools crash. Network connections drop. AI research scripts abort. Without a time
 ### Why crash isolation per session
 
 The primary users (AI researchers running parallel proof search) will submit speculative, potentially pathological tactics. A crash in one exploration branch must not invalidate other branches. Process-level isolation is the simplest mechanism that provides this guarantee.
+
+## Acceptance Criteria
+
+### Open a Proof Session
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a valid .v file and a named proof within it WHEN the open-session tool is called THEN a new session is created and returns a unique session ID and the initial proof state
+- GIVEN a .v file that does not exist WHEN the open-session tool is called THEN a structured error is returned indicating the file was not found
+- GIVEN a valid .v file but a nonexistent proof name WHEN the open-session tool is called THEN a structured error is returned indicating the proof was not found
+- GIVEN a valid session is opened WHEN the initial proof state is returned THEN it includes goals, hypotheses, and local context in the version-stable JSON format
+
+### Close a Proof Session
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an active session WHEN the close-session tool is called with the session ID THEN the session is terminated and all associated resources are released
+- GIVEN a closed or nonexistent session ID WHEN the close-session tool is called THEN a structured error is returned indicating the session was not found
+- GIVEN a session is closed WHEN any tool is called with that session ID THEN a structured error is returned indicating the session is no longer active
+
+### List Active Sessions
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN one or more active sessions WHEN the list-sessions tool is called THEN it returns a list of session objects each including session ID, file path, proof name, current step index, and creation timestamp
+- GIVEN no active sessions WHEN the list-sessions tool is called THEN it returns an empty list
+
+### Concurrent Session Isolation
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN three or more concurrent sessions WHEN a tactic is submitted in one session THEN the proof states of all other sessions remain unchanged
+- GIVEN three or more concurrent sessions WHEN one session is closed THEN all other sessions continue to operate normally
+- GIVEN concurrent sessions on the same proof WHEN different tactics are submitted in each THEN each session reflects only its own tactic history
+
+### Session Timeout and Cleanup
+
+**Priority:** P0
+**Stability:** Draft
+
+- GIVEN an active session with no tool calls for 30 minutes WHEN the timeout period elapses THEN the session is automatically closed and resources are released
+- GIVEN an auto-closed session WHEN any tool is called with that session ID THEN a structured error is returned indicating the session timed out
+
+### Backend Process Crash Recovery
+
+**Priority:** P0
+**Stability:** Draft
+
+- GIVEN multiple concurrent sessions WHEN the Coq backend process for one session crashes THEN all other sessions continue to operate normally
+- GIVEN a crashed session WHEN any tool is called with that session ID THEN a structured error is returned indicating the backend process crashed

@@ -3,7 +3,6 @@
 A developer-facing script that builds a separate search index database for each of the 6 supported Coq libraries and publishes them as a GitHub Release, producing the artifacts that users download via the modular index distribution system.
 
 **PRD**: [Index Build Script](../requirements/index-build-script.md)
-**Stories**: [Index Build Script](../requirements/stories/index-build-script.md)
 
 ---
 
@@ -70,3 +69,68 @@ It does **not** provide:
 - User-facing download or merge changes
 - Neural model building or publishing (handled separately)
 - Support for libraries beyond the 6 listed
+
+---
+
+## Acceptance Criteria
+
+### Build All Library Indexes
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN all 6 supported libraries are installed in the Coq environment WHEN the build script runs THEN it produces 6 files: `index-stdlib.db`, `index-mathcomp.db`, `index-stdpp.db`, `index-flocq.db`, `index-coquelicot.db`, `index-coqinterval.db`
+- GIVEN the build script completes WHEN each per-library database is inspected THEN it contains only declarations from its own library (e.g., `index-stdlib.db` contains no MathComp declarations)
+- GIVEN the build script completes WHEN each per-library database is inspected THEN its `index_meta` table contains `schema_version`, `coq_version`, `library` (the library identifier), `library_version`, and `created_at`
+
+### Discover All 6 Libraries
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN stdpp is installed via opam WHEN `discover_libraries("stdpp")` is called THEN it returns `.vo` files from the `user-contrib/stdpp` directory
+- GIVEN Flocq is installed via opam WHEN `discover_libraries("flocq")` is called THEN it returns `.vo` files from the `user-contrib/Flocq` directory
+- GIVEN Coquelicot is installed via opam WHEN `discover_libraries("coquelicot")` is called THEN it returns `.vo` files from the `user-contrib/Coquelicot` directory
+- GIVEN CoqInterval is installed via opam WHEN `discover_libraries("coqinterval")` is called THEN it returns `.vo` files from the `user-contrib/Interval` directory
+- GIVEN a library identifier that is not one of the 6 supported libraries and is not a filesystem path WHEN `discover_libraries` is called THEN it raises an error
+
+### Build Subset of Libraries
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN the build script is invoked with `--libraries stdlib,mathcomp` WHEN it completes THEN only `index-stdlib.db` and `index-mathcomp.db` are produced
+- GIVEN the build script is invoked with no `--libraries` flag WHEN it runs THEN it builds all 6 libraries
+
+### Per-Library Metadata
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a per-library index for stdlib is built WHEN the `index_meta` table is queried THEN it contains `library = "stdlib"` and `library_version` matching the installed Coq stdlib version
+- GIVEN a per-library index for mathcomp is built WHEN the `index_meta` table is queried THEN it contains `library = "mathcomp"` and `library_version` matching the installed MathComp version
+
+### Publish Per-Library Assets
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN 6 per-library database files WHEN `publish-release.sh index-stdlib.db index-mathcomp.db index-stdpp.db index-flocq.db index-coquelicot.db index-coqinterval.db` is run THEN a GitHub Release is created with all 6 files as assets
+- GIVEN the release is created WHEN its assets are listed THEN it includes `index-stdlib.db`, `index-mathcomp.db`, `index-stdpp.db`, `index-flocq.db`, `index-coquelicot.db`, `index-coqinterval.db`, and `manifest.json`
+
+### Generate Per-Library Manifest
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN 6 per-library database files WHEN the publish script runs THEN the generated `manifest.json` contains a `libraries` object with entries for each library
+- GIVEN the manifest is generated WHEN its `libraries.stdlib` entry is inspected THEN it contains `version`, `sha256`, `asset_name`, and `declarations` fields
+- GIVEN the manifest is generated WHEN the download client parses it THEN it conforms to the manifest protocol defined in the prebuilt distribution specification
+
+### Build Progress
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN the build script is running WHEN it begins extracting a library THEN it prints `Building index for {library}...` to stderr
+- GIVEN the build script completes WHEN the summary is printed THEN it lists each library with its declaration count (e.g., `stdlib: 12450 declarations`)

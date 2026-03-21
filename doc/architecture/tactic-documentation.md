@@ -3,7 +3,6 @@
 The component that provides structured tactic information by parsing Coq introspection output, comparing related tactics, and ranking contextual suggestions against the current proof state. Claude Code invokes these capabilities as MCP tools; the LLM interprets the structured results rather than raw Coq output.
 
 **Feature**: [Tactic Documentation](../features/tactic-documentation.md)
-**Stories**: [Epics 1--4](../requirements/stories/tactic-documentation.md)
 
 ---
 

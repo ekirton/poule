@@ -3,7 +3,6 @@
 How theorem-level dependency graphs are extracted from Coq projects: which theorems, definitions, and axioms each proof depends on.
 
 **Feature**: [Dependency Graph Extraction](../features/dependency-graph-extraction.md)
-**Stories**: [Epic 8: Dependency Graph Extraction](../requirements/stories/training-data-extraction.md#epic-8-dependency-graph-extraction)
 **Data models**: [extraction-types.md](data-models/extraction-types.md) (DependencyEntry, DependencyRef)
 
 ---

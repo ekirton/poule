@@ -3,7 +3,6 @@
 The command-line interface for indexing, search, proof replay, and batch extraction operations.
 
 **Features**: [CLI Search](../features/cli-search.md), [CLI Proof Replay](../features/cli-proof-replay.md), [Batch Extraction CLI](../features/batch-extraction-cli.md), [Extraction Quality Reports](../features/extraction-quality-reports.md), [Model Training CLI](../features/model-training-cli.md), [Pre-trained Model](../features/pre-trained-model.md)
-**Stories**: [Epic 1: Library Indexing](../requirements/stories/tree-search-mcp.md#epic-1-library-indexing), [Epic 7: Standalone CLI Search](../requirements/stories/tree-search-mcp.md#epic-7-standalone-cli-search), [Epic 8: Batch Proof Replay CLI](../requirements/stories/proof-interaction-protocol.md#epic-8-batch-proof-replay-cli), [Epics 1, 4, 5: Batch Extraction](../requirements/stories/training-data-extraction.md#epic-1-project-level-extraction), [Epics 1–2, 5: Neural Training](../requirements/stories/neural-premise-selection.md#epic-1-model-training)
 
 ---
 

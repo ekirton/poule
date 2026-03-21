@@ -2,8 +2,6 @@
 
 The MCP tools that expose proof search and fill-admits capabilities through the existing MCP server, alongside the [search tools](mcp-tool-surface.md) from Phase 1 and [proof interaction tools](proof-mcp-tools.md) from Phase 2.
 
-**Stories**: [Epic 1: Proof Search](../requirements/stories/proof-search-automation.md#epic-1-proof-search) (1.2), [Epic 3: Fill Admits](../requirements/stories/proof-search-automation.md#epic-3-fill-admits) (3.2)
-
 ---
 
 ## Combined Server
@@ -94,3 +92,27 @@ Proof search needs to submit tactics to Coq and observe results. It uses the exi
 ### Why fill_admits takes a file path, not a session
 
 Fill-admits is a batch operation across an entire file, potentially touching multiple independent proofs. It manages its own sessions internally — one per admit — and cleans them up when done. Requiring the caller to open sessions for each admit would defeat the purpose of batch automation.
+
+## Acceptance Criteria
+
+### Proof Search MCP Tool
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a running MCP server WHEN the proof search tool is invoked with a proof session ID THEN it attempts to find a complete proof for the current proof state
+- GIVEN the proof search tool WHEN it is invoked without a timeout parameter THEN the default timeout of 30 seconds is applied
+- GIVEN the proof search tool WHEN it is invoked with a custom timeout THEN that timeout is respected
+- GIVEN the MCP server WHEN its tool list is inspected THEN a proof search tool is present with a documented schema
+
+**Traces to:** R4-P0-4, R4-P0-5
+
+### Fill-Admits MCP Tool
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a running MCP server WHEN the fill-admits tool is invoked with a file path THEN it processes the file and returns results for each `admit`
+- GIVEN the MCP server WHEN its tool list is inspected THEN a fill-admits tool is present with a documented schema
+
+**Traces to:** R4-P1-6

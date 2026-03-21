@@ -3,7 +3,6 @@
 The component that wraps Alectryon to generate interactive proof documentation from Coq source files. The MCP Server delegates documentation generation requests to the Alectryon Adapter, which shells out to the Alectryon CLI as a subprocess.
 
 **Feature**: [Literate Documentation](../features/literate-documentation.md)
-**Stories**: [Epics 1–5](../requirements/stories/literate-documentation.md)
 
 ---
 

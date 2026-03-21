@@ -3,7 +3,6 @@
 The component that builds an in-memory dependency graph from Storage and coq-dpdgraph output, then answers transitive queries — forward closure, reverse closure (impact analysis), cycle detection, and module-level aggregation — over that graph. The MCP Server delegates deep dependency tool calls to this component; results integrate with the existing Mermaid Renderer for visualization.
 
 **Feature**: [Deep Dependency Analysis](../features/deep-dependency-analysis.md)
-**Stories**: [Epic 1: Transitive Dependency Closure](../requirements/stories/dependency-graph-extraction.md#epic-1-transitive-dependency-closure), [Epic 2: Cycle Detection](../requirements/stories/dependency-graph-extraction.md#epic-2-cycle-detection), [Epic 3: Module-Level Dependency Summaries](../requirements/stories/dependency-graph-extraction.md#epic-3-module-level-dependency-summaries)
 
 ---
 

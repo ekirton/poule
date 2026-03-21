@@ -35,7 +35,7 @@ Define the typeclass debugging component that inspects registered typeclass inst
 #### list_instances(session_id, typeclass_name)
 
 - REQUIRES: `session_id` references an active session in the Proof Session Manager. `typeclass_name` is a non-empty string.
-- ENSURES: Sends `Print Instances <typeclass_name>` to the session backend. Parses the response into a list of TypeclassInfo records. Returns the list, which may be empty.
+- ENSURES: Sends `Print Instances <typeclass_name>.` to the session backend via the Proof Session Manager's `submit_command` operation (coqtop subprocess routing per [proof-session.md](proof-session.md) §4.4.1 — coq-lsp cannot capture Print output). Parses the response into a list of TypeclassInfo records. Returns the list, which may be empty.
 - MAINTAINS: The session's proof state is unchanged after the call.
 
 > **Given** a session with `EqDec` registered and instances `EqDec_nat`, `EqDec_bool` in scope
@@ -53,7 +53,7 @@ Define the typeclass debugging component that inspects registered typeclass inst
 #### list_typeclasses(session_id)
 
 - REQUIRES: `session_id` references an active session in the Proof Session Manager.
-- ENSURES: Sends `Print Typeclasses` to the session backend. Parses the response into a list of records, each with typeclass name and instance count. For each typeclass, a follow-up `Print Instances <class>` is issued to obtain the instance count.
+- ENSURES: Sends `Print Typeclasses` to the session backend via the Proof Session Manager's `submit_command` operation (coqtop subprocess routing per [proof-session.md](proof-session.md) §4.4.1 — coq-lsp cannot capture Print output). Parses the response into a list of records, each with typeclass name and instance count. For each typeclass, a follow-up `Print Instances <class>` is issued via `submit_command` to obtain the instance count.
 - MAINTAINS: The session's proof state is unchanged after the call.
 
 When the environment contains more than 200 typeclasses, the component shall omit follow-up `Print Instances` calls and report instance counts as `null`.
@@ -278,7 +278,7 @@ The parser shall convert raw `Set Typeclasses Debug` output into a tree of Resol
 
 | Property | Value |
 |----------|-------|
-| Operations used | `execute_vernacular` (for `Print Instances`, `Print Typeclasses`, `Set Typeclasses Debug Verbosity 2`, `Unset Typeclasses Debug`) |
+| Operations used | `submit_command` (for `Print Instances`, `Print Typeclasses`, `Set Typeclasses Debug Verbosity 2`, `Unset Typeclasses Debug` — coqtop subprocess routing per [proof-session.md](proof-session.md) §4.4.1; coq-lsp cannot capture Print output) |
 | Concurrency | Serialized -- one command at a time per session backend |
 | Error strategy | `SESSION_NOT_FOUND` -> return error immediately. `BACKEND_CRASHED` -> return error (cleanup impossible). `TIMEOUT` -> issue `Unset Typeclasses Debug` in cleanup, then return timeout error. |
 | Idempotency | Not required -- listing operations are naturally idempotent; tracing operations are stateful but leave no persistent side effects after cleanup. |

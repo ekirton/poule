@@ -2,8 +2,6 @@
 
 Re-extract only proofs affected by changed source files, and resume interrupted extraction campaigns without re-processing completed work.
 
-**Stories**: [Epic 7: Incremental Extraction and Resumption](../requirements/stories/training-data-extraction.md#epic-7-incremental-extraction-and-resumption)
-
 ---
 
 ## Problem
@@ -47,3 +45,26 @@ It does **not** provide:
 - Real-time file watching or automatic re-extraction on save
 - Distributed extraction across multiple machines
 - Dependency-aware change propagation (if a dependency of a proof changes, that is a full re-extraction scenario)
+
+## Acceptance Criteria
+
+### Incremental Re-Extraction
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a project previously extracted WHEN a subset of .v files have changed THEN only the affected proofs are re-extracted
+- GIVEN an incremental re-extraction WHEN it completes THEN the resulting dataset is identical to what a full re-extraction would produce
+- GIVEN an incremental re-extraction WHEN it runs THEN it completes faster than a full extraction
+
+**Traces to:** R3-P1-1
+
+### Resume Interrupted Extraction
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN an extraction that was interrupted mid-campaign WHEN the extraction command is resumed THEN it continues from the last completed proof without re-extracting already-completed proofs
+- GIVEN a resumed extraction WHEN it completes THEN the output is identical to what an uninterrupted extraction would produce
+
+**Traces to:** R3-P1-5

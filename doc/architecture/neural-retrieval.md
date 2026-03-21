@@ -3,7 +3,6 @@
 Technical design for the neural retrieval channel: embedding computation, vector storage, similarity search, and integration into the multi-channel retrieval pipeline.
 
 **Feature**: [Neural Retrieval Channel](../features/neural-retrieval-channel.md), [Pre-trained Model](../features/pre-trained-model.md)
-**Stories**: [Epics 3–4](../requirements/stories/neural-premise-selection.md)
 
 ---
 

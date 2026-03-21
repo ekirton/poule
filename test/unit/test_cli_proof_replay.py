@@ -5,7 +5,7 @@ until the replay-proof command is implemented.
 
 Spec: specification/cli.md §4.6
 Architecture: doc/architecture/cli.md
-Stories: doc/requirements/stories/proof-interaction-protocol.md Epic 8
+Feature: doc/features/cli-proof-replay.md
 
 Import paths under test:
   poule.cli.commands (cmd_replay_proof)

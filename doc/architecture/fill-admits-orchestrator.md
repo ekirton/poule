@@ -3,7 +3,6 @@
 The component that scans a Coq proof script for `admit` calls, opens proof sessions at each admit location, invokes proof search on each, and assembles the result into a modified script.
 
 **Feature**: [Fill Admits](../features/fill-admits.md)
-**Stories**: [Epic 3: Fill Admits](../requirements/stories/proof-search-automation.md#epic-3-fill-admits)
 **Data models**: [proof-types.md](data-models/proof-types.md)
 
 ---

@@ -2,8 +2,6 @@
 
 Algorithmic best-first tree search over tactic candidates, with every candidate verified against Coq before the search expands further. Claude Code invokes proof search as a tool when it wants to automatically discharge a proof obligation — the tight explore-verify loop runs orders of magnitude faster than conversational back-and-forth.
 
-**Stories**: [Epic 1: Proof Search](../requirements/stories/proof-search-automation.md#epic-1-proof-search), [Epic 2: Tactic Candidate Generation](../requirements/stories/proof-search-automation.md#epic-2-tactic-candidate-generation)
-
 ---
 
 ## Problem
@@ -77,3 +75,79 @@ CoqHammer + Tactician combined solve 56.7% of theorems (more than either alone).
 ### Why this is a tool, not a conversational strategy
 
 Claude Code could, in principle, perform proof search conversationally — generating tactics, submitting them, reasoning about results. But the overhead per step is high: each tactic requires an LLM reasoning turn (~1-3 seconds), visible output rendering, and MCP protocol overhead. A dedicated tool runs the same loop internally at ~50+ states per second, making search over hundreds of candidates feasible within a 30-second budget. The tool returns a single result that Claude can reason about and explain — the best of both worlds.
+
+## Acceptance Criteria
+
+### Best-First Proof Search
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a proof session with an open goal WHEN proof search is invoked THEN it explores a tree of tactic sequences using best-first search, verifying each candidate tactic against Coq before expanding further
+- GIVEN a successful proof search WHEN the result is returned THEN it includes the complete verified proof script with each tactic and the proof state after each step
+- GIVEN a proof search that does not find a complete proof within the timeout WHEN the result is returned THEN it includes the deepest partial proof achieved and the number of states explored
+
+**Traces to:** R4-P0-1, R4-P0-2, R4-P0-3
+
+### Search State Caching
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN a proof search WHEN two different tactic sequences lead to the same proof state THEN the system recognizes the duplicate and does not re-explore from that state
+- GIVEN a proof search with caching WHEN it completes THEN the total number of Coq verification calls is strictly less than the total number of candidate tactics considered
+
+**Traces to:** R4-P0-6
+
+### Configurable Search Parameters
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN a proof search request with a specified maximum search depth WHEN search runs THEN it does not explore tactic sequences longer than the specified depth
+- GIVEN a proof search request with a specified breadth limit WHEN search runs THEN it does not expand more than the specified number of candidate tactics at each node
+- GIVEN a proof search request with a specified timeout WHEN the timeout elapses THEN search terminates and returns the best partial progress
+
+**Traces to:** R4-P1-3
+
+### Premise-Augmented Candidate Generation
+
+**Priority:** P0
+**Stability:** Stable
+
+- GIVEN an indexed library database and a proof state WHEN proof search generates tactic candidates THEN relevant premises are retrieved and included as context for candidate generation
+- GIVEN no indexed library database is available WHEN proof search generates candidates THEN candidates are generated using only the proof state and local context
+- GIVEN retrieved premises WHEN candidates are generated THEN some candidates reference retrieved lemmas (e.g., `apply retrieved_lemma`, `rewrite retrieved_lemma`)
+
+**Traces to:** R4-P0-7, R4-P0-8, R4-P0-9
+
+### Neuro-Symbolic Interleaving
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a proof search node WHEN candidates are generated THEN the candidate set includes both LLM-generated tactics and invocations of symbolic solvers
+- GIVEN a proof state that is dischargeable by `omega` or `auto` WHEN proof search encounters it THEN the solver tactic is tried and, if successful, used to close the sub-goal without an LLM call
+- GIVEN a completed proof found by search WHEN it is inspected THEN it may contain a mix of LLM-generated and solver tactics
+
+**Traces to:** R4-P1-1
+
+### Diversity-Aware Candidate Selection
+
+**Priority:** P1
+**Stability:** Draft
+
+- GIVEN a set of tactic candidates for a proof state WHEN candidates are selected for verification THEN near-duplicate candidates (syntactically or semantically equivalent) are filtered or de-prioritized
+- GIVEN diversity-aware selection WHEN proof search completes THEN the explored tactic sequences cover a broader range of proof strategies compared to non-diverse selection
+
+**Traces to:** R4-P1-2
+
+### Few-Shot Context from Training Data
+
+**Priority:** P1
+**Stability:** Stable
+
+- GIVEN extracted training data for a Coq project WHEN proof search generates candidates for a proof state THEN similar proof states and their successful tactics are retrieved and included as few-shot context
+- GIVEN few-shot examples WHEN they are used THEN search success rate improves compared to search without few-shot context (measured on a held-out evaluation set)
+
+**Traces to:** R4-P1-4
