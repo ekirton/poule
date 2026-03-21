@@ -9,6 +9,7 @@ from typing import Any
 from Poule.channels.const_jaccard import jaccard_similarity
 from Poule.channels.fts import fts_query, fts_search
 from Poule.channels.mepo import extract_consts, mepo_select
+from Poule.models.responses import SearchResult
 from Poule.channels.ted import ted_similarity
 from Poule.channels.wl_kernel import wl_histogram, wl_screen
 from Poule.fusion.fusion import collapse_match, rrf_fuse
@@ -138,6 +139,61 @@ def search_by_structure(ctx: Any, expression: str, limit: int) -> list[Any]:
     return results
 
 
+def _resolve_fused_results(
+    fused_pairs: list, reader: Any,
+) -> list[SearchResult]:
+    """Resolve RRF-fused (key, score) pairs into SearchResult objects.
+
+    Keys may be integer decl_ids (from structural/MePo channels) or string
+    names (from FTS channel).  Both are resolved via the reader.
+    """
+    if not fused_pairs or not isinstance(fused_pairs[0], tuple):
+        return list(fused_pairs)
+
+    int_ids = [k for k, _ in fused_pairs if isinstance(k, int)]
+    str_names = [k for k, _ in fused_pairs if isinstance(k, str)]
+
+    decl_map: dict = {}
+
+    # Batch-lookup integer decl_ids
+    if int_ids:
+        try:
+            rows = reader.get_declarations_by_ids(int_ids)
+            if isinstance(rows, list):
+                for d in rows:
+                    if isinstance(d, dict) and "id" in d:
+                        decl_map[d["id"]] = d
+        except (TypeError, KeyError):
+            pass
+
+    # Lookup string names individually
+    for name in str_names:
+        try:
+            d = reader.get_declaration(name)
+            if isinstance(d, dict):
+                decl_map[name] = d
+        except (TypeError, KeyError):
+            pass
+
+    if not decl_map:
+        return list(fused_pairs)
+
+    results: list[SearchResult] = []
+    for key, score in fused_pairs:
+        decl = decl_map.get(key)
+        if decl is None:
+            continue
+        results.append(SearchResult(
+            name=decl.get("name", ""),
+            statement=decl.get("statement", ""),
+            type=decl.get("type_expr", ""),
+            module=decl.get("module", ""),
+            kind=decl.get("kind", ""),
+            score=score,
+        ))
+    return results if results else list(fused_pairs)
+
+
 def search_by_type(ctx: Any, type_expr: str, limit: int) -> list[Any]:
     """Search declarations by type expression using multi-channel fusion.
 
@@ -194,8 +250,15 @@ def search_by_type(ctx: Any, type_expr: str, limit: int) -> list[Any]:
     fused = rrf_fuse([structural_scored, mepo_results, fts_pairs], k=60)
 
     # Step 6: Sort by RRF score descending, take top limit
-    fused = sorted(fused, key=lambda r: r[1] if isinstance(r, tuple) else r.score, reverse=True)
-    return fused[:limit]
+    fused = sorted(
+        fused,
+        key=lambda r: r[1] if isinstance(r, tuple) else r.score,
+        reverse=True,
+    )
+    top = fused[:limit]
+
+    # Step 7: Resolve to SearchResult objects (spec §4.4 step 7)
+    return _resolve_fused_results(top, ctx.reader)
 
 
 def score_candidates(
