@@ -1688,16 +1688,17 @@ class TestExtractionSummaryType:
         assert summary.total_extracted == 95
 
     def test_counter_invariant(self):
-        """extracted + failed + skipped == theorems_found."""
+        """extracted + partial + failed + no_proof_body + skipped == theorems_found."""
         (_, _, _, _, _, _, _, _, ExtractionSummary, *_) = _import_extraction_types()
         summary = ExtractionSummary(
             schema_version=1, record_type="extraction_summary",
-            total_theorems_found=100, total_extracted=90,
-            total_failed=7, total_skipped=3,
-            per_project=[],
+            total_theorems_found=100, total_extracted=85,
+            total_failed=5, total_partial=3, total_no_proof_body=4,
+            total_skipped=3, per_project=[],
         )
-        assert (summary.total_extracted + summary.total_failed
-                + summary.total_skipped) == summary.total_theorems_found
+        assert (summary.total_extracted + summary.total_partial + summary.total_failed
+                + summary.total_no_proof_body + summary.total_skipped
+                ) == summary.total_theorems_found
 
 
 class TestProjectSummaryType:

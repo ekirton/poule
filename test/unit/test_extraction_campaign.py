@@ -805,14 +805,15 @@ class TestRunCampaignSummaryStatistics:
 
         summary = asyncio.run(run_campaign([str(proj)], str(output), {}))
 
-        # Invariant: extracted + failed + skipped == theorems_found
+        # Invariant: extracted + partial + failed + no_proof_body + skipped == theorems_found
         assert (
-            summary.total_extracted + summary.total_failed + summary.total_skipped
+            summary.total_extracted + summary.total_partial + summary.total_failed
+            + summary.total_no_proof_body + summary.total_skipped
             == summary.total_theorems_found
         )
 
     def test_project_level_invariant(self, tmp_path):
-        """extracted + failed + skipped == theorems_found at project level."""
+        """extracted + partial + failed + no_proof_body + skipped == theorems_found at project level."""
         from Poule.extraction.campaign import run_campaign
 
         proj = tmp_path / "proj"
@@ -826,11 +827,12 @@ class TestRunCampaignSummaryStatistics:
 
         for ps in summary.per_project:
             assert (
-                ps.extracted + ps.failed + ps.skipped == ps.theorems_found
+                ps.extracted + ps.partial + ps.failed + ps.no_proof_body + ps.skipped
+                == ps.theorems_found
             ), f"Invariant violated for project {ps.project_id}"
 
     def test_file_level_invariant(self, tmp_path):
-        """extracted + failed + skipped == theorems_found at file level."""
+        """extracted + partial + failed + no_proof_body + skipped == theorems_found at file level."""
         from Poule.extraction.campaign import run_campaign
 
         proj = tmp_path / "proj"
@@ -845,7 +847,8 @@ class TestRunCampaignSummaryStatistics:
         for ps in summary.per_project:
             for fs in ps.per_file:
                 assert (
-                    fs.extracted + fs.failed + fs.skipped == fs.theorems_found
+                    fs.extracted + fs.partial + fs.failed + fs.no_proof_body + fs.skipped
+                    == fs.theorems_found
                 ), f"Invariant violated for file {fs.source_file}"
 
     def test_per_project_breakdown_present(self, tmp_path):

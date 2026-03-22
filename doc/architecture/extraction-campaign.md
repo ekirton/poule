@@ -118,7 +118,7 @@ Failure kinds:
 
 When a file fails to load, all theorems in that file are skipped with `load_failure` errors rather than attempting each one independently.
 
-Declarations classified as `no_proof_body` are reported separately from failures in the extraction summary. The summary invariant becomes: `extracted + failed + no_proof_body + skipped == found`.
+Declarations classified as `no_proof_body` are reported separately from failures in the extraction summary. The summary invariant becomes: `extracted + partial + failed + no_proof_body + skipped == found`.
 
 ## Theorem Enumeration
 

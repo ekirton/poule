@@ -25,24 +25,13 @@ from Poule.session.types import (
 
 logger = logging.getLogger(__name__)
 
-# Regex to split a proof body into individual tactic sentences.
+# Regex to split a proof body into individual tactic sentences (fallback).
 # A Coq sentence ends with a period followed by whitespace or end-of-string.
 # Periods inside qualified names (e.g., Nat.add_comm) are NOT sentence terminators
 # because they are followed by a letter/digit, not whitespace.
+# NOTE: This regex cannot handle bullets, braces, comments, or numeric literals.
+# The primary path uses coq/getDocument for exact sentence boundaries.
 _TACTIC_RE = re.compile(r"(?:[^.]|\.(?=[a-zA-Z0-9_]))*\.\s*")
-
-# Proof-opening keywords in Coq/Rocq.
-_PROOF_START_RE = re.compile(
-    r"^\s*(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|Fixpoint|"
-    r"CoFixpoint|Example|Let|Instance|Program\s+\w+)\s+",
-    re.MULTILINE,
-)
-
-# Match the "Proof." keyword (or "Proof with ...") on its own line.
-_PROOF_KW_RE = re.compile(r"^\s*Proof\b", re.MULTILINE)
-
-# Match Qed., Defined., Admitted., Abort. to find proof end.
-_PROOF_END_RE = re.compile(r"^\s*(Qed|Defined|Admitted|Abort)\s*\.", re.MULTILINE)
 
 
 class CoqProofBackend:
