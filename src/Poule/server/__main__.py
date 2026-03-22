@@ -67,6 +67,7 @@ from Poule.server.handlers_wrappers import (
     handle_suggest_tactics,
     handle_inspect_hint_db,
     handle_compare_tactics,
+    handle_profile_proof,
 )
 from Poule.storage.errors import IndexNotFoundError, IndexVersionError
 
@@ -850,6 +851,48 @@ TOOL_DEFINITIONS = [
             "required": ["names"],
         },
     ),
+    Tool(
+        name="profile_proof",
+        description=(
+            "Profile a Coq proof script for performance bottlenecks. "
+            "Wraps coqc -time-file for per-sentence timing, Set Ltac Profiling "
+            "for call-tree analysis, and timing comparison for regression detection."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute path to the .v file to profile",
+                },
+                "lemma_name": {
+                    "type": "string",
+                    "description": (
+                        "Profile a specific lemma; omit to profile the entire file. "
+                        "Required when mode is 'ltac'."
+                    ),
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["timing", "ltac", "compare"],
+                    "description": (
+                        "Profiling backend: 'timing' (default) compiles with coqc -time-file, "
+                        "'ltac' instruments Set Ltac Profiling via a proof session, "
+                        "'compare' diffs against a baseline .v.timing file"
+                    ),
+                },
+                "baseline_path": {
+                    "type": "string",
+                    "description": "Path to a .v.timing file for comparison (required when mode is 'compare')",
+                },
+                "timeout_seconds": {
+                    "type": "integer",
+                    "description": "Wall-clock timeout for coqc subprocess (default: 300, max: 3600)",
+                },
+            },
+            "required": ["file_path"],
+        },
+    ),
 ]
 
 
@@ -1302,6 +1345,15 @@ def _dispatch_tool(ctx: _ServerContext, name: str, arguments: dict):
             ctx,
             names=arguments.get("names", []),
             session_id=arguments.get("session_id"),
+        )
+    elif name == "profile_proof":
+        return handle_profile_proof(
+            ctx,
+            file_path=arguments.get("file_path", ""),
+            lemma_name=arguments.get("lemma_name"),
+            mode=arguments.get("mode"),
+            baseline_path=arguments.get("baseline_path"),
+            timeout_seconds=arguments.get("timeout_seconds"),
         )
     else:
         from Poule.server.errors import format_error, PARSE_ERROR

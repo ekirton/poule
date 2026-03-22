@@ -36,6 +36,24 @@ No search index required — communicates with a live Coq process via coq-lsp or
 | `get_proof_premises` | — | Premise annotations for all steps |
 | `get_step_premises` | `step` (integer, 1-based) | Premise annotations for one step |
 
+## Profiling Tools
+
+No search index required — invokes `coqc` directly or instruments a proof session.
+
+| Tool | Required params | Optional params | Notes |
+|------|----------------|-----------------|-------|
+| `profile_proof` | `file_path` (string) | `lemma_name` (string), `mode` (string), `baseline_path` (string), `timeout_seconds` (integer) | See modes below |
+
+**Modes** (`mode` parameter):
+
+| Mode | Description | Additional requirements |
+|------|-------------|----------------------|
+| `timing` (default) | Compiles with `coqc -time-file`, returns per-sentence timing ranked slowest-first. If `lemma_name` is set, filters to that proof. | — |
+| `ltac` | Opens a proof session, instruments `Set Ltac Profiling`, replays proof, returns Ltac call-tree breakdown | `lemma_name` required |
+| `compare` | Parses a baseline `.v.timing` file, runs a fresh timing pass, returns per-sentence diff with regression/improvement classification | `baseline_path` required |
+
+**Bottleneck classification:** All modes classify bottlenecks by category (`SlowQed`, `SlowReduction`, `TypeclassBlowup`, `HighSearchDepth`, `ExpensiveMatch`, `General`) with severity levels and optimization suggestion hints.
+
 ## Visualization Tools
 
 Generate Mermaid diagram syntax. If the Mermaid Chart MCP server is configured, diagrams render automatically.

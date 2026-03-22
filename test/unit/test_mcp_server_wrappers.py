@@ -187,6 +187,9 @@ class TestToolRegistration:
     def test_compare_tactics_registered(self):
         assert "compare_tactics" in self._names()
 
+    def test_profile_proof_registered(self):
+        assert "profile_proof" in self._names()
+
 
 # ---------------------------------------------------------------------------
 # TestCoqQuery
