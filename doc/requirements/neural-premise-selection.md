@@ -81,6 +81,8 @@ Cross-references:
 | R5-P0-11 | Provide a CLI command to evaluate retrieval quality (recall@k, MRR) on a held-out test set |
 | R5-P0-12 | Ship a pre-trained model checkpoint covering the Coq standard library and MathComp so that users do not need to train a model themselves |
 | R5-P0-13 | Model training must complete on a single consumer GPU (≤ 24GB VRAM) or be offloadable to a cloud GPU within a $200 budget |
+| R5-P0-14 | Build a closed-vocabulary tokenizer from the indexed library declarations and extracted proof states, replacing the generic BPE tokenizer with one that assigns every Coq identifier its own token ID |
+| R5-P0-15 | Provide a CLI command to build the vocabulary from the search index and training data, producing a JSON file mapping tokens to integer IDs |
 
 ### P1 — Should Have
 
@@ -100,7 +102,7 @@ Cross-references:
 |----|-------------|
 | R5-P2-1 | Support cross-system transfer: initialize from a model pre-trained on Lean retrieval data before fine-tuning on Coq data |
 | R5-P2-2 | Support two-stage retrieval: bi-encoder first pass followed by cross-encoder reranking of top-k results |
-| R5-P2-3 | Evaluate and support a Coq-specific tokenizer trained on formal Coq syntax to improve embedding quality for small models |
+| R5-P2-3 | *(Promoted to R5-P0-14/15)* |
 | R5-P2-4 | Support Matryoshka embeddings (variable-dimension) to enable dimension-accuracy tradeoffs for deployment on constrained hardware |
 | R5-P2-5 | Collect retrieval telemetry (queries per session, recall feedback from proof success/failure) to enable future model improvement |
 | R5-P2-6 | Support BM25+dense hybrid scoring within the neural channel itself, using learned sparse representations (SPLADE) alongside dense embeddings |

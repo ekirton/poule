@@ -12,7 +12,7 @@ Define the training pipeline that produces neural encoder model checkpoints from
 
 ## 2. Scope
 
-**In scope**: `TrainingDataLoader` (JSONL parsing, pair extraction, train/val/test split, hard negative sampling), `BiEncoderTrainer` (training loop, masked contrastive loss, checkpointing), `RetrievalEvaluator` (recall@k, MRR, neural vs. symbolic comparison), `ModelQuantizer` (PyTorch → INT8 ONNX conversion, validation), `TrainingDataValidator` (pre-training data quality checks).
+**In scope**: `VocabularyBuilder` (closed-vocabulary construction from search index and training data), `TrainingDataLoader` (JSONL parsing, pair extraction, train/val/test split, hard negative sampling), `BiEncoderTrainer` (training loop, masked contrastive loss, checkpointing), `RetrievalEvaluator` (recall@k, MRR, neural vs. symbolic comparison), `ModelQuantizer` (PyTorch → INT8 ONNX conversion, validation), `TrainingDataValidator` (pre-training data quality checks).
 
 **Out of scope**: Neural encoder inference at query time (owned by neural-retrieval), embedding index construction (owned by neural-retrieval), retrieval pipeline integration (owned by pipeline), storage schema (owned by storage).
 
@@ -20,6 +20,8 @@ Define the training pipeline that produces neural encoder model checkpoints from
 
 | Term | Definition |
 |------|-----------|
+| Closed vocabulary | A JSON dictionary mapping every token string to a unique integer ID, used for tokenization at training and inference time |
+| Fixed token set | A predefined collection of tokens (special tokens, punctuation, Unicode symbols, Greek letters, digits) that are always included in the vocabulary regardless of input data |
 | Training pair | A `(proof_state_text, premises_used_names)` tuple extracted from a proof trace step |
 | Positive premise | A premise that appears in `premises_used` for a given proof state |
 | Hard negative | A premise that is accessible to the theorem but not used in the proof step |
@@ -27,6 +29,126 @@ Define the training pipeline that produces neural encoder model checkpoints from
 | Masked contrastive loss | InfoNCE variant where shared positives (premises positive for other states in the batch) are excluded from the negative set |
 
 ## 4. Behavioral Requirements
+
+### 4.0 VocabularyBuilder
+
+#### build(index_db_path, jsonl_paths, output_path)
+
+- REQUIRES: `index_db_path` points to a valid index database containing a `declarations` table. `jsonl_paths` is a non-empty list of paths to JSON Lines extraction output files. `output_path` is a writable path.
+- ENSURES: Constructs a closed vocabulary from the search index and training data. Writes a JSON file to `output_path` mapping token strings to sequential integer IDs. Returns a `VocabularyReport`.
+
+#### Fixed token sets
+
+The following tokens are always included in the vocabulary at fixed positions, regardless of input data:
+
+**Special tokens (IDs 0–4):**
+
+| ID | Token |
+|----|-------|
+| 0 | `[PAD]` |
+| 1 | `[UNK]` |
+| 2 | `[CLS]` |
+| 3 | `[SEP]` |
+| 4 | `[MASK]` |
+
+**Punctuation and delimiters:**
+`(`, `)`, `{`, `}`, `[`, `]`, `:`, `;`, `,`, `.`, `|`, `@`, `!`, `?`, `_`, `'`, `#`, `=`, `+`, `-`, `*`, `/`, `<`, `>`, `~`
+
+**SSReflect tacticals:**
+`/=`, `//`, `//=`, `=>`, `->`, `<-`
+
+**Scope delimiters:**
+`%N`, `%Z`, `%R`, `%Q`, `%positive`, `%type`
+
+**Unicode mathematical symbols:**
+`∀`, `∃`, `→`, `←`, `↔`, `⊢`, `⊣`, `≤`, `≥`, `≠`, `≡`, `∧`, `∨`, `¬`, `⊆`, `⊇`, `∈`, `∉`, `⊂`, `⊃`, `∪`, `∩`, `∘`, `×`, `⊕`, `⊗`, `ℕ`, `ℤ`, `ℚ`, `ℝ`, `ℂ`
+
+**Greek letters:**
+`α`, `β`, `γ`, `δ`, `ε`, `ζ`, `η`, `θ`, `ι`, `κ`, `λ`, `μ`, `ν`, `ξ`, `π`, `ρ`, `σ`, `τ`, `υ`, `φ`, `χ`, `ψ`, `ω`, `Γ`, `Δ`, `Θ`, `Λ`, `Ξ`, `Π`, `Σ`, `Φ`, `Ψ`, `Ω`
+
+**Digits:**
+`0`, `1`, `2`, `3`, `4`, `5`, `6`, `7`, `8`, `9`
+
+- MAINTAINS: Special tokens are always at IDs 0–4. The order of fixed token sets after the special tokens is: punctuation, SSReflect tacticals, scope delimiters, Unicode symbols, Greek letters, digits.
+
+#### Token extraction from the search index
+
+Read all rows from the `declarations` table. For each declaration, the `name` field (fully-qualified canonical form) is added as a vocabulary entry.
+
+- MAINTAINS: Every declaration name in the index appears in the vocabulary exactly once.
+
+> **Given** an index database with 15,000 declarations
+> **When** `build` runs
+> **Then** all 15,000 declaration names appear as vocabulary entries
+
+#### Token extraction from training data
+
+Scan each ExtractionRecord in the JSONL files. For each record, iterate over all steps. For each step, serialize the goals (same serialization as TrainingDataLoader) and split the serialized text on whitespace. Each unique token that is not already in the vocabulary is added.
+
+This captures hypothesis variable names (`n`, `m`, `H`, `H0`, `x`, `y`, `IHn'`) and type expressions that appear in proof states.
+
+- MAINTAINS: No duplicate tokens. If a token from the training data already exists in the vocabulary (from fixed sets or the index), it is not added again.
+
+> **Given** training data containing proof states with hypothesis names `n`, `m`, `H`, `IHn'`
+> **When** `build` scans the training data
+> **Then** these names appear in the vocabulary (unless already present from the index)
+
+#### Unicode normalization
+
+All token strings shall have NFC (Canonical Decomposition followed by Canonical Composition) Unicode normalization applied before insertion into the vocabulary. This ensures that precomposed characters (e.g., `é` as U+00E9) and decomposed sequences (e.g., `e` + U+0301) are treated identically.
+
+- MAINTAINS: All keys in the output JSON are NFC-normalized.
+
+#### ID assignment
+
+Token IDs are assigned sequentially starting from 0. The assignment order is:
+
+1. Special tokens (IDs 0–4)
+2. Fixed token sets (punctuation, tacticals, scope delimiters, Unicode, Greek, digits) — in the order listed above, within each set in the order listed
+3. Declaration names from the index — sorted lexicographically
+4. Tokens from training data not already in the vocabulary — sorted lexicographically
+
+- MAINTAINS: IDs are contiguous (no gaps). Each token maps to exactly one ID. Each ID maps to exactly one token.
+
+> **Given** 5 special tokens, 120 fixed tokens, 15,000 index declarations, and 300 training data tokens
+> **When** IDs are assigned
+> **Then** total vocabulary size is 15,425 and IDs range from 0 to 15,424
+
+#### Output format
+
+The vocabulary shall be written as a JSON object where keys are token strings and values are integer IDs. The JSON shall be pretty-printed with 2-space indentation for human readability.
+
+```json
+{
+  "[PAD]": 0,
+  "[UNK]": 1,
+  "[CLS]": 2,
+  "[SEP]": 3,
+  "[MASK]": 4,
+  "(": 5,
+  ")": 6,
+  ...
+}
+```
+
+- MAINTAINS: The JSON file is valid UTF-8. All keys are unique. All values are unique non-negative integers.
+
+#### VocabularyReport
+
+`build` shall return a `VocabularyReport` with the following fields:
+
+| Field | Type | Definition |
+|-------|------|-----------|
+| `total_tokens` | integer | Total number of tokens in the vocabulary |
+| `special_tokens` | integer | Count of special tokens (always 5) |
+| `fixed_tokens` | integer | Count of fixed token set entries (punctuation, symbols, etc.) |
+| `index_tokens` | integer | Count of tokens from the search index declarations |
+| `training_data_tokens` | integer | Count of tokens added from training data scanning |
+| `output_path` | string | Path where the vocabulary was written |
+
+> **Given** an index with 15,000 declarations and training data contributing 300 additional tokens
+> **When** `build` completes
+> **Then** VocabularyReport has total_tokens ≈ 15,425, index_tokens = 15,000, training_data_tokens = 300
 
 ### 4.1 TrainingDataLoader
 
@@ -288,6 +410,7 @@ When `relative_improvement < 0.15`, the report shall include a warning: `"Neural
 | JSONL file not found | `FileNotFoundError` | Propagated to CLI |
 | JSONL parse error (invalid JSON on a line) | `DataFormatError` | Line skipped, counted as malformed pair |
 | Index database not found | `IndexNotFoundError` | Propagated to CLI |
+| Index database has no declarations (vocabulary build) | `InsufficientDataError` | Propagated with message: `"No declarations found in index database"` |
 | Checkpoint file not found | `CheckpointNotFoundError` | Propagated to CLI |
 | GPU out of memory during training | `TrainingResourceError` | Propagated with batch size suggestion |
 | Quantization validation failure (distance ≥ 0.02) | `QuantizationError` | Propagated with max distance value |
@@ -310,6 +433,7 @@ Error hierarchy:
 | Training time (10K pairs, 24GB GPU) | < 2 hours |
 | Fine-tuning time (2K pairs, 24GB GPU) | < 4 hours |
 | Validation pass (per epoch) | < 60 seconds |
+| Vocabulary build (15K declarations + 100K steps) | < 60 seconds |
 | Data validation (single pass, 100K steps) | < 30 seconds |
 | Quantization (export + validate) | < 5 minutes |
 | Peak GPU memory (batch_size=256, seq_len=512) | ≤ 24GB |
@@ -319,6 +443,10 @@ Error hierarchy:
 ### Full training workflow
 
 ```
+# 0. Build vocabulary
+vocab_report = build("index.db", ["stdlib.jsonl", "mathcomp.jsonl"], "coq-vocabulary.json")
+# vocab_report.total_tokens = 15,425
+
 # 1. Validate data
 report = validate(["stdlib.jsonl", "mathcomp.jsonl"])
 # report.total_pairs = 45,000, no warnings

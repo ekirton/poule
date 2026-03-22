@@ -736,6 +736,44 @@ def _format_error_analysis_human(report, *, top_files: int = 15) -> str:
 
 
 # ---------------------------------------------------------------------------
+# build-vocabulary
+# ---------------------------------------------------------------------------
+
+
+@cli.command("build-vocabulary")
+@_db_option
+@click.argument("data", nargs=-1, required=True)
+@click.option("--output", required=True, type=click.Path(), help="Path for vocabulary JSON output.")
+def cmd_build_vocabulary(db: str, data: tuple[str, ...], output: str):
+    """Build a closed vocabulary from the search index and training data."""
+    from Poule.neural.training.vocabulary import VocabularyBuilder
+
+    jsonl_paths = _validate_input_files(data)
+    db_path = Path(db)
+
+    if not db_path.is_file():
+        click.echo(f"Index database not found: {db}", err=True)
+        sys.exit(1)
+
+    try:
+        report = VocabularyBuilder.build(db_path, jsonl_paths, Path(output))
+    except InsufficientDataError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+    except NeuralTrainingError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    click.echo("Vocabulary built.", err=True)
+    click.echo(f"  Total tokens:       {report.total_tokens:,}", err=True)
+    click.echo(f"  Special tokens:     {report.special_tokens:>5}", err=True)
+    click.echo(f"  Fixed tokens:       {report.fixed_tokens:>5}", err=True)
+    click.echo(f"  Index declarations: {report.index_tokens:,}", err=True)
+    click.echo(f"  Training data:      {report.training_data_tokens:>5}", err=True)
+    click.echo(f"  Output: {output}", err=True)
+
+
+# ---------------------------------------------------------------------------
 # train
 # ---------------------------------------------------------------------------
 
