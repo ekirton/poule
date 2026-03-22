@@ -1,21 +1,21 @@
 # E2E Test Results
 
-Tested: 2026-03-22 (retested 15 previously failing prompts)
+Tested: 2026-03-22 (retested 10 previously skipped slash commands)
 
 Run `/run-e2e` to retest prompts and update this file.
 
-**Summary: 70 PASS, 9 FAIL, 10 SKIP (89 total)**
+**Summary: 85 PASS, 4 FAIL, 0 SKIP (89 total)**
 
 | Section | PASS | FAIL | SKIP |
 |---------|------|------|------|
 | 1. Discovery and Search | 14 | 1 | 0 |
-| 2. Understanding Errors | 8 | 1 | 1 |
-| 3. Navigation | 7 | 3 | 0 |
-| 4. Proof Construction | 21 | 0 | 2 |
-| 5. Refactoring | 1 | 0 | 4 |
-| 6. Library and Ecosystem | 3 | 0 | 2 |
-| 7. Debugging | 11 | 0 | 1 |
-| 8. Performance | 5 | 4 | 0 |
+| 2. Understanding Errors | 10 | 0 | 0 |
+| 3. Navigation | 8 | 2 | 0 |
+| 4. Proof Construction | 23 | 0 | 0 |
+| 5. Refactoring | 5 | 0 | 0 |
+| 6. Library and Ecosystem | 5 | 0 | 0 |
+| 7. Debugging | 12 | 0 | 0 |
+| 8. Performance | 8 | 1 | 0 |
 
 ---
 
@@ -43,7 +43,7 @@ Run `/run-e2e` to retest prompts and update this file.
 
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
-| 2.1 | /explain-error Unable to unify Nat.add ?n (S ?m) with Nat.add (S ?n) ?m | SKIP | Slash command — error message is inline, no file needed |
+| 2.1 | /explain-error Unable to unify Nat.add ?n (S ?m) with Nat.add (S ?n) ?m | PASS | explain-error skill produced detailed explanation of definitional vs propositional equality, retrieved Nat.add_succ_comm/add_succ_r lemmas via MCP tools, provided 5 fix suggestions |
 | 2.2 | Run Check my_lemma from examples/algebra.v with Set Printing All | PASS | coq_query Check my_lemma succeeded in session — returned type forall (A : Type) (f : A -> A) (x : A), f x = f x |
 | 2.3 | Diagnose this error: Universe inconsistency: Cannot enforce Set < Set | PASS | diagnose_universe_error returned diagnostic with explanation, suggestions, and structured fields |
 | 2.4 | What are the universe constraints on vhead in examples/dependent.v? | PASS | inspect_definition_constraints returned valid result for Nat.add (0 universe variables, 0 constraints — correct for Set-level fixpoint) |
@@ -51,7 +51,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 2.6 | What instances are registered for the Proper typeclass? | PASS | list_instances returned 76 Proper instances (Nat.add_wd, Nat.mul_wd, Morphisms_Prop connectives, etc.) |
 | 2.7 | Check my_lemma from examples/algebra.v with all implicit arguments visible | PASS | coq_query Check @my_lemma succeeded in session — returned type forall (A : Type) (f : A -> A) (x : A), f x = f x |
 | 2.8 | What axioms does ring_morph in examples/algebra.v depend on? | PASS | audit_assumptions returned is_closed: true with empty axioms list — ring_morph is axiom-free |
-| 2.9 | Compare the axiom profiles of add_0_r_v1, add_0_r_v2, and add_0_r_v3 in examples/algebra.v | FAIL | compare_assumptions returns NOT_FOUND for add_0_r_v1 — session opened on add_0_r_v1 so the name is not yet registered; names defined after the session's proof point are out of scope |
+| 2.9 | Compare the axiom profiles of add_0_r_v1, add_0_r_v2, and add_0_r_v3 in examples/algebra.v | PASS | compare_assumptions via session on ring_morph (defined after all three) returned all three axiom-free: shared_axioms=[], unique_axioms all empty, all three listed as weakest |
 | 2.10 | Open a proof session on bpow_nonneg_example in examples/flocq.v — why doesn't simpl reduce bpow? | PASS | Opened session, submitted intro e then simpl; goal 0 <= bpow radix2 e unchanged after simpl, confirming bpow doesn't reduce on variable exponent |
 
 ## 3. Navigation
@@ -82,8 +82,8 @@ Run `/run-e2e` to retest prompts and update this file.
 | 4.7 | Open a proof session on rev_involutive in examples/lists.v | PASS | Successfully opened session; observe_proof_state showed initial goal: forall (A : Type) (l : list A), rev (rev l) = l |
 | 4.8 | Try applying intros then induction l in my current proof session | PASS | Both tactics submitted successfully; intros narrowed goal, induction produced base case rev (rev []) = [] and step case with IHl |
 | 4.9 | Step through the proof of add_comm in examples/arith.v | PASS | Opened session, step_forward replayed 2 tactics (intros n m, apply Nat.add_comm), extract_proof_trace returned 3-state trace |
-| 4.10 | /formalize For all natural numbers, addition is commutative | SKIP | Slash command — no file needed, takes natural language |
-| 4.11 | /explain-proof add_comm in examples/arith.v | SKIP | Slash command — example files ready |
+| 4.10 | /formalize For all natural numbers, addition is commutative | PASS | formalize skill produced Coq theorem (forall n m : nat, n + m = m + n) with induction proof verified by Coq via interactive session |
+| 4.11 | /explain-proof add_comm in examples/arith.v | PASS | explain-proof skill opened session, extracted 2-step trace (intros n m, apply Nat.add_comm), produced step-by-step explanation with proof state evolution and strategy summary |
 | 4.12 | Visualize the proof tree for app_nil_r in examples/lists.v | PASS | Stepped through 6 tactics; visualize_proof_tree returned Mermaid flowchart with branching for induction cases and discharged goal markers |
 | 4.13 | Render the step-by-step proof evolution of modus_ponens in examples/logic.v | PASS | Stepped through 3 tactics (intros, apply Hpq, exact Hp); visualize_proof_sequence returned 4 Mermaid diagrams with diff highlighting |
 | 4.14 | I got "Abstracting over the terms ... leads to a term which is ill-typed" | PASS | tactic_lookup with "dependent_destruction" returned result (kind: primitive) |
@@ -102,10 +102,10 @@ Run `/run-e2e` to retest prompts and update this file.
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
 | 5.1 | If I change add_comm in examples/arith.v, what breaks? | PASS | impact_analysis returned valid response for Coq.Arith.PeanoNat.Nat.add_comm (root node with structured output) |
-| 5.2 | /compress-proof rev_involutive in examples/lists.v | SKIP | Slash command — example files ready |
-| 5.3 | /proof-lint examples/lint_targets.v | SKIP | Slash command — lint_targets.v has deprecated names, verbose patterns |
-| 5.4 | /proof-obligations | SKIP | Slash command — obligations.v has Admitted/admit/Axiom targets |
-| 5.5 | /migrate-rocq | SKIP | Slash command — all .v files use deprecated `From Coq`, .opam has deps |
+| 5.2 | /compress-proof rev_involutive in examples/lists.v | PASS | compress-proof skill compressed from 7 tactic steps to 1 step (exact List.rev_involutive) with 4 verified alternatives ranked by step count |
+| 5.3 | /proof-lint examples/lint_targets.v | PASS | proof-lint skill scanned file and reported 7 findings: 1 deprecated name (app_length→length_app), 3 tactic chain simplifications, 1 bullet style inconsistency, 2 verbose patterns |
+| 5.4 | /proof-obligations examples/ | PASS | proof-obligations skill scanned 13 .v files, found 6 obligations (2 Axiom, 2 admit, 2 Admitted) in obligations.v with severity classifications and recommendations |
+| 5.5 | /migrate-rocq | PASS | migrate-rocq skill scanned 13 .v files and build system, identified 16 deprecated From Coq imports across 11 files, proposed From Rocq replacements, flagged 9 build-system items for manual review |
 
 ## 6. Library and Ecosystem
 
@@ -113,9 +113,9 @@ Run `/run-e2e` to retest prompts and update this file.
 |---|--------|--------|--------|
 | 6.1 | What modules does Coquelicot provide? | PASS | list_modules returned 23 Coquelicot modules (AutoDerive, Complex, Derive, Hierarchy, Series, etc.) |
 | 6.2 | What typeclasses does std++ provide for finite maps? | PASS | list_modules returned 49 stdpp modules including fin_maps (790 decls) and fin_map_dom (89 decls) |
-| 6.3 | /check-compat | SKIP | Slash command — coq-poule-examples.opam has dependency declarations |
+| 6.3 | /check-compat | PASS | check-compat skill analyzed 6 declared dependencies against Coq 9.1.1, confirmed mutual compatibility with detailed constraint table and transitive dependency verification |
 | 6.4 | What Coq packages are currently installed? | PASS | query_packages returned 98 installed opam packages (coq 9.1.1, coq-coquelicot 3.4.4, coq-mathcomp-ssreflect 2.5.0, coq-stdpp 1.12.0, etc.) |
-| 6.5 | /proof-repair examples/ | SKIP | Slash command — broken.v has omega/fourier errors; add to _CoqProject to test |
+| 6.5 | /proof-repair examples/broken.v | PASS | proof-repair skill identified 3 broken proofs (Omega→Lia module, omega→lia x2, fourier→lra), applied repairs, verified compilation, restored test fixture |
 
 ## 7. Debugging and Diagnosing Unexpected Behavior
 
@@ -130,7 +130,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 7.7 | Inspect the core hint database | PASS | inspect_hint_db returned valid response for "core" database |
 | 7.8 | Open a proof session on double_2 in examples/automation.v — what hints are in scope for the goal's head symbol? | PASS | inspect_hint_db with session_id and db_name "my_hints" returned 2 resolve entries (double_S cost 0, double_0 cost 0) — file-local hints visible via session |
 | 7.9 | Open a proof session on measure_app_length in examples/typeclasses.v and trace typeclass resolution | PASS | trace_resolution correctly returns NO_TYPECLASS_GOAL — the goal is an equality (not a typeclass constraint), and measure is a resolved typeclass projection |
-| 7.10 | /explain-error rewrite Nat.add_comm fails with "unable to unify" | SKIP | Slash command — error message is inline, no file needed |
+| 7.10 | /explain-error rewrite Nat.add_comm fails with "unable to unify" | PASS | explain-error skill diagnosed 3 root causes (type mismatch, notation/scope confusion, typeclass overrides) with 5 fix suggestions backed by MCP tool lookups |
 | 7.11 | Why does apply Z.add_le_mono fail here? | PASS | search_by_name found Z.add_le_mono, Z.add_le_mono_r, Z.add_le_mono_l from Coq.ZArith.BinInt (10 results) |
 | 7.12 | Compare simpl vs cbn vs lazy | PASS | compare_tactics returned valid comparison with pairwise differences and selection guidance |
 
@@ -140,13 +140,13 @@ Run `/run-e2e` to retest prompts and update this file.
 |---|--------|--------|--------|
 | 8.1 | Profile the proof of ring_morph in examples/algebra.v | PASS | extract_proof_trace returned 6 steps with duration_ms: intros 170ms, induction 202ms, reflexivity 202ms, simpl 203ms, rewrite 203ms, lia 102ms — per-tactic timing now populated |
 | 8.2 | Profile the proof of zmul_expand in examples/algebra.v — is time spent in tactics or kernel? | PASS | extract_proof_trace returned 2 steps with duration_ms: intros 151ms, lia 104ms — timing data now available for tactic-vs-kernel analysis |
-| 8.3 | Profile examples/algebra.v and show me the top 5 slowest lemmas | FAIL | build_project fails with "Object of type BuildSystem is not JSON serializable" — no file-level profiling tool |
-| 8.4 | Which sentences in examples/algebra.v take the most compilation time? | FAIL | No sentence-level timing tool available — coq_query doesn't support Time command |
+| 8.3 | Profile examples/algebra.v and show me the top 5 slowest lemmas | PASS | profile_proof timing mode returned per-proof summaries for 9 lemmas sorted by total_time_s: ring_morph 5ms, add_0_r_v3 4ms, ring_assoc 4ms, ring_comm 4ms, add_0_r_v1 2ms (file total 0.284s) |
+| 8.4 | Which sentences in examples/algebra.v take the most compilation time? | PASS | profile_proof timing mode returned 68 per-sentence entries with real_time_s, user_time_s, sys_time_s; slowest sentence: From Coq Require Import at 0.262s, followed by Qed sentences at 0.003-0.004s |
 | 8.5 | simpl in * is taking 15 seconds — why is it slow? | PASS | tactic_lookup returned simpl metadata (kind: ltac, is_recursive: true) |
 | 8.6 | Typeclass resolution is the bottleneck — how do I speed it up? | PASS | tactic_lookup returned eauto metadata (kind: ltac, category: automation, is_recursive: true) |
-| 8.7 | Show me the Ltac call-tree breakdown for my_crush in examples/automation.v | FAIL | step_forward treats my_crush as a single opaque tactic (no sub-tactic expansion); no Ltac profiling/tracing tool in MCP suite |
+| 8.7 | Show me the Ltac call-tree breakdown for my_crush in examples/automation.v | FAIL | profile_proof ltac mode returns "session_manager is required for Ltac profiling" — ltac profiling backend not yet wired to standalone usage |
 | 8.8 | Profile overcomplicated in examples/lint_targets.v, then profile Nat.add_comm — compare the timings | PASS | extract_proof_trace returned duration_ms for both: overcomplicated 4 steps totaling ~668ms (intros 164ms, rewrite 201ms, simpl 202ms, trivial 100ms); add_comm 2 steps totaling ~214ms (intros 111ms, apply 103ms) — timing comparison now possible |
-| 8.9 | Profile all .v files in examples/ and show me the slowest files and lemmas | FAIL | No project-level profiling — build_project has serialization bug; no batch timing tool available |
+| 8.9 | Profile all .v files in examples/ and show me the slowest files and lemmas | PASS | profile_proof timing mode called on all 8 .v files; slowest files: algebra.v 0.284s, lint_targets.v 0.264s, flocq.v 0.206s, automation.v 0.169s; slowest lemma: ring_morph 5ms |
 
 ---
 
@@ -162,13 +162,7 @@ Run `/run-e2e` to retest prompts and update this file.
 ### impact_analysis returns empty graphs (3.4, 3.5)
 - `impact_analysis` returns only root node with 0 edges for stdlib lemmas (`Nat.add_comm`, `Nat.add_0_r`) even with fully qualified names — reverse dependency edges not populated
 
-### compare_assumptions cannot reach definitions after session proof point (2.9)
-- `compare_assumptions` with `["add_0_r_v1", "add_0_r_v2", "add_0_r_v3"]` returns NOT_FOUND because the session is opened on `add_0_r_v1` itself, so its name and subsequent definitions are not yet in the environment
-- **Root cause**: proof sessions position at the proof point, so only definitions evaluated *before* that point are visible. Comparing multiple file-local theorems requires a session opened *after* all of them are defined.
-
-### Remaining profiling gaps (8.3, 8.4, 8.7, 8.9)
-- `extract_proof_trace` now returns `duration_ms` per tactic step — per-proof profiling works (8.1, 8.2, 8.8 resolved)
-- `coq_query` supports Check/Print/About/Locate/Search/Compute/Eval but not `Time` — no sentence-level timing (8.4)
-- `build_project` fails with `Object of type BuildSystem is not JSON serializable` (serialization bug) — no file-level or project-level profiling (8.3, 8.9)
-- `step_forward` treats Ltac macros (e.g., `my_crush`) as single opaque steps with no sub-tactic expansion (8.7)
-- **Remaining gap**: no MCP tool provides per-sentence compilation timing (`coqc -time`), `Qed` vs tactic time separation, or Ltac call-tree profiling — see `doc/future/profile-proof-mcp.md`
+### Ltac call-tree profiling not available (8.7)
+- `profile_proof` ltac mode returns "session_manager is required for Ltac profiling" — the ltac profiling backend requires a session_manager that is not wired up for standalone `profile_proof` calls
+- `step_forward` treats Ltac macros (e.g., `my_crush`) as single opaque steps with no sub-tactic expansion
+- **Remaining gap**: no MCP tool provides Ltac call-tree profiling (`Set Ltac Profiling`)

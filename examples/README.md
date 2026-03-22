@@ -108,6 +108,11 @@ What instances are registered for the Proper typeclass?
 What axioms does ring_morph in examples/algebra.v depend on? Does it use anything beyond functional_extensionality?
 ```
 
+**Compare axiom profiles across proof variants:**
+```
+Compare the axiom profiles of add_0_r_v1, add_0_r_v2, and add_0_r_v3 in examples/algebra.v
+```
+
 **Understand why a term won't reduce:**
 ```
 Open a proof session on bpow_nonneg_example in examples/flocq.v — why doesn't simpl reduce the bpow expression? Is it opaque?
@@ -369,6 +374,19 @@ Profile the proof of ring_morph in examples/algebra.v — which tactic is the bo
 ```
 ```
 Profile the proof of zmul_expand in examples/algebra.v — is the time spent in tactics or kernel re-checking?
+```
+
+**Profile an entire file and find slowest lemmas:**
+```
+Profile examples/algebra.v and show me the top 5 slowest lemmas
+```
+```
+Which sentences in examples/algebra.v take the most compilation time?
+```
+
+**Profile all files in a project:**
+```
+Profile all .v files in examples/ and show me the slowest files and lemmas
 ```
 
 **Compare timing before and after:**

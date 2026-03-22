@@ -14,9 +14,9 @@ For each test file in scope, read the file and extract every prompt (text inside
 
 For each prompt:
 
-1. **Skip slash commands.** If the prompt starts with `/` (e.g., `/explain-error`, `/formalize`), record it as **SKIP** with reason "Slash command — tested separately".
+1. **Slash commands.** If the prompt starts with `/` (e.g., `/explain-error`, `/formalize`), invoke it using the `Skill` tool with the skill name and any arguments. Then evaluate the result the same way as any other prompt.
 
-2. **Execute the prompt.** Call the appropriate Poule MCP tools as a user would. Use your judgment to select tools — the prompt text describes what the user wants, not which tool to call. For prompts that require a proof session, open one, execute the steps, then close it when done.
+2. **Direct prompts.** For all other prompts, call the appropriate Poule MCP tools as a user would. Use your judgment to select tools — the prompt text describes what the user wants, not which tool to call. For prompts that require a proof session, open one, execute the steps, then close it when done.
 
 3. **Evaluate the result:**
    - **PASS** — tool returned relevant, non-empty results that answer the question.
@@ -49,7 +49,7 @@ Read `examples/README.md` to understand its current structure.
 Synchronize it with the test results:
 - **Add** passing prompts that are missing from `examples/README.md`, placing them under the appropriate section and subsection heading.
 - **Remove** failing prompts that are currently listed in `examples/README.md`.
-- Do not modify slash command prompts in `examples/README.md` (they are included regardless of SKIP status).
+- Slash command prompts follow the same PASS/FAIL rules as other prompts.
 - Preserve the existing section structure, introductory text, and subsection headings.
 
 ## Example data
