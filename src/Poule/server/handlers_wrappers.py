@@ -730,3 +730,42 @@ async def handle_compare_tactics(
             return format_error(exc.code, exc.message)
         raise
     return _format_success(result)
+
+
+# ---------------------------------------------------------------------------
+# Proof profiling (spec: proof-profiling.md)
+# ---------------------------------------------------------------------------
+
+async def handle_profile_proof(
+    ctx: Any,
+    *,
+    file_path: str,
+    lemma_name: str | None,
+    mode: str | None,
+    baseline_path: str | None,
+    timeout_seconds: int | None,
+) -> dict:
+    """Handle profile_proof tool call."""
+    try:
+        file_path = validate_string(file_path)
+    except (ValueError, Exception):
+        return format_error(PARSE_ERROR, "file_path must be a non-empty string.")
+    try:
+        from Poule.profiler.types import ProfileRequest
+        from Poule.profiler.engine import profile_proof
+
+        request = ProfileRequest(
+            file_path=file_path,
+            lemma_name=lemma_name or None,
+            mode=mode or "timing",
+            baseline_path=baseline_path or None,
+            timeout_seconds=timeout_seconds or 300,
+        )
+        result = await profile_proof(request)
+    except ValueError as exc:
+        return format_error(NOT_FOUND, str(exc))
+    except Exception as exc:
+        if hasattr(exc, "code") and hasattr(exc, "message"):
+            return format_error(exc.code, exc.message)
+        raise
+    return _format_success(result)
