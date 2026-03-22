@@ -16,40 +16,51 @@ FILE="${FILE#$PWD/}"
 # Helper: check if file is under a given prefix
 under() { [[ "$FILE" == "$1"* ]]; }
 
+# SDD-managed directories — only these are subject to phase locking.
+# Everything else (doc/plan/, doc/background/, scripts/, commands/, .claude/, etc.)
+# is always writable regardless of phase.
+is_sdd() {
+  under "doc/requirements/" || under "doc/features/" || under "doc/architecture/" \
+    || under "specification/" || under "src/" || under "test/"
+}
+
+# If the file is not in an SDD-managed directory, allow it unconditionally.
+is_sdd || exit 0
+
 case "$PHASE" in
   requirements)
     if ! under "doc/requirements/"; then
-      echo "REQUIREMENTS phase: only doc/requirements/ may be edited. Use /free to unlock." >&2
+      echo "REQUIREMENTS phase: only doc/requirements/ may be edited (among SDD layers). Use /free to unlock." >&2
       exit 2
     fi
     ;;
   features)
     if ! under "doc/features/"; then
-      echo "FEATURES phase: only doc/features/ may be edited. Use /free to unlock." >&2
+      echo "FEATURES phase: only doc/features/ may be edited (among SDD layers). Use /free to unlock." >&2
       exit 2
     fi
     ;;
   architecture)
     if ! under "doc/architecture/"; then
-      echo "ARCHITECTURE phase: only doc/architecture/ may be edited. Use /free to unlock." >&2
+      echo "ARCHITECTURE phase: only doc/architecture/ may be edited (among SDD layers). Use /free to unlock." >&2
       exit 2
     fi
     ;;
   specification)
     if ! under "specification/"; then
-      echo "SPECIFICATION phase: only specification/ may be edited. Use /free to unlock." >&2
+      echo "SPECIFICATION phase: only specification/ may be edited (among SDD layers). Use /free to unlock." >&2
       exit 2
     fi
     ;;
   tests)
     if ! under "test/"; then
-      echo "TESTS phase: only test/ may be edited. Use /free to unlock." >&2
+      echo "TESTS phase: only test/ may be edited (among SDD layers). Use /free to unlock." >&2
       exit 2
     fi
     ;;
   implementation)
-    if under "test/" || under "specification/" || under "doc/"; then
-      echo "IMPLEMENTATION phase: only src/, commands/, and tasks/ may be edited. Do not change tests or upstream layers. File feedback instead. Use /free to unlock." >&2
+    if ! under "src/"; then
+      echo "IMPLEMENTATION phase: only src/ may be edited (among SDD layers). File feedback instead. Use /free to unlock." >&2
       exit 2
     fi
     ;;
