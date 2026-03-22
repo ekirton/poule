@@ -1,0 +1,108 @@
+# Proposal: Cross-Prover Transfer Training for Premise Selection
+
+## Status
+
+Future proposal — not scheduled for implementation.
+
+## Problem
+
+Neural premise selection for Coq suffers from a data scarcity bottleneck. The Coq ecosystem has no equivalent of LeanDojo's continuously-updated extraction infrastructure, which produces millions of (proof_state, premise) pairs from Lean's Mathlib. Our extraction pipeline targets ~50K-100K pairs from stdlib + MathComp + stdpp + Flocq + Coquelicot + CoqInterval. By contrast:
+
+| System | Pairs | Unique premises | Source |
+|--------|-------|----------------|--------|
+| LeanHammer (Lean) | 5,817,740 | 265,348 | Mathlib extraction |
+| Magnushammer (Isabelle) | 4,400,000 | 433,000 | MAPL dataset |
+| ReProver (Lean) | 129,243 tactics | 130,262 | LeanDojo/Mathlib |
+| **Our pipeline (Coq)** | **~50K-100K** | **~30K-50K** | **stdlib + 5 libraries** |
+
+Our training corpus is 50-100x smaller than the Lean/Isabelle datasets that produced the best retrieval models. While training data quality matters more than quantity (LeanHammer's masked contrastive loss + rich extraction outperformed ReProver despite similar data scale), the Coq training set covers fewer mathematical domains and proof patterns.
+
+## Proposed Approach
+
+### Strategy 1: Pre-train on Lean, fine-tune on Coq
+
+Train the bi-encoder on LeanHammer's 5.8M (state, premise) pairs from Mathlib, then fine-tune on our Coq extraction data. The intuition: formal mathematics shares structural patterns across proof assistants — a rewrite with commutativity looks similar whether expressed in Lean or Coq.
+
+**Evidence supporting this approach:**
+
+- **PROOFWALA** (arXiv:2502.04671, 2025) demonstrated that models trained on both Lean 4 and Coq outperform monolingual models. Proof data synthesized across both systems improved performance on each system individually.
+- **Cross-system steering vectors** work: PROOFWALA found that training data from one system provides useful inductive bias for the other.
+- **Shared mathematical structure**: Both Lean and Coq formalize the same mathematics (natural number arithmetic, group theory, topology, analysis). The premise patterns overlap at the mathematical concept level even when the surface syntax differs.
+
+**Training pipeline:**
+1. Obtain LeanDojo's extracted dataset (publicly available via the LeanDojo Benchmark)
+2. Serialize Lean proof states and premise statements using the same tokenizer (CodeBERT handles both)
+3. Pre-train the bi-encoder with masked contrastive loss on the Lean data (~5.8M pairs)
+4. Fine-tune on Coq extraction data with lower learning rate (5e-6) and fewer epochs (10)
+5. Evaluate on Coq test split; compare against Coq-only baseline
+
+**Estimated cost:** $200-400 for pre-training on Lean (1x A6000, ~6 days, matching LeanHammer's compute), plus our standard training cost for fine-tuning.
+
+### Strategy 2: Joint training on Lean + Coq
+
+Train on a mixed corpus of Lean and Coq data simultaneously, with a library-source indicator token prepended to each input. This avoids the catastrophic-forgetting risk of sequential pre-train/fine-tune and lets the model learn shared representations.
+
+**Training pipeline:**
+1. Combine Lean and Coq extraction data into a single JSONL stream
+2. Prepend `[LEAN]` or `[COQ]` token to each proof state and premise statement
+3. Train with standard masked contrastive loss on the combined corpus
+4. At inference time, prepend `[COQ]` to queries and premises
+5. Evaluate on Coq test split
+
+### Strategy 3: Lean data as synthetic hard negatives
+
+Use Lean premises as hard negatives when training on Coq data. The intuition: a Lean lemma about `Nat.add_comm` is semantically similar to Coq's `Nat.add_comm` but is not a valid retrieval target. This forces the model to learn Coq-specific representations while benefiting from Lean's broader coverage of mathematical concepts.
+
+## Challenges
+
+### Tokenization divergence
+
+Lean 4 and Coq have different syntax, keywords, and naming conventions:
+- Lean: `theorem add_comm : ∀ n m : Nat, n + m = m + n`
+- Coq: `Lemma add_comm : forall n m : nat, n + m = m + n`
+
+CodeBERT handles both as "code" but the token distributions differ. A domain-specific tokenizer (as CFR demonstrated for Lean alone, yielding +33% Recall@5) would need to cover both syntaxes.
+
+### Semantic alignment
+
+The same mathematical concept may have different names, different type signatures, and different proof structures across Lean and Coq. `Nat.add_comm` exists in both, but `List.map_comp` in Lean may correspond to `List.map_map` in Coq. The model must learn to align these despite surface differences.
+
+### Evaluation fairness
+
+Cross-system pre-training changes what the model has seen. Evaluation must ensure that the Coq test split contains no theorems whose Lean equivalents appeared in training. This requires a cross-library alignment dataset (which does not currently exist at scale).
+
+### Data format harmonization
+
+LeanDojo's extraction format differs from our JSONL format. A translation layer is needed:
+- LeanDojo stores proof states as serialized Lean expressions; ours are pretty-printed Coq goals
+- LeanDojo's premise annotations use Lean FQNs; ours use Coq FQNs
+- The `TrainingDataLoader` would need to accept both formats or a unified intermediate format
+
+## Why Deferred
+
+1. **Orthogonal to extraction improvements**: Cross-prover transfer is a training-time optimization, not an extraction-time improvement. The extraction pipeline must be solid first.
+2. **Requires Lean infrastructure**: Obtaining and processing LeanDojo's dataset requires Lean 4 tooling that is outside our current dependency set.
+3. **Uncertain magnitude**: While PROOFWALA shows cross-system benefits for proof generation, it has not been evaluated specifically for premise retrieval. The transfer benefit for retrieval may be smaller than for generation.
+4. **Our model is small**: At 125M parameters (CodeBERT), the model may not have capacity to represent both Lean and Coq patterns effectively. Cross-prover transfer may benefit larger models (300M+) more.
+5. **Evaluation complexity**: Validating that cross-prover pre-training actually helps Coq retrieval requires careful experimental design to avoid confounding factors.
+
+## Prerequisites
+
+- Solid Coq-only baseline: train and evaluate the model on Coq data alone first
+- LeanDojo dataset access and format documentation
+- Cross-library alignment data (even a small manually-curated set of Lean↔Coq theorem pairs for evaluation)
+- GPU budget for the pre-training phase ($200-400)
+
+## References
+
+- PROOFWALA: arXiv:2502.04671, 2025. "Multilingual Proof Data Synthesis and Verification in Lean 4 and Coq."
+- LeanDojo: Yang et al., NeurIPS 2023. "Theorem Proving with Retrieval-Augmented Language Models." Dataset publicly available.
+- LeanHammer: Mikula et al., arXiv:2506.07477, June 2025. "Premise Selection for a Lean Hammer." 5.8M (state, premise) pairs from Mathlib.
+- CFR: Zhu et al., arXiv:2501.13959, January 2025. Domain-specific tokenization yielded +33% Recall@5.
+- RocqStar: arXiv:2505.22846, AAMAS 2026. Proof-similarity training on Coq with CodeBERT, 125M parameters.
+
+## Relationship to Other Work
+
+- Depends on: working Coq-only training pipeline (model, evaluation, quantization)
+- Complements: extraction improvements (more Coq data reduces the relative importance of cross-prover transfer)
+- Alternative to: proof-similarity training (RocqStar's approach bootstraps from Coq data only, without Lean)
