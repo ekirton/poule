@@ -10,6 +10,10 @@ set -euo pipefail
 #   ./scripts/extract-training-data.sh --libraries stdlib,mathcomp
 #   ./scripts/extract-training-data.sh --force --timeout 120
 
+# Rocq 9.x deprecates COQLIB in favour of ROCQLIB; export it so coqc
+# stops emitting the deprecation warning on every invocation.
+export ROCQLIB="${ROCQLIB:-${COQLIB:-}}"
+
 ALL_LIBRARIES="stdlib,mathcomp,stdpp,flocq,coquelicot,coqinterval"
 LIBRARIES="$ALL_LIBRARIES"
 OUTPUT_DIR="/data"

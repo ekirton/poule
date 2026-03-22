@@ -41,6 +41,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Rocq 9.x deprecates COQLIB in favour of ROCQLIB; export it so coqc
+# stops emitting the deprecation warning on every invocation.
+export ROCQLIB="${ROCQLIB:-${COQLIB:-}}"
+
 mkdir -p "$OUTPUT_DIR"
 
 IFS=',' read -ra LIB_ARRAY <<< "$LIBRARIES"
