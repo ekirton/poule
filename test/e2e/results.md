@@ -169,9 +169,10 @@ Run `/run-e2e` to retest prompts and update this file.
 - Stdlib definitions (e.g., `Nat.add_comm`) are accessible via coq_query, confirming the issue is specific to file-local definitions
 - **Root cause**: the proof session loads Coq imports but does not evaluate preceding vernacular commands (Definitions, Lemmas, HintDb, Instance declarations) from the same file before positioning at the target proof
 
-### trace_resolution does not detect typeclass methods in goal (2.5, 7.9)
-- `trace_resolution` returns `NO_TYPECLASS_GOAL` for the goal `measure (l1 ++ l2) = measure l1 + measure l2` even though `measure` is a typeclass method (class `Measurable`) requiring instance resolution
-- The tool appears to check only for direct typeclass constraint goals, not for goals that contain typeclass method applications
+### trace_resolution returns NO_TYPECLASS_GOAL for resolved typeclass projections (2.5, 7.9)
+- `trace_resolution` correctly returns `NO_TYPECLASS_GOAL` for the goal `measure (l1 ++ l2) = measure l1 + measure l2` because the head term is `=` (not a typeclass constraint) — `measure` is a typeclass projection whose instance was resolved during elaboration
+- The error message now includes the goal text and explains that typeclass methods in sub-terms are already resolved
+- **Status**: spec clarified (S4.2 REQUIRES, S7.2 error message), implementation updated to include goal text in error, tests added — re-run e2e to verify
 
 ### No profiling or timing tools (8.1–8.4, 8.7–8.9)
 - `extract_proof_trace` returns tactic steps but no timing data (no `duration`, `time_ms`, or similar field)

@@ -195,6 +195,63 @@ class TestTraceResolutionContract:
             await manager.close_session(session_id)
 
     @pytest.mark.asyncio
+    async def test_contract_trace_resolution_embedded_typeclass_method(self):
+        """Contract test: trace_resolution at goal with resolved typeclass methods returns
+        NO_TYPECLASS_GOAL with goal text in the message (S4.2, S7.2).
+
+        The goal `measure (l1 ++ l2) = measure l1 + measure l2` has head `=`, not
+        a typeclass, even though `measure` is a typeclass projection.  The error
+        message must include the goal text so the user understands why.
+        """
+        _, _, trace_resolution, *_ = _import_debugging()
+
+        from Poule.session.manager import ProofSessionManager
+        manager = ProofSessionManager()
+        session_id = await manager.open_session("test_contract")
+        try:
+            # Load the Measurable class and instances from the example file
+            await manager.execute_vernacular(
+                session_id,
+                "From Coq Require Import PeanoNat List. Import ListNotations.",
+            )
+            await manager.execute_vernacular(
+                session_id,
+                "Class Measurable (A : Type) := { "
+                "measure : A -> nat; "
+                "measure_nonneg : forall x, 0 <= measure x }.",
+            )
+            await manager.execute_vernacular(
+                session_id,
+                "Instance list_Measurable (A : Type) : Measurable (list A) := { "
+                "measure := @length A; "
+                "measure_nonneg := fun _ => Nat.le_0_l _ }.",
+            )
+            await manager.execute_vernacular(
+                session_id,
+                "Lemma measure_app_length : "
+                "forall (A : Type) (l1 l2 : list A), "
+                "measure (l1 ++ l2) = measure l1 + measure l2.",
+            )
+            await manager.execute_vernacular(session_id, "Proof.")
+            await manager.execute_vernacular(session_id, "intros A l1 l2.")
+
+            with pytest.raises(Exception) as exc_info:
+                await trace_resolution(
+                    session_id=session_id,
+                    session_manager=manager,
+                )
+            err = exc_info.value
+            assert hasattr(err, "code") and err.code == "NO_TYPECLASS_GOAL", (
+                f"Expected NO_TYPECLASS_GOAL, got: {err}"
+            )
+            # Error message must include the goal text per S7.2
+            assert "measure" in err.message, (
+                f"Error message should include goal text with 'measure', got: {err.message}"
+            )
+        finally:
+            await manager.close_session(session_id)
+
+    @pytest.mark.asyncio
     async def test_contract_trace_resolution_cleanup_guarantee(self):
         """Contract test: debug flag is cleaned up even after NO_TYPECLASS_GOAL (S7.4).
 

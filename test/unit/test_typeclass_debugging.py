@@ -458,6 +458,46 @@ class TestTraceResolution:
         )
 
     @pytest.mark.asyncio
+    async def test_no_typeclass_goal_includes_goal_text(self):
+        """Given a goal with resolved typeclass methods, NO_TYPECLASS_GOAL includes goal text (S4.2, S7.2)."""
+        _, _, trace_resolution, *_ = _import_debugging()
+
+        from Poule.session.types import Goal, ProofState
+
+        goal_text = "measure (l1 ++ l2) = measure l1 + measure l2"
+
+        call_count = {"n": 0}
+
+        async def _execute(session_id, command, *, prefer_coqtop=False):
+            if "Set Typeclasses Debug Verbosity 2" in command:
+                return ""
+            if "Unset Typeclasses Debug" in command:
+                return ""
+            # typeclasses eauto produces no output on non-typeclass goal
+            return ""
+
+        manager = AsyncMock()
+        manager.send_command.side_effect = _execute
+        manager.observe_proof_state.return_value = ProofState(
+            schema_version=1,
+            session_id="abc123",
+            step_index=0,
+            is_complete=False,
+            focused_goal_index=0,
+            goals=[Goal(index=0, type=goal_text)],
+        )
+
+        with pytest.raises(Exception) as exc_info:
+            await trace_resolution(
+                session_id="abc123",
+                session_manager=manager,
+            )
+        err = exc_info.value
+        assert hasattr(err, "code") and err.code == "NO_TYPECLASS_GOAL"
+        # Error message must include the goal text per S7.2
+        assert goal_text in err.message
+
+    @pytest.mark.asyncio
     async def test_backend_crash_error(self):
         """Given a backend crash during debug capture, returns BACKEND_CRASHED."""
         _, _, trace_resolution, *_ = _import_debugging()

@@ -70,7 +70,7 @@ When the environment contains more than 200 typeclasses, the component shall omi
 
 #### trace_resolution(session_id)
 
-- REQUIRES: `session_id` references an active proof session positioned at a goal that involves typeclass resolution.
+- REQUIRES: `session_id` references an active proof session positioned at a goal that is a typeclass constraint requiring resolution (i.e., the goal's head term is a registered typeclass, such as `Decidable P` or `Eq nat`).
 - ENSURES: Enables verbose debug output (`Set Typeclasses Debug Verbosity 2`), re-triggers resolution of the current goal, captures debug output, disables debug output (`Unset Typeclasses Debug`), parses the captured output into a ResolutionTrace, and returns it.
 - MAINTAINS: The session's proof state is unchanged after the call. Debug mode is never left enabled across tool calls -- even when an error occurs mid-operation, the component issues `Unset Typeclasses Debug` before returning.
 
@@ -81,6 +81,10 @@ When the environment contains more than 200 typeclasses, the component shall omi
 > **Given** a proof session at a goal `n + 0 = n` that does not involve typeclass resolution
 > **When** `trace_resolution(session_id)` is called
 > **Then** a `NO_TYPECLASS_GOAL` error is returned
+
+> **Given** a proof session at a goal `measure (l1 ++ l2) = measure l1 + measure l2` where `measure` is a typeclass projection whose instance was resolved during elaboration (the goal's head term is `=`, not a typeclass)
+> **When** `trace_resolution(session_id)` is called
+> **Then** a `NO_TYPECLASS_GOAL` error is returned whose message includes the current goal text
 
 > **Given** a proof session where the backend crashes during debug output capture
 > **When** `trace_resolution(session_id)` is called
@@ -310,7 +314,7 @@ The parser shall convert raw `Set Typeclasses Debug` output into a tree of Resol
 | Condition | Error Code | Behavior |
 |-----------|------------|----------|
 | No active session | `SESSION_NOT_FOUND` | Return error: "Typeclass resolution tracing requires an active proof session." |
-| Current goal does not involve typeclass resolution | `NO_TYPECLASS_GOAL` | Return error: "The current goal does not involve typeclass resolution." |
+| Current goal is not a typeclass constraint | `NO_TYPECLASS_GOAL` | Return error including the current goal text: "The current goal `{goal}` is not a typeclass constraint. trace_resolution requires a goal whose head term is a typeclass (e.g., Decidable P, Eq nat). If the goal contains typeclass methods, their instances were resolved during elaboration." When the goal text is unavailable, omit it from the message. |
 
 ### 7.3 Dependency Errors
 
