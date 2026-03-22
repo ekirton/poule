@@ -1187,6 +1187,34 @@ class TestErrorSpecification:
         assert exc_info.value.code == "PARSE_ERROR"
         assert "bad_thm" in exc_info.value.message
 
+    @pytest.mark.asyncio
+    async def test_coq_error_output_raises_not_found(self):
+        """Spec §7.3: When coqtop returns a 'not found' error in the output
+        string (not as an exception), audit_assumptions raises NOT_FOUND.
+
+        This happens when send_command returns the raw Coq error output
+        as a string rather than raising an exception — e.g., when a
+        file-local theorem name is not in the coqtop environment."""
+        audit_assumptions, _, _ = _import_engine()
+        AuditError = _import_errors()
+        # Simulate coqtop returning error output as a string
+        coq_error = (
+            "Rocq < Toplevel input, characters 18-27:\n"
+            "> Print Assumptions my_lemma.\n"
+            ">                   ^^^^^^^^^\n"
+            "Error: The reference my_lemma was not found "
+            "in the current environment."
+        )
+        manager = _make_mock_session_manager(
+            print_assumptions_output={
+                "my_lemma": coq_error,
+            },
+        )
+        with pytest.raises(AuditError) as exc_info:
+            await audit_assumptions(manager, "my_lemma")
+        assert exc_info.value.code == "NOT_FOUND"
+        assert "my_lemma" in exc_info.value.message
+
     def test_audit_error_has_code_and_message(self):
         """AuditError has code and message attributes."""
         AuditError = _import_errors()

@@ -94,6 +94,27 @@ class TestContractSessionManager:
             await manager.close_session(session_id)
 
     @pytest.mark.asyncio
+    async def test_audit_file_local_theorem_in_proof_session(self):
+        """Contract: audit_assumptions finds file-local theorems in proof sessions.
+
+        Spec §4.1 + proof-session.md §4.4.1: file context is loaded into
+        the coqtop subprocess, so Print Assumptions can resolve same-file names."""
+        from Poule.auditing.engine import audit_assumptions
+        from Poule.session.manager import SessionManager
+
+        manager = SessionManager()
+        # algebra.v: my_lemma at line 14, add_0_r_v3 at line 38
+        sid, _ = await manager.create_session(
+            "/poule/examples/algebra.v", "add_0_r_v3",
+        )
+        try:
+            result = await audit_assumptions(manager, "my_lemma", sid)
+            assert result.name == "my_lemma"
+            assert result.is_closed is True  # reflexivity uses no axioms
+        finally:
+            await manager.close_session(sid)
+
+    @pytest.mark.asyncio
     async def test_print_module_lists_declarations(self):
         """Verify Print Module output contains theorem names."""
         from Poule.session.manager import SessionManager

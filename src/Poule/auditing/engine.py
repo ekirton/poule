@@ -26,6 +26,10 @@ _VALID_CATEGORIES = {cat.value for cat in AxiomCategory}
 # Default flag categories per spec section 4.6.
 _DEFAULT_FLAG_CATEGORIES = ["classical", "choice", "proof_irrelevance", "custom"]
 
+# Detect Coq error output in coqtop responses (spec §7.3).
+_COQ_ERROR_RE = re.compile(r"^Error:", re.MULTILINE)
+_NOT_FOUND_RE = re.compile(r"not found in the current environment", re.IGNORECASE)
+
 
 async def audit_assumptions(
     session_manager: Any,
@@ -51,6 +55,18 @@ async def audit_assumptions(
         code = getattr(exc, "code", "UNKNOWN")
         message = getattr(exc, "message", str(exc))
         raise AuditError(code, message) from exc
+
+    # Detect Coq error output before parsing (spec §7.3).
+    if _COQ_ERROR_RE.search(output):
+        if _NOT_FOUND_RE.search(output):
+            raise AuditError(
+                "NOT_FOUND",
+                f"Declaration `{name}` not found in the current Coq environment.",
+            )
+        raise AuditError(
+            "PARSE_ERROR",
+            f"Coq error in `Print Assumptions` output for `{name}`: {output.strip()}",
+        )
 
     # Parse the output
     try:

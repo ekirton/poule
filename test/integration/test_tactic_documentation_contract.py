@@ -76,3 +76,34 @@ class TestContractHintDatabaseInspection:
         result = await hint_inspect("core")
         assert result.name == "core"
         assert result.total_entries >= 0
+
+    @pytest.mark.asyncio
+    async def test_contract_file_local_hintdb_in_proof_session(self):
+        """Contract test: file-local hint databases are visible in proof sessions.
+
+        Spec: tactic-documentation.md §4.5 delegates to coq_query, which per
+        vernacular-introspection.md §4.3 executes in the session's file context.
+        automation.v defines 'my_hints' via Create HintDb before double_2."""
+        from Poule.session.manager import SessionManager
+        from Poule.tactics.hints import hint_inspect
+
+        mgr = SessionManager()
+        sid, _ = await mgr.create_session(
+            "/poule/examples/automation.v", "double_2",
+        )
+        try:
+            async def session_coq_query(command, argument, session_id=None):
+                from Poule.query.handler import coq_query as _coq_query
+                from Poule.query.process_pool import ProcessPool
+                return await _coq_query(
+                    command, argument,
+                    session_id=sid,
+                    session_manager=mgr,
+                    process_pool=ProcessPool(),
+                )
+
+            result = await hint_inspect("my_hints", session_id=sid, coq_query=session_coq_query)
+            assert result.name == "my_hints"
+            assert result.total_entries >= 0
+        finally:
+            await mgr.close_session(sid)
