@@ -47,15 +47,29 @@ def search_by_name(ctx: Any, pattern: str, limit: int) -> list[Any]:
 
 
 # Legacy prefix aliases: Rocq 9.x renamed Coq stdlib from Coq.* to Corelib.*.
-# Users still query with Coq.* names, so we rewrite before lookup.
+# Bidirectional — users may query with either prefix.
 _PREFIX_ALIASES: list[tuple[str, str]] = [
     ("Coq.", "Corelib."),
 ]
 
 
+def alias_prefix(prefix: str) -> str | None:
+    """Bidirectional prefix alias: Coq.* ↔ Corelib.*.
+
+    Returns the aliased form, or ``None`` if no alias applies.
+    """
+    for a, b in _PREFIX_ALIASES:
+        if prefix.startswith(a):
+            return b + prefix[len(a):]
+        if prefix.startswith(b):
+            return a + prefix[len(b):]
+    return None
+
+
 def _alias_symbol(sym: str) -> str | None:
     """Rewrite a symbol using known legacy prefix aliases.
 
+    Only maps old → new (Coq.* → Corelib.*) for symbol resolution.
     Returns the aliased form, or None if no alias applies.
     """
     for old, new in _PREFIX_ALIASES:

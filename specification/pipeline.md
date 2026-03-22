@@ -52,6 +52,37 @@ The system shall define a `PipelineContext` that holds:
 
 **Suffix index construction**: For each FQN key in `inverted_index`, generate all proper dot-separated suffixes (e.g., `Coq.Init.Nat.add` → `Init.Nat.add`, `Nat.add`, `add`). Map each suffix to the list of FQNs it matches. Ambiguous suffixes (matching multiple FQNs) retain all matches — they are expanded at query time to maximize recall.
 
+### 4.1.1 Prefix Aliasing
+
+Rocq 9.x renamed the Coq standard library namespace from `Coq.*` to `Corelib.*`. The index stores modules under the legacy `Coq.*` canonical prefix, but declaration names in the inverted index may use `Corelib.*`. Users may query with either prefix.
+
+The system shall define a centralized bidirectional alias registry:
+
+```python
+_PREFIX_ALIASES: list[tuple[str, str]] = [
+    ("Coq.", "Corelib."),
+]
+```
+
+#### alias_prefix(prefix)
+
+- REQUIRES: `prefix` is a string.
+- ENSURES: If `prefix` starts with either side of an alias pair, returns the prefix rewritten to the other side. Otherwise, returns `None`.
+
+> **Given** `prefix = "Corelib.Arith"`,
+> **When** `alias_prefix` is called,
+> **Then** it returns `"Coq.Arith"`.
+
+> **Given** `prefix = "Coq.Init"`,
+> **When** `alias_prefix` is called,
+> **Then** it returns `"Corelib.Init"`.
+
+> **Given** `prefix = "mathcomp.algebra"`,
+> **When** `alias_prefix` is called,
+> **Then** it returns `None` (no alias applies).
+
+This function is used by both `resolve_query_symbols` (§4.5.1) and `list_modules` (see [mcp-server.md](mcp-server.md) §4.2) to ensure both the legacy and modern namespace prefixes are accepted.
+
 ### 4.2 CoqParser Protocol
 
 The pipeline shall define a `CoqParser` protocol (interface):
@@ -155,7 +186,8 @@ Algorithm:
 Resolution per symbol:
 1. **Exact match**: If the symbol is an exact key in `ctx.inverted_index`, use it directly (it is already an FQN).
 2. **Suffix match**: Otherwise, look up the symbol in `ctx.suffix_index`. If found, expand to all matching FQNs.
-3. **Passthrough**: If the symbol matches neither the inverted index nor the suffix index, include it as-is. MePo handles unknown symbols gracefully (they simply match no declarations in the inverted index lookup).
+3. **Prefix alias**: If neither exact nor suffix match succeeds, call `alias_prefix(symbol)` (§4.1.1). If the aliased form matches in the inverted index or suffix index, use those results.
+4. **Passthrough**: If the symbol matches none of the above, include it as-is. MePo handles unknown symbols gracefully (they simply match no declarations in the inverted index lookup).
 
 > **Given** `symbols = ["Nat.add", "Nat.mul"]` and the index contains FQNs `Coq.Init.Nat.add` and `Coq.Init.Nat.mul`,
 > **When** `resolve_query_symbols` is called,

@@ -65,7 +65,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 3.5 | Show me the full impact analysis for Nat.add_0_r | FAIL | impact_analysis returned only root node with 0 edges — same issue as 3.4 |
 | 3.6 | What Proper instances are registered for Rplus in Coquelicot? | PASS | list_instances with Coq.Classes.Morphisms.Proper returned 75 instances (Nat operations, Morphisms_Prop connectives, etc.) |
 | 3.7 | What lemmas are in the arith hint database? | PASS | inspect_hint_db returned 111 resolve entries for "arith" database (lt_wf, Nat.add_comm, Nat.mul_assoc, Nat.le_trans, etc.) |
-| 3.8 | What's in the Corelib.Arith module? | FAIL | list_modules with prefix "Corelib.Arith" returned empty — modules are indexed under the legacy "Coq.Arith" prefix, not "Corelib.Arith" |
+| 3.8 | What's in the Corelib.Arith module? | PASS | list_modules with prefix "Corelib.Arith" now resolves to "Coq.Arith" via bidirectional prefix aliasing |
 | 3.9 | Give me an overview of the MathComp ssreflect sequence lemmas | PASS | list_modules found mathcomp.boot.seq with 920 declarations |
 | 3.10 | Show me the dependency graph around Nat.add_comm | PASS | visualize_dependencies returned Mermaid flowchart with 2 nodes (Nat.add_comm depending on Coq.Init.Datatypes.nat) — minimal but valid graph |
 
@@ -165,10 +165,6 @@ Run `/run-e2e` to retest prompts and update this file.
 ### compare_assumptions cannot reach definitions after session proof point (2.9)
 - `compare_assumptions` with `["add_0_r_v1", "add_0_r_v2", "add_0_r_v3"]` returns NOT_FOUND because the session is opened on `add_0_r_v1` itself, so its name and subsequent definitions are not yet in the environment
 - **Root cause**: proof sessions position at the proof point, so only definitions evaluated *before* that point are visible. Comparing multiple file-local theorems requires a session opened *after* all of them are defined.
-
-### list_modules uses legacy Coq prefix, not Corelib (3.8)
-- `list_modules` with prefix `Corelib.Arith` returns empty because modules are indexed under the legacy `Coq.Arith` prefix
-- Users referencing the newer `Corelib` namespace get no results; they must use `Coq.Arith` instead
 
 ### Remaining profiling gaps (8.3, 8.4, 8.7, 8.9)
 - `extract_proof_trace` now returns `duration_ms` per tactic step — per-proof profiling works (8.1, 8.2, 8.8 resolved)

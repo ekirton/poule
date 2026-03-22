@@ -92,6 +92,23 @@ Note: `extract_symbols` at query time is equivalent to `extract_consts` (const-j
 
 Note: Const Jaccard refinement for `search_by_symbols` is deferred to Phase 2.
 
+### Prefix Aliasing
+
+Rocq 9.x renamed the standard library namespace from `Coq.*` to `Corelib.*`. The index stores modules under the legacy `Coq.*` canonical prefix (derived from `.vo` paths), but declaration names in the inverted index may use `Corelib.*`. Users may query with either prefix.
+
+A centralized bidirectional alias registry maps between the two namespaces:
+
+```
+Coq.  ↔  Corelib.
+```
+
+All query paths that match against module prefixes or symbol names apply this aliasing transparently:
+
+- **`list_modules`**: If the user prefix matches no modules, retry with the aliased prefix. Both `list_modules("Coq.Arith")` and `list_modules("Corelib.Arith")` return the same results.
+- **`search_by_symbols`**: After suffix-index lookup fails, try the aliased form of the symbol name (existing behavior).
+
+The alias registry is a shared module consumed by both the pipeline (`search_by_symbols`) and the MCP server layer (`list_modules`).
+
 ### search_by_name
 
 ```

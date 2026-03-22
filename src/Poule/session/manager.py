@@ -79,11 +79,13 @@ _PROOF_STARTER_RE = re.compile(
 
 
 def _extract_file_prelude(file_path: str, proof_name: str) -> str:
-    """Extract all vernacular from a .v file up to (but not including) the proof target.
+    """Extract all vernacular from a .v file for loading into coqtop.
+
+    Returns the entire file content so that vernacular introspection commands
+    (Print Assumptions, About, Check, etc.) can reference any definition in
+    the file — including definitions after the proof target.
 
     If *proof_name* is empty, falls back to extracting only imports.
-    If *proof_name* is not found in the file, returns the entire file content
-    (safe fallback — more context is better than less).
     """
     if not proof_name:
         return _extract_imports(file_path)
@@ -92,14 +94,6 @@ def _extract_file_prelude(file_path: str, proof_name: str) -> str:
             text = f.read()
     except (OSError, FileNotFoundError):
         return ""
-    # Find the line that declares the proof target.
-    for m in _PROOF_STARTER_RE.finditer(text):
-        line = text[m.start() : text.index("\n", m.start()) if "\n" in text[m.start():] else len(text)]
-        # Check if the proof name appears as the next token after the keyword.
-        tokens = line.split()
-        if len(tokens) >= 2 and tokens[1].rstrip(":") == proof_name:
-            return text[: m.start()].rstrip()
-    # proof_name not found — return everything
     return text.rstrip()
 
 

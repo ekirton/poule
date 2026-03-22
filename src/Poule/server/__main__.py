@@ -945,9 +945,22 @@ class _PipelineFacade:
         return results
 
     def list_modules(self, prefix: str):
+        from Poule.pipeline.search import alias_prefix
+
         reader = self._ctx.reader
         rows = reader.list_modules(prefix)
-        return [{"name": r["module"], "decl_count": r["count"]} for r in rows]
+        if not rows and prefix:
+            aliased = alias_prefix(prefix)
+            if aliased is not None:
+                rows = reader.list_modules(aliased)
+        seen: set[str] = set()
+        result = []
+        for r in rows:
+            name = r["module"]
+            if name not in seen:
+                seen.add(name)
+                result.append({"name": name, "decl_count": r["count"]})
+        return result
 
     def build_graph(self, *, dot_file_path: str | None = None):
         from Poule.analysis.graph import build_graph

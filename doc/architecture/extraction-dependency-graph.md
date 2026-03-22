@@ -114,11 +114,44 @@ import_dependencies(dependency_graph_path, index_db_path)
 
 The index build pipeline (`run_extraction`) already inserts dependency edges from three sources: tree-based `LConst` extraction, `Print Assumptions` output, and symbol-set cross-referencing. All three derive from type signatures and axiom-level assumptions — none capture proof-body dependencies for opaque theorems.
 
-Premise-based import adds a fourth source that captures the actual theorems and definitions each proof uses. Edges from all four sources are merged and deduplicated by `(src, dst, relation)` in the `dependencies` table's primary key.
+Two additional sources provide proof-body-level edges:
+
+4. **Premise-based import** — from extraction campaign proof traces. Captures the actual theorems and definitions each proof uses. Most accurate (dynamic dependency set) but requires running an extraction campaign.
+5. **coq-dpdgraph DOT import** — from compiled `.vo` files via coq-dpdgraph. Captures theorem-to-theorem proof-body dependencies directly from the Coq kernel. Available for any compiled library without an extraction campaign.
+
+Edges from all sources are merged and deduplicated by `(src, dst, relation)` in the `dependencies` table's primary key.
+
+### DOT file import (coq-dpdgraph)
+
+As an alternative to premise-based import, `import_dependencies` also accepts coq-dpdgraph DOT files. coq-dpdgraph hooks into the Coq kernel's dependency tracker and produces directed graphs of fully qualified names from compiled `.vo` files — no extraction campaign required. This path is available for all compiled libraries, including the six Tier 0 libraries pre-installed in the container.
+
+```
+import_dependencies(dot_file_path, index_db_path, source_format="dot")
+  │
+  ├─ Open existing index database (read/write)
+  │
+  ├─ Parse DOT file: extract directed edges ("src" -> "dst")
+  │
+  ├─ For each edge (src_name, dst_name):
+  │    ├─ Resolve src_name to declaration ID in index
+  │    │    (exact match, then suffix match against indexed FQNs)
+  │    │
+  │    ├─ Resolve dst_name to declaration ID in index
+  │    │
+  │    ├─ Skip edges where either endpoint is unresolvable
+  │    │
+  │    └─ Insert (src_id, dst_id, "uses") into dependencies table
+  │
+  └─ Commit
+```
+
+The same deduplication guarantees apply — edges already present from Pass 2 or premise-based import are skipped via the primary key constraint.
 
 ### When to run
 
-Import runs after both the index build and the extraction campaign complete. The index must exist (provides the declaration ID mapping). The dependency graph file must exist (provides the edges). The import is idempotent — running it again on the same data produces no duplicate edges due to the primary key constraint.
+Import runs after the index build completes. The index must exist (provides the declaration ID mapping). The dependency graph file (JSON Lines or DOT) must exist (provides the edges). The import is idempotent — running it again on the same data produces no duplicate edges due to the primary key constraint.
+
+For premise-based import, the extraction campaign must also have completed. For DOT import, only compiled `.vo` files are needed — coq-dpdgraph extracts directly from the Coq kernel without an extraction campaign.
 
 ## Design Rationale
 
@@ -129,6 +162,10 @@ Static analysis of Coq source could identify `Require Import` statements and `ap
 ### Why exclude hypotheses from the graph
 
 Graph-based premise selection models predict which existing library results are relevant to a goal. Local hypotheses are not library results — they are proof-internal bindings. Including them would add noise to the graph without retrieval signal.
+
+### Why support both premise-based and DOT import
+
+Premise-based import requires an extraction campaign — a heavy process optimized for ML training data. For the six Tier 0 libraries, running extraction campaigns just to populate dependency edges is unnecessary overhead. coq-dpdgraph runs directly on compiled `.vo` files (already available in the container) and produces a complete dependency graph in minutes. Supporting both paths means dependency edges are available immediately for all pre-installed libraries (via DOT import) while extraction campaigns can enrich them further when available.
 
 ### Why per-theorem granularity rather than per-step
 

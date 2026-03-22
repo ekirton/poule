@@ -357,6 +357,25 @@ class TestListModulesIntegration:
         # Coq.Init.Nat has add
         assert by_name.get("Coq.Init.Nat") == 1
 
+    def test_corelib_prefix_returns_same_as_coq(self, facade):
+        """Corelib.Arith prefix returns the same modules as Coq.Arith."""
+        coq_modules = facade.list_modules("Coq.Arith")
+        corelib_modules = facade.list_modules("Corelib.Arith")
+        assert len(corelib_modules) > 0
+        assert len(corelib_modules) == len(coq_modules)
+        coq_names = {m["name"] for m in coq_modules}
+        corelib_names = {m["name"] for m in corelib_modules}
+        assert coq_names == corelib_names
+
+    def test_corelib_prefix_init(self, facade):
+        """Corelib.Init prefix returns modules."""
+        modules = facade.list_modules("Corelib.Init")
+        assert len(modules) > 0
+        for m in modules:
+            assert m["name"].startswith("Coq.Init"), (
+                f"Module {m['name']} doesn't start with 'Coq.Init'"
+            )
+
     def test_no_match_returns_empty_list(self, facade):
         modules = facade.list_modules("Nonexistent.Prefix")
         assert modules == []

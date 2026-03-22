@@ -55,7 +55,7 @@ find_related(
 
 // Browse module structure
 list_modules(
-  prefix: string = ""  // e.g., "Coq.Arith" or "mathcomp.algebra"
+  prefix: string = ""  // e.g., "Coq.Arith", "Corelib.Arith", or "mathcomp.algebra"
 ) → Module[]
 ```
 

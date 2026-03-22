@@ -34,7 +34,7 @@ Navigate the dependency graph from a known declaration. Supports relations: `use
 
 ### list_modules
 
-Browse the module hierarchy. Accepts a prefix (e.g., `Coq.Arith`, `mathcomp.algebra`) and returns child modules with declaration counts.
+Browse the module hierarchy. Accepts a prefix (e.g., `Coq.Arith`, `Corelib.Arith`, `mathcomp.algebra`) and returns child modules with declaration counts. Both the legacy `Coq.*` and modern `Corelib.*` prefixes are accepted for standard library modules — the tool resolves aliases transparently.
 
 ## Design Rationale
 
@@ -143,6 +143,7 @@ All tools return structured error responses rather than empty results when somet
 **Stability:** Stable
 
 - GIVEN an indexed library WHEN `list_modules` is called with a module prefix (e.g., `Coq.Arith`, `mathcomp.algebra`) THEN matching module names and their declaration counts are returned
+- GIVEN a prefix using the modern `Corelib.*` namespace (e.g., `Corelib.Arith`) WHEN `list_modules` is called THEN the prefix is resolved to its canonical form and matching modules are returned, identical to querying with the legacy `Coq.Arith` prefix
 - GIVEN an empty prefix WHEN `list_modules` is called THEN all top-level modules are returned
 
 ### Natural Language Lemma Search

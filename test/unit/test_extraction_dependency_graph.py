@@ -808,3 +808,234 @@ class TestImportDependencies:
 
         inserted = import_dependencies(deps_path, db_path)
         assert inserted == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DOT format import (specification/extraction.md §4.6 — DOT format)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _write_dot_file(path: Path, edges: list[tuple[str, str]]) -> None:
+    """Write a coq-dpdgraph-style DOT file."""
+    with open(path, "w") as f:
+        f.write("digraph dependencies {\n")
+        for src, dst in edges:
+            f.write(f'  "{src}" -> "{dst}";\n')
+        f.write("}\n")
+
+
+class TestImportDependenciesDotFormat:
+    """Tests for DOT format import (spec §4.6 — DOT format)."""
+
+    def test_dot_import_inserts_edges(self, tmp_path):
+        from Poule.extraction.dependency_graph import import_dependencies
+
+        db_path = tmp_path / "index.db"
+        _create_test_index(db_path, [
+            ("Coq.Arith.PeanoNat.Nat.add_assoc", "Coq.Arith.PeanoNat"),
+            ("Coq.Arith.PeanoNat.Nat.add_comm", "Coq.Arith.PeanoNat"),
+        ])
+        dot_path = tmp_path / "deps.dot"
+        _write_dot_file(dot_path, [
+            ("Coq.Arith.PeanoNat.Nat.add_assoc", "Coq.Arith.PeanoNat.Nat.add_comm"),
+        ])
+
+        inserted = import_dependencies(dot_path, db_path, source_format="dot")
+        assert inserted == 1
+
+        conn = sqlite3.connect(str(db_path))
+        rows = conn.execute(
+            "SELECT src, dst, relation FROM dependencies"
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0][2] == "uses"
+        conn.close()
+
+    def test_dot_import_auto_detects_format_from_extension(self, tmp_path):
+        from Poule.extraction.dependency_graph import import_dependencies
+
+        db_path = tmp_path / "index.db"
+        _create_test_index(db_path, [
+            ("Coq.A", "Coq"),
+            ("Coq.B", "Coq"),
+        ])
+        dot_path = tmp_path / "deps.dot"
+        _write_dot_file(dot_path, [("Coq.A", "Coq.B")])
+
+        inserted = import_dependencies(dot_path, db_path)
+        assert inserted == 1
+
+    def test_dot_import_skips_unresolvable_endpoints(self, tmp_path):
+        from Poule.extraction.dependency_graph import import_dependencies
+
+        db_path = tmp_path / "index.db"
+        _create_test_index(db_path, [
+            ("Coq.A", "Coq"),
+        ])
+        dot_path = tmp_path / "deps.dot"
+        _write_dot_file(dot_path, [
+            ("Coq.A", "Unknown.B"),
+            ("Unknown.C", "Coq.A"),
+        ])
+
+        inserted = import_dependencies(dot_path, db_path, source_format="dot")
+        assert inserted == 0
+
+    def test_dot_import_handles_multiple_edges(self, tmp_path):
+        from Poule.extraction.dependency_graph import import_dependencies
+
+        db_path = tmp_path / "index.db"
+        _create_test_index(db_path, [
+            ("Coq.A", "Coq"),
+            ("Coq.B", "Coq"),
+            ("Coq.C", "Coq"),
+        ])
+        dot_path = tmp_path / "deps.dot"
+        _write_dot_file(dot_path, [
+            ("Coq.A", "Coq.B"),
+            ("Coq.A", "Coq.C"),
+            ("Coq.B", "Coq.C"),
+        ])
+
+        inserted = import_dependencies(dot_path, db_path, source_format="dot")
+        assert inserted == 3
+
+    def test_dot_import_is_idempotent(self, tmp_path):
+        from Poule.extraction.dependency_graph import import_dependencies
+
+        db_path = tmp_path / "index.db"
+        _create_test_index(db_path, [
+            ("Coq.A", "Coq"),
+            ("Coq.B", "Coq"),
+        ])
+        dot_path = tmp_path / "deps.dot"
+        _write_dot_file(dot_path, [("Coq.A", "Coq.B")])
+
+        import_dependencies(dot_path, db_path, source_format="dot")
+        import_dependencies(dot_path, db_path, source_format="dot")
+
+        conn = sqlite3.connect(str(db_path))
+        rows = conn.execute("SELECT COUNT(*) FROM dependencies").fetchone()
+        assert rows[0] == 1
+        conn.close()
+
+    def test_dot_import_skips_self_loops(self, tmp_path):
+        from Poule.extraction.dependency_graph import import_dependencies
+
+        db_path = tmp_path / "index.db"
+        _create_test_index(db_path, [("Coq.A", "Coq")])
+        dot_path = tmp_path / "deps.dot"
+        _write_dot_file(dot_path, [("Coq.A", "Coq.A")])
+
+        inserted = import_dependencies(dot_path, db_path, source_format="dot")
+        assert inserted == 0
+
+    def test_dot_import_ignores_non_edge_lines(self, tmp_path):
+        """DOT files may contain node declarations, attributes, comments."""
+        from Poule.extraction.dependency_graph import import_dependencies
+
+        db_path = tmp_path / "index.db"
+        _create_test_index(db_path, [
+            ("Coq.A", "Coq"),
+            ("Coq.B", "Coq"),
+        ])
+        dot_path = tmp_path / "deps.dot"
+        with open(dot_path, "w") as f:
+            f.write("digraph dependencies {\n")
+            f.write("  // This is a comment\n")
+            f.write('  "Coq.A" [label="A"];\n')
+            f.write('  "Coq.A" -> "Coq.B";\n')
+            f.write("  rankdir=LR;\n")
+            f.write("}\n")
+
+        inserted = import_dependencies(dot_path, db_path, source_format="dot")
+        assert inserted == 1
+
+    def test_dot_import_uses_suffix_resolution(self, tmp_path):
+        from Poule.extraction.dependency_graph import import_dependencies
+
+        db_path = tmp_path / "index.db"
+        _create_test_index(db_path, [
+            ("Coq.Arith.PeanoNat.Nat.add_comm", "Coq.Arith.PeanoNat"),
+            ("Coq.Arith.PeanoNat.Nat.add_0_r", "Coq.Arith.PeanoNat"),
+        ])
+        dot_path = tmp_path / "deps.dot"
+        _write_dot_file(dot_path, [
+            ("Nat.add_comm", "Nat.add_0_r"),
+        ])
+
+        inserted = import_dependencies(dot_path, db_path, source_format="dot")
+        assert inserted == 1
+
+    def test_dot_import_returns_count(self, tmp_path):
+        """Spec §4.6: returns count of edges inserted."""
+        from Poule.extraction.dependency_graph import import_dependencies
+
+        db_path = tmp_path / "index.db"
+        _create_test_index(db_path, [
+            ("Coq.A", "Coq"),
+            ("Coq.B", "Coq"),
+            ("Coq.C", "Coq"),
+        ])
+        dot_path = tmp_path / "deps.dot"
+        _write_dot_file(dot_path, [
+            ("Coq.A", "Coq.B"),
+            ("Coq.A", "Unknown"),  # unresolvable — skipped
+            ("Coq.B", "Coq.C"),
+        ])
+
+        inserted = import_dependencies(dot_path, db_path, source_format="dot")
+        assert inserted == 2
+
+
+class TestImportDependenciesFormatDetection:
+    """Tests for source format auto-detection (spec §4.6)."""
+
+    def test_jsonl_extension_detected(self, tmp_path):
+        from Poule.extraction.dependency_graph import import_dependencies
+
+        db_path = tmp_path / "index.db"
+        _create_test_index(db_path, [
+            ("Coq.A", "Coq"),
+            ("Coq.B", "Coq"),
+        ])
+        deps_path = tmp_path / "deps.jsonl"
+        _write_dep_graph(deps_path, [{
+            "theorem_name": "Coq.A",
+            "source_file": "A.v",
+            "project_id": "test",
+            "depends_on": [{"name": "Coq.B", "kind": "definition"}],
+        }])
+
+        inserted = import_dependencies(deps_path, db_path)
+        assert inserted == 1
+
+    def test_json_extension_detected_as_jsonl(self, tmp_path):
+        from Poule.extraction.dependency_graph import import_dependencies
+
+        db_path = tmp_path / "index.db"
+        _create_test_index(db_path, [
+            ("Coq.A", "Coq"),
+            ("Coq.B", "Coq"),
+        ])
+        deps_path = tmp_path / "deps.json"
+        _write_dep_graph(deps_path, [{
+            "theorem_name": "Coq.A",
+            "source_file": "A.v",
+            "project_id": "test",
+            "depends_on": [{"name": "Coq.B", "kind": "definition"}],
+        }])
+
+        inserted = import_dependencies(deps_path, db_path)
+        assert inserted == 1
+
+    def test_unrecognized_extension_raises_error(self, tmp_path):
+        from Poule.extraction.dependency_graph import import_dependencies
+
+        db_path = tmp_path / "index.db"
+        _create_test_index(db_path, [("Coq.A", "Coq")])
+        deps_path = tmp_path / "deps.xyz"
+        deps_path.write_text("")
+
+        with pytest.raises(ValueError, match="Unrecognized"):
+            import_dependencies(deps_path, db_path)

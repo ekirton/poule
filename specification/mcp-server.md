@@ -94,7 +94,7 @@ All `find_related` results receive `score = 1.0` (relationship-based, not scored
 #### list_modules(prefix="")
 
 - REQUIRES: `prefix` is a string (may be empty).
-- ENSURES: Returns `Module[]` for all modules matching the prefix.
+- ENSURES: Returns `Module[]` for all modules matching the prefix. If no modules match the given prefix, retries with the aliased prefix via `alias_prefix` (see [pipeline.md](pipeline.md) §4.1.1). Both `Coq.*` and `Corelib.*` prefixes are accepted for standard library modules. Results are deduplicated by module name.
 
 ### 4.3 Proof Interaction Tool Signatures
 

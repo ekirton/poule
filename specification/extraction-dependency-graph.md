@@ -113,15 +113,23 @@ When the `--deps` flag is passed to the extraction CLI, the campaign orchestrato
 #### Index import mode
 
 ```
-import_dependencies(dependency_graph_path, db_path)
+import_dependencies(dependency_graph_path, db_path, source_format=None)
 ```
 
-- REQUIRES: `dependency_graph_path` is a valid JSON Lines file of DependencyEntry records. `db_path` is a path to an existing index database.
-- ENSURES: For each DependencyEntry, resolves `theorem_name` and each `depends_on[].name` to declaration IDs in the index. Inserts `(src_id, dst_id, "uses")` edges into the `dependencies` table. Existing edges are skipped (idempotent via primary key). Unresolvable names are skipped silently.
+- REQUIRES: `dependency_graph_path` is a valid dependency graph file (JSON Lines or DOT format). `db_path` is a path to an existing index database.
+- ENSURES: Parses the dependency graph, resolves names to declaration IDs in the index, and inserts `(src_id, dst_id, "uses")` edges into the `dependencies` table. Existing edges are skipped (idempotent via primary key). Unresolvable names are skipped silently. Returns the count of edges inserted.
 - MAINTAINS: Existing index data (declarations, WL vectors, FTS, symbol frequencies) is not modified.
+
+Accepts two source formats:
+- **JSON Lines** (`source_format="jsonl"` or `.jsonl`/`.json` extension): DependencyEntry records from extraction campaigns
+- **DOT** (`source_format="dot"` or `.dot` extension): coq-dpdgraph output with directed edges between fully qualified names
 
 > **Given** a dependency graph file and an index database both containing `Nat.add_comm` and `Nat.add_0_r`
 > **When** `import_dependencies` is called with a DependencyEntry linking them
+> **Then** a `"uses"` edge is inserted into the `dependencies` table
+
+> **Given** a DOT file from coq-dpdgraph containing `"Nat.add_comm" -> "Nat.add_0_r"` and an index containing both
+> **When** `import_dependencies` is called with `source_format="dot"`
 > **Then** a `"uses"` edge is inserted into the `dependencies` table
 
 See [extraction.md §4.6](extraction.md) for the full behavioral specification.

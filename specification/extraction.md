@@ -276,15 +276,31 @@ Unresolved targets (no match after all strategies) are silently skipped — they
 
 The suffix reverse lookup table shall be built once per `resolve_and_insert_dependencies` call from all FQNs in the name-to-ID map.
 
-### 4.6 Premise-Based Dependency Import
+### 4.6 Dependency Import
 
-#### import_dependencies(dependency_graph_path, db_path)
+#### import_dependencies(dependency_graph_path, db_path, source_format=None)
 
-- REQUIRES: `db_path` is a path to an existing index database created by `run_extraction`. `dependency_graph_path` is a path to a JSON Lines file of DependencyEntry records (produced by `extract_dependency_graph` as specified in [extraction-dependency-graph.md](extraction-dependency-graph.md)).
-- ENSURES: For each DependencyEntry, the pipeline resolves `theorem_name` and each `depends_on[].name` to declaration IDs in the existing index. For each resolved pair, it inserts an edge `(src_id, dst_id, "uses")` into the `dependencies` table. Edges already present (from prior import or from Pass 2) are skipped via the `(src, dst, relation)` primary key constraint. Unresolvable names (not in the index) are silently skipped.
+- REQUIRES: `db_path` is a path to an existing index database created by `run_extraction`. `dependency_graph_path` is a path to a dependency graph file. `source_format` is one of `"jsonl"`, `"dot"`, or `None`.
+- ENSURES: Parses the dependency graph file according to the source format, resolves names to declaration IDs in the index, and inserts `(src_id, dst_id, "uses")` edges into the `dependencies` table. Edges already present (from prior import or from Pass 2) are skipped via the `(src, dst, relation)` primary key constraint. Unresolvable names (not in the index) are silently skipped. Returns the count of edges inserted.
 - MAINTAINS: The existing index data (declarations, WL vectors, FTS, symbol frequencies) is not modified. Only the `dependencies` table gains new rows.
 
 This import provides **proof-body-level** theorem-to-theorem dependency edges that cannot be obtained from `.vo`-only analysis. It complements the three Pass 2 sources (tree-based, `Print Assumptions`, symbol-set cross-referencing), which capture only type-signature-level and axiom-level dependencies.
+
+#### Source format detection
+
+When `source_format` is `None`, the format shall be inferred from the file extension: `.dot` → `"dot"`, `.jsonl` or `.json` → `"jsonl"`. When the extension is unrecognized, the system shall return an `INVALID_INPUT` error.
+
+#### JSON Lines format (`"jsonl"`)
+
+The file shall contain one DependencyEntry JSON object per line (produced by `extract_dependency_graph` as specified in [extraction-dependency-graph.md](extraction-dependency-graph.md)). For each DependencyEntry, the pipeline resolves `theorem_name` to a source declaration ID and each `depends_on[].name` to a destination declaration ID, then inserts one edge per resolved pair.
+
+#### DOT format (`"dot"`)
+
+The file shall be a Graphviz DOT file produced by coq-dpdgraph (`dpdgraph` or `dpd2dot`). The pipeline shall parse directed edges in the format `"src_name" -> "dst_name"` and resolve both endpoints to declaration IDs in the index. Lines that are not directed edges (node declarations, attributes, comments, graph headers/footers) are ignored.
+
+> **Given** a DOT file containing `"Coq.Arith.PeanoNat.Nat.add_assoc" -> "Coq.Arith.PeanoNat.Nat.add_comm"` and an index containing both declarations,
+> **When** `import_dependencies` is called with `source_format="dot"`,
+> **Then** a `(add_assoc_id, add_comm_id, "uses")` edge is inserted into the `dependencies` table.
 
 #### Name resolution
 
@@ -301,6 +317,10 @@ The same multi-strategy resolver used in Pass 2 (§4.5) shall be reused: exact m
 > **Given** `import_dependencies` is called twice on the same data,
 > **When** the second call executes,
 > **Then** no duplicate edges are inserted (idempotent due to primary key constraint).
+
+> **Given** a DOT file with 10,000 edges where 8,000 endpoints resolve and 2,000 do not,
+> **When** `import_dependencies` is called,
+> **Then** 8,000 edges are inserted, 2,000 are skipped, and the returned count is 8,000.
 
 ### 4.7 Post-Processing
 

@@ -243,13 +243,14 @@ class TestExtractImports:
 # ---------------------------------------------------------------------------
 
 class TestExtractFilePrelude:
-    """_extract_file_prelude extracts all vernacular up to the proof target.
+    """_extract_file_prelude loads the entire .v file content.
 
     Spec §4.4.1 step 2: The subprocess loads the session's file context —
-    all vernacular commands from the .v file that precede the proof target.
+    all vernacular commands from the entire .v file — so that vernacular
+    introspection commands can reference any definition in the file.
     """
 
-    def test_extracts_everything_before_proof_target(self, tmp_path):
+    def test_loads_entire_file_including_proof_target_and_beyond(self, tmp_path):
         from Poule.session.manager import _extract_file_prelude
 
         v_file = tmp_path / "test.v"
@@ -265,6 +266,9 @@ class TestExtractFilePrelude:
             "Proof.\n"
             "  reflexivity.\n"
             "Qed.\n"
+            "\n"
+            "Lemma after_target : True.\n"
+            "Proof. exact I. Qed.\n"
         )
 
         result = _extract_file_prelude(str(v_file), "target")
@@ -272,10 +276,12 @@ class TestExtractFilePrelude:
         assert "From Coq Require Import PeanoNat." in result
         assert "Lemma helper" in result
         assert "Definition double" in result
-        # The proof target line itself should NOT be included
-        assert "Lemma target" not in result
+        # Proof target and definitions after it are included
+        assert "Lemma target" in result
+        assert "Lemma after_target" in result
 
-    def test_includes_prior_proofs(self, tmp_path):
+    def test_includes_all_definitions_for_multi_theorem_files(self, tmp_path):
+        """Ensures compare_assumptions can see all file-local theorems."""
         from Poule.session.manager import _extract_file_prelude
 
         v_file = tmp_path / "test.v"
@@ -285,13 +291,16 @@ class TestExtractFilePrelude:
             "\n"
             "Lemma second : True.\n"
             "Proof. exact I. Qed.\n"
+            "\n"
+            "Lemma third : True.\n"
+            "Proof. exact I. Qed.\n"
         )
 
-        result = _extract_file_prelude(str(v_file), "second")
+        result = _extract_file_prelude(str(v_file), "first")
 
         assert "Lemma first" in result
-        assert "Proof. exact I. Qed." in result
-        assert "Lemma second" not in result
+        assert "Lemma second" in result
+        assert "Lemma third" in result
 
     def test_no_proof_name_returns_imports_only(self, tmp_path):
         from Poule.session.manager import _extract_file_prelude
@@ -330,24 +339,8 @@ class TestExtractFilePrelude:
 
         assert result == ""
 
-    def test_handles_theorem_keyword(self, tmp_path):
-        from Poule.session.manager import _extract_file_prelude
-
-        v_file = tmp_path / "test.v"
-        v_file.write_text(
-            "Definition x := 1.\n"
-            "Theorem my_thm : x = 1.\n"
-            "Proof. reflexivity. Qed.\n"
-        )
-
-        result = _extract_file_prelude(str(v_file), "my_thm")
-
-        assert "Definition x" in result
-        assert "Theorem my_thm" not in result
-
-    def test_handles_various_proof_starters(self, tmp_path):
-        """All proof-starting keywords: Lemma, Theorem, Proposition, Corollary,
-        Example, Fact, Remark, Definition, Fixpoint, CoFixpoint."""
+    def test_loads_entire_file_for_any_keyword(self, tmp_path):
+        """All proof-starting keywords load the full file."""
         from Poule.session.manager import _extract_file_prelude
 
         for keyword in ["Lemma", "Theorem", "Proposition", "Corollary",
@@ -357,12 +350,14 @@ class TestExtractFilePrelude:
                 "Definition setup := 42.\n"
                 f"{keyword} target : True.\n"
                 "Proof. exact I. Qed.\n"
+                "Definition after := 99.\n"
             )
 
             result = _extract_file_prelude(str(v_file), "target")
 
             assert "Definition setup" in result, f"Failed for keyword {keyword}"
-            assert f"{keyword} target" not in result, f"Failed for keyword {keyword}"
+            assert f"{keyword} target" in result, f"Failed for keyword {keyword}"
+            assert "Definition after" in result, f"Failed for keyword {keyword}"
 
 
 # ---------------------------------------------------------------------------

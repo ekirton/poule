@@ -511,6 +511,46 @@ class TestResolveQuerySymbols:
         assert "Nat.mul" in resolved
 
 
+class TestAliasPrefix:
+    """alias_prefix: bidirectional Coq ↔ Corelib prefix aliasing (§4.1.1)."""
+
+    def test_corelib_to_coq(self):
+        """Corelib.Arith → Coq.Arith."""
+        from Poule.pipeline.search import alias_prefix
+
+        assert alias_prefix("Corelib.Arith") == "Coq.Arith"
+
+    def test_coq_to_corelib(self):
+        """Coq.Init → Corelib.Init."""
+        from Poule.pipeline.search import alias_prefix
+
+        assert alias_prefix("Coq.Init") == "Corelib.Init"
+
+    def test_no_alias_for_other_prefix(self):
+        """mathcomp.algebra → None (no alias applies)."""
+        from Poule.pipeline.search import alias_prefix
+
+        assert alias_prefix("mathcomp.algebra") is None
+
+    def test_no_alias_for_empty_string(self):
+        """Empty string → None."""
+        from Poule.pipeline.search import alias_prefix
+
+        assert alias_prefix("") is None
+
+    def test_corelib_exact_prefix(self):
+        """'Corelib.' alone → 'Coq.'."""
+        from Poule.pipeline.search import alias_prefix
+
+        assert alias_prefix("Corelib.") == "Coq."
+
+    def test_coq_exact_prefix(self):
+        """'Coq.' alone → 'Corelib.'."""
+        from Poule.pipeline.search import alias_prefix
+
+        assert alias_prefix("Coq.") == "Corelib."
+
+
 class TestSearchBySymbols:
     """search_by_symbols resolves names then delegates to mepo_select."""
 
