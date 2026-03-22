@@ -87,7 +87,18 @@ Diagnose this error: Universe inconsistency: Cannot enforce Set < Set
 What are the universe constraints on vhead in examples/dependent.v?
 ```
 
+**Reveal hidden differences when terms look identical:**
+```
+Run Check my_lemma from examples/algebra.v with Set Printing All so I can see the implicit arguments
+```
+```
+Check my_lemma from examples/algebra.v with all implicit arguments visible
+```
+
 **Debug typeclass resolution failures:**
+```
+Open a proof session on measure_app_length in examples/typeclasses.v and trace typeclass resolution — which instances is Coq trying?
+```
 ```
 What instances are registered for the Proper typeclass?
 ```
@@ -128,15 +139,7 @@ What is the body of MathComp.ssrnat.leq?
 What Proper instances are registered for Rplus in Coquelicot?
 ```
 
-**Inspect hint databases:**
-```
-What lemmas are in the arith hint database?
-```
-
 **Browse module contents:**
-```
-What's in the Corelib.Arith module?
-```
 ```
 Give me an overview of the MathComp ssreflect sequence lemmas
 ```
@@ -221,12 +224,18 @@ I need an axiom-free way to do dependent destruction on this indexed type
 In examples/dependent.v, which hypotheses do I need to revert before destructing n in vhead_vcons?
 ```
 ```
+Generate the convoy pattern match term with the correct return clause for vhead in examples/dependent.v
+```
+```
 Explain the convoy pattern — why doesn't Coq automatically refine hypothesis types during case analysis?
 ```
 
 **Fix setoid rewriting errors:**
 ```
 setoid_rewrite fails with "Unable to satisfy the following constraints" — which Proper instance am I missing?
+```
+```
+Generate the Instance Proper declaration for list_union with list_equiv in examples/typeclasses.v
 ```
 ```
 rewrite can't find the subterm inside this forall — what should I do instead?
@@ -312,6 +321,11 @@ Compare auto, eauto, and typeclasses eauto on my current goal — which succeeds
 ```
 ```
 Open a proof session on add_comm_test in examples/automation.v — auto solved the goal but which lemma did it use? Show me the proof path and why it preferred that hint
+```
+
+**Trace typeclass resolution:**
+```
+Open a proof session on measure_app_length in examples/typeclasses.v and trace typeclass resolution — show me which instances were tried and why they failed
 ```
 
 **Inspect hint databases:**
