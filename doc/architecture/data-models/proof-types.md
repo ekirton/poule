@@ -110,6 +110,7 @@ A single entry in a proof trace, pairing a tactic (if any) with the resulting pr
 | `step_index` | non-negative integer | Required; 0 for initial state, 1..N for tactic steps |
 | `tactic` | text or null | Required; null for step 0 (initial state); the tactic string for steps 1..N |
 | `state` | ProofState | Required; the proof state after this step |
+| `duration_ms` | float or null | Required; null for step 0 (no tactic executed); wall-clock milliseconds for tactic execution at steps 1..N |
 
 ### Relationships
 

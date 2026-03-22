@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
@@ -291,7 +292,27 @@ class SessionManager:
                     STEP_OUT_OF_RANGE,
                     "No original script to trace",
                 )
-            await self._materialize_through(ss, ss.total_steps)
+            # Record which steps need replay so we can time them.
+            first_replayed = len(ss.step_history)
+            timing: dict[int, float] = {}
+            while len(ss.step_history) <= ss.total_steps:
+                next_idx = len(ss.step_history)
+                if next_idx > len(ss.original_script):
+                    break
+                tactic = ss.original_script[next_idx - 1]
+                t0 = time.monotonic()
+                new_state = await ss.coq_backend.execute_tactic(tactic)
+                elapsed_ms = (time.monotonic() - t0) * 1000.0
+                new_state = ProofState(
+                    schema_version=new_state.schema_version,
+                    session_id=ss.session_id,
+                    step_index=next_idx,
+                    is_complete=new_state.is_complete,
+                    focused_goal_index=new_state.focused_goal_index,
+                    goals=new_state.goals,
+                )
+                ss.step_history.append(new_state)
+                timing[next_idx] = elapsed_ms
             steps = []
             for i in range(ss.total_steps + 1):
                 tactic = None if i == 0 else ss.original_script[i - 1]
@@ -299,6 +320,7 @@ class SessionManager:
                     step_index=i,
                     tactic=tactic,
                     state=ss.step_history[i],
+                    duration_ms=timing.get(i),
                 ))
             return ProofTrace(
                 schema_version=1,

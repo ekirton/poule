@@ -175,9 +175,9 @@ Run `/run-e2e` to retest prompts and update this file.
 - **Status**: spec clarified (S4.2 REQUIRES, S7.2 error message), implementation updated to include goal text in error, tests added — re-run e2e to verify
 
 ### No profiling or timing tools (8.1–8.4, 8.7–8.9)
-- `extract_proof_trace` returns tactic steps but no timing data (no `duration`, `time_ms`, or similar field)
+- ~~`extract_proof_trace` returns tactic steps but no timing data (no `duration`, `time_ms`, or similar field)~~ **Fixed**: `extract_proof_trace` now returns `duration_ms` (wall-clock milliseconds) per tactic step for steps replayed during trace extraction; `null` for step 0 and already-cached steps
 - `coq_query` supports Check/Print/About/Locate/Search/Compute/Eval but not `Time`
 - `build_project` fails with `Object of type BuildSystem is not JSON serializable` (serialization bug) or `BUILD_SYSTEM_NOT_DETECTED`
 - `check_proof` (coqchk) reports `wall_time_ms` but only for the whole check, not per-lemma; also fails with load path issues for example files
 - `step_forward` treats Ltac macros (e.g., `my_crush`) as single opaque steps with no sub-tactic expansion
-- **Gap**: no MCP tool provides per-tactic timing, per-sentence compilation time, or Ltac call-tree profiling
+- **Remaining gap**: no MCP tool provides per-sentence compilation timing (`coqc -time`), `Qed` vs tactic time separation, or Ltac call-tree profiling — see `doc/future/profile-proof-mcp.md`

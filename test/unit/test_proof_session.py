@@ -573,6 +573,68 @@ class TestExtractTrace:
         assert trace.total_steps == 3
         assert len(trace.steps) == 4
 
+    async def test_trace_step0_has_null_duration(self):
+        """Spec §4.2: step 0 (initial state) has duration_ms = null."""
+        SessionManager = _import_manager()
+        states = [_make_stepped_state(i) for i in range(1, 4)]
+        states[-1] = _make_proof_state(step_index=3, is_complete=True)
+        backend = _make_mock_backend(
+            tactic_results=states,
+            original_script=["intro n.", "simpl.", "reflexivity."],
+        )
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, _ = await mgr.create_session("/file.v", "proof1")
+        trace = await mgr.extract_trace(sid)
+
+        assert trace.steps[0].duration_ms is None
+
+    async def test_trace_replayed_steps_have_duration(self):
+        """Spec §4.2: replayed steps have non-negative float duration_ms."""
+        SessionManager = _import_manager()
+        states = [_make_stepped_state(i) for i in range(1, 4)]
+        states[-1] = _make_proof_state(step_index=3, is_complete=True)
+        backend = _make_mock_backend(
+            tactic_results=states,
+            original_script=["intro n.", "simpl.", "reflexivity."],
+        )
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, _ = await mgr.create_session("/file.v", "proof1")
+        trace = await mgr.extract_trace(sid)
+
+        for step in trace.steps[1:]:
+            assert step.duration_ms is not None
+            assert isinstance(step.duration_ms, float)
+            assert step.duration_ms >= 0.0
+
+    async def test_trace_cached_steps_have_null_duration(self):
+        """Spec §4.2: already-cached steps have duration_ms = null."""
+        SessionManager = _import_manager()
+        state1 = _make_stepped_state(1)
+        state2 = _make_stepped_state(2)
+        state3 = _make_proof_state(step_index=3, is_complete=True)
+        backend = _make_mock_backend(
+            tactic_results=[state1, state2, state3],
+            original_script=["intro n.", "simpl.", "reflexivity."],
+        )
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, _ = await mgr.create_session("/file.v", "proof1")
+        # Step forward once — this caches step 1 without timing
+        await mgr.submit_tactic(sid, "intro n.")
+
+        trace = await mgr.extract_trace(sid)
+        # Step 0: initial state → null
+        assert trace.steps[0].duration_ms is None
+        # Step 1: was cached by submit_tactic → null
+        assert trace.steps[1].duration_ms is None
+        # Steps 2-3: replayed during extract_trace → non-negative float
+        for step in trace.steps[2:]:
+            assert step.duration_ms is not None
+            assert isinstance(step.duration_ms, float)
+            assert step.duration_ms >= 0.0
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # §4.3 Tactic Dispatch — submit_tactic

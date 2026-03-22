@@ -38,6 +38,7 @@ class TraceStep:
     step_index: int
     tactic: Optional[str]
     state: ProofState
+    duration_ms: Optional[float] = None
 
 
 @dataclass

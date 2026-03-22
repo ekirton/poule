@@ -196,8 +196,12 @@ extract_proof_trace(session_id)
   ├─ Ensure the full proof has been stepped through:
   │    If step_history length < total_steps + 1:
   │      Replay original script from last cached step to end
+  │      Record wall-clock time (monotonic) for each tactic execution
   │
-  ├─ Assemble ProofTrace from step_history + original_script
+  ├─ Assemble ProofTrace from step_history + original_script + timing
+  │    step 0: duration_ms = null (initial state, no tactic)
+  │    steps 1..N: duration_ms = wall-clock ms for that tactic's execution
+  │    Already-cached steps that were not timed: duration_ms = null
   │
   └─ Return ProofTrace
 ```
