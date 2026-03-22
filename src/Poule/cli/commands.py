@@ -1,4 +1,4 @@
-"""CLI subcommands for searching, proof replay, and batch extraction."""
+"""CLI subcommands for searching, proof replay, batch extraction, and neural training."""
 
 from __future__ import annotations
 
@@ -32,6 +32,11 @@ from Poule.cli.download import download_index
 from Poule.extraction.campaign import run_campaign
 from Poule.extraction.dependency_graph import extract_dependency_graph
 from Poule.extraction.reporting import generate_quality_report
+from Poule.neural.training.errors import (
+    CheckpointNotFoundError,
+    InsufficientDataError,
+    NeuralTrainingError,
+)
 
 
 def _to_search_result(row: dict, score: float = 1.0) -> SearchResult:
@@ -591,8 +596,333 @@ def _format_quality_report_human(report) -> str:
 
 
 # ---------------------------------------------------------------------------
+# train
+# ---------------------------------------------------------------------------
+
+
+@cli.command("train")
+@_db_option
+@click.argument("data", nargs=-1, required=True)
+@click.option("--output", required=True, type=click.Path(), help="Path for model checkpoint output.")
+@click.option("--batch-size", default=None, type=int, help="Training batch size (default: 256).")
+@click.option("--learning-rate", default=None, type=float, help="Learning rate (default: 2e-5).")
+@click.option("--epochs", default=None, type=int, help="Max training epochs (default: 20).")
+@click.option("--patience", default=None, type=int, help="Early stopping patience (default: 3).")
+def cmd_train(
+    db: str,
+    data: tuple[str, ...],
+    output: str,
+    batch_size: int | None,
+    learning_rate: float | None,
+    epochs: int | None,
+    patience: int | None,
+):
+    """Train a bi-encoder retrieval model from extracted proof trace data."""
+    from Poule.neural.training.data import TrainingDataLoader
+    from Poule.neural.training.trainer import BiEncoderTrainer
+
+    jsonl_paths = _validate_input_files(data)
+
+    click.echo("Loading training data...", err=True)
+    dataset = TrainingDataLoader.load(jsonl_paths, Path(db))
+    click.echo(
+        f"  train={len(dataset.train)}, val={len(dataset.val)}, "
+        f"test={len(dataset.test)}, premises={len(dataset.premise_corpus)}",
+        err=True,
+    )
+
+    hp = {}
+    if batch_size is not None:
+        hp["batch_size"] = batch_size
+    if learning_rate is not None:
+        hp["learning_rate"] = learning_rate
+    if epochs is not None:
+        hp["max_epochs"] = epochs
+    if patience is not None:
+        hp["early_stopping_patience"] = patience
+
+    try:
+        trainer = BiEncoderTrainer()
+        trainer.train(dataset, Path(output), hyperparams=hp or None)
+    except InsufficientDataError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+    except NeuralTrainingError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    click.echo(f"Training complete. Checkpoint saved to: {output}", err=True)
+
+
+# ---------------------------------------------------------------------------
+# fine-tune
+# ---------------------------------------------------------------------------
+
+
+@cli.command("fine-tune")
+@_db_option
+@click.option("--checkpoint", required=True, type=click.Path(exists=True), help="Pre-trained model checkpoint.")
+@click.argument("data", nargs=-1, required=True)
+@click.option("--output", required=True, type=click.Path(), help="Path for fine-tuned checkpoint output.")
+@click.option("--learning-rate", default=None, type=float, help="Learning rate (default: 5e-6).")
+@click.option("--epochs", default=None, type=int, help="Max training epochs (default: 10).")
+def cmd_fine_tune(
+    db: str,
+    checkpoint: str,
+    data: tuple[str, ...],
+    output: str,
+    learning_rate: float | None,
+    epochs: int | None,
+):
+    """Fine-tune a pre-trained model on project-specific proof trace data."""
+    from Poule.neural.training.data import TrainingDataLoader
+    from Poule.neural.training.trainer import BiEncoderTrainer
+
+    jsonl_paths = _validate_input_files(data)
+
+    click.echo("Loading training data...", err=True)
+    dataset = TrainingDataLoader.load(jsonl_paths, Path(db))
+    click.echo(
+        f"  train={len(dataset.train)}, val={len(dataset.val)}, "
+        f"premises={len(dataset.premise_corpus)}",
+        err=True,
+    )
+
+    hp = {}
+    if learning_rate is not None:
+        hp["learning_rate"] = learning_rate
+    if epochs is not None:
+        hp["max_epochs"] = epochs
+
+    try:
+        trainer = BiEncoderTrainer()
+        trainer.fine_tune(
+            Path(checkpoint), dataset, Path(output), hyperparams=hp or None,
+        )
+    except NeuralTrainingError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    click.echo(f"Fine-tuning complete. Checkpoint saved to: {output}", err=True)
+
+
+# ---------------------------------------------------------------------------
+# evaluate
+# ---------------------------------------------------------------------------
+
+
+@cli.command("evaluate")
+@_db_option
+@_json_option
+@click.option("--checkpoint", required=True, type=click.Path(exists=True), help="Model checkpoint to evaluate.")
+@click.option("--test-data", required=True, type=click.Path(exists=True), help="JSON Lines test data file.")
+def cmd_evaluate(db: str, json_mode: bool, checkpoint: str, test_data: str):
+    """Evaluate a trained model's retrieval quality on a held-out test set."""
+    from Poule.neural.training.data import TrainingDataLoader
+    from Poule.neural.training.evaluator import RetrievalEvaluator
+
+    click.echo("Loading test data...", err=True)
+    dataset = TrainingDataLoader.load([Path(test_data)], Path(db))
+    test_pairs = dataset.test
+    if not test_pairs:
+        # If no pairs land in test split, use all pairs
+        test_pairs = dataset.train + dataset.val + dataset.test
+    click.echo(f"  {len(test_pairs)} test pairs", err=True)
+
+    try:
+        report = RetrievalEvaluator.evaluate(Path(checkpoint), test_pairs, Path(db))
+    except NeuralTrainingError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    if json_mode:
+        click.echo(_format_evaluation_report_json(report))
+    else:
+        click.echo(_format_evaluation_report_human(report))
+
+
+# ---------------------------------------------------------------------------
+# compare
+# ---------------------------------------------------------------------------
+
+
+@cli.command("compare")
+@_db_option
+@_json_option
+@click.option("--checkpoint", required=True, type=click.Path(exists=True), help="Model checkpoint to compare.")
+@click.option("--test-data", required=True, type=click.Path(exists=True), help="JSON Lines test data file.")
+def cmd_compare(db: str, json_mode: bool, checkpoint: str, test_data: str):
+    """Compare neural, symbolic, and union retrieval on a test set."""
+    from Poule.neural.training.data import TrainingDataLoader
+    from Poule.neural.training.evaluator import RetrievalEvaluator
+
+    click.echo("Loading test data...", err=True)
+    dataset = TrainingDataLoader.load([Path(test_data)], Path(db))
+    test_pairs = dataset.test
+    if not test_pairs:
+        test_pairs = dataset.train + dataset.val + dataset.test
+    click.echo(f"  {len(test_pairs)} test pairs", err=True)
+
+    try:
+        report = RetrievalEvaluator.compare(Path(checkpoint), test_pairs, Path(db))
+    except NeuralTrainingError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    if json_mode:
+        click.echo(_format_comparison_report_json(report))
+    else:
+        click.echo(_format_comparison_report_human(report))
+
+
+# ---------------------------------------------------------------------------
+# quantize
+# ---------------------------------------------------------------------------
+
+
+@cli.command("quantize")
+@click.option("--checkpoint", required=True, type=click.Path(exists=True), help="Model checkpoint to quantize.")
+@click.option("--output", required=True, type=click.Path(), help="Path for INT8 ONNX output.")
+def cmd_quantize(checkpoint: str, output: str):
+    """Convert a trained model checkpoint to INT8-quantized ONNX."""
+    from Poule.neural.training.quantizer import ModelQuantizer
+
+    click.echo("Quantizing model...", err=True)
+    try:
+        ModelQuantizer.quantize(Path(checkpoint), Path(output))
+    except NeuralTrainingError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    click.echo(f"Quantized model saved to: {output}", err=True)
+
+
+# ---------------------------------------------------------------------------
+# validate-training-data
+# ---------------------------------------------------------------------------
+
+
+@cli.command("validate-training-data")
+@_json_option
+@click.argument("data", nargs=-1, required=True)
+def cmd_validate_training_data(json_mode: bool, data: tuple[str, ...]):
+    """Check extracted training data for quality issues before training."""
+    from Poule.neural.training.validator import TrainingDataValidator
+
+    jsonl_paths = _validate_input_files(data)
+
+    report = TrainingDataValidator.validate(jsonl_paths)
+
+    if json_mode:
+        click.echo(_format_validation_report_json(report))
+    else:
+        click.echo(_format_validation_report_human(report))
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _validate_input_files(data: tuple[str, ...]) -> list[Path]:
+    """Validate that all input data files exist. Exit on missing files."""
+    paths = []
+    for d in data:
+        p = Path(d)
+        if not p.is_file():
+            click.echo(f"Input file not found: {d}", err=True)
+            sys.exit(1)
+        paths.append(p)
+    return paths
+
+
+def _format_evaluation_report_json(report) -> str:
+    """Format EvaluationReport as JSON."""
+    from dataclasses import asdict
+
+    return json.dumps(asdict(report), separators=(",", ":"))
+
+
+def _format_evaluation_report_human(report) -> str:
+    """Format EvaluationReport as human-readable text."""
+    lines = [
+        "Evaluation Report",
+        "=================",
+        f"Test examples:            {report.test_count}",
+        f"Mean premises per state:  {report.mean_premises_per_state:.2f}",
+        f"Mean query latency:       {report.mean_query_latency_ms:.1f} ms",
+        "",
+        f"Recall@1:   {report.recall_at_1:.4f}",
+        f"Recall@10:  {report.recall_at_10:.4f}",
+        f"Recall@32:  {report.recall_at_32:.4f}",
+        f"MRR:        {report.mrr:.4f}",
+    ]
+    for w in report.warnings:
+        lines.append(f"\nWARNING: {w}")
+    return "\n".join(lines)
+
+
+def _format_comparison_report_json(report) -> str:
+    """Format ComparisonReport as JSON."""
+    from dataclasses import asdict
+
+    return json.dumps(asdict(report), separators=(",", ":"))
+
+
+def _format_comparison_report_human(report) -> str:
+    """Format ComparisonReport as human-readable text."""
+    lines = [
+        "Comparison Report",
+        "=================",
+        f"Neural R@32:     {report.neural_recall_32:.4f}",
+        f"Symbolic R@32:   {report.symbolic_recall_32:.4f}",
+        f"Union R@32:      {report.union_recall_32:.4f}",
+        "",
+        f"Relative improvement:  {report.relative_improvement:.1%}",
+        f"Overlap:               {report.overlap_pct:.1%}",
+        f"Neural exclusive:      {report.neural_exclusive_pct:.1%}",
+        f"Symbolic exclusive:    {report.symbolic_exclusive_pct:.1%}",
+    ]
+    for w in report.warnings:
+        lines.append(f"\nWARNING: {w}")
+    return "\n".join(lines)
+
+
+def _format_validation_report_json(report) -> str:
+    """Format ValidationReport as JSON."""
+    obj = {
+        "total_pairs": report.total_pairs,
+        "empty_premise_pairs": report.empty_premise_pairs,
+        "malformed_pairs": report.malformed_pairs,
+        "unique_premises": report.unique_premises,
+        "unique_states": report.unique_states,
+        "top_premises": [
+            {"name": name, "count": count} for name, count in report.top_premises
+        ],
+        "warnings": report.warnings,
+    }
+    return json.dumps(obj, separators=(",", ":"))
+
+
+def _format_validation_report_human(report) -> str:
+    """Format ValidationReport as human-readable text."""
+    lines = [
+        "Data Validation Report",
+        "======================",
+        f"Total pairs:          {report.total_pairs}",
+        f"Empty premise pairs:  {report.empty_premise_pairs}",
+        f"Malformed pairs:      {report.malformed_pairs}",
+        f"Unique premises:      {report.unique_premises}",
+        f"Unique states:        {report.unique_states}",
+    ]
+    if report.top_premises:
+        lines.append("")
+        lines.append("Top premises:")
+        for name, count in report.top_premises:
+            lines.append(f"  {name:<40s} {count}")
+    for w in report.warnings:
+        lines.append(f"\nWARNING: {w}")
+    return "\n".join(lines)
 
 
 def _handle_index_error(exc: Exception) -> None:
