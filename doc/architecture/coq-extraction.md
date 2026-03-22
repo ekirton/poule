@@ -244,7 +244,7 @@ Both extraction passes report progress at per-declaration granularity, and each 
 The indexing command:
 1. Deletes any existing database file at the output path
 2. Detects the installed Coq/Rocq version and target library versions
-3. Collects declarations from all `.vo` files, then deduplicates by fully qualified name (keeps first occurrence; duplicates arise from module re-exports across `.vo` files)
+3. Collects declarations from all `.vo` files, then deduplicates by fully qualified name (keeps first occurrence; duplicates arise from module re-exports across `.vo` files). During deduplication, captures re-export aliases: when a canonical FQN appears from a `.vo` file whose module path differs from the FQN's own module prefix, the module-qualified short name is recorded as a re-export alias (e.g., `Coq.Lists.ListDef.map` found in `List.vo` → alias `Coq.Lists.List.map`). Aliases are stored in the index for suffix index enrichment at query time.
 4. Processes each unique declaration through the pipeline above
 5. Computes global symbol frequencies across all declarations
 6. Writes everything to a single SQLite database

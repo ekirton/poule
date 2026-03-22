@@ -22,12 +22,20 @@ class PipelineContext:
     parser: Any = None
 
 
-def _build_suffix_index(inverted_index: dict[str, set[int]]) -> dict[str, list[str]]:
+def _build_suffix_index(
+    inverted_index: dict[str, set[int]],
+    re_export_aliases: dict[str, str] | None = None,
+) -> dict[str, list[str]]:
     """Build a reverse lookup from dot-separated suffixes to FQNs.
 
     For each FQN like ``Coq.Init.Nat.add``, index all proper suffixes:
     ``Init.Nat.add``, ``Nat.add``, ``add``.  Ambiguous suffixes (matching
     multiple FQNs) retain all matches.
+
+    Re-export aliases contribute additional suffixes that map to the
+    **canonical** FQN (e.g., alias ``Coq.Lists.List.map`` → suffixes
+    ``Lists.List.map``, ``List.map``, ``map``, all pointing to
+    ``Coq.Lists.ListDef.map``).
     """
     suffix_index: dict[str, list[str]] = {}
     for fqn in inverted_index:
@@ -35,6 +43,16 @@ def _build_suffix_index(inverted_index: dict[str, set[int]]) -> dict[str, list[s
         for k in range(1, len(parts)):
             suffix = ".".join(parts[k:])
             suffix_index.setdefault(suffix, []).append(fqn)
+
+    if re_export_aliases:
+        for alias_fqn, canonical_fqn in re_export_aliases.items():
+            parts = alias_fqn.split(".")
+            for k in range(1, len(parts)):
+                suffix = ".".join(parts[k:])
+                entry = suffix_index.setdefault(suffix, [])
+                if canonical_fqn not in entry:
+                    entry.append(canonical_fqn)
+
     return suffix_index
 
 
@@ -67,7 +85,8 @@ def create_context(db_path: str) -> PipelineContext:
                 declaration_symbols[decl_id] = set()
             declaration_symbols[decl_id].add(symbol)
 
-    suffix_index = _build_suffix_index(inverted_index)
+    re_export_aliases = reader.load_re_export_aliases()
+    suffix_index = _build_suffix_index(inverted_index, re_export_aliases)
 
     return PipelineContext(
         reader=reader,

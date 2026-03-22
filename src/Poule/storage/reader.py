@@ -127,6 +127,17 @@ class IndexReader:
         ).fetchall()
         return {row[0]: row[1] for row in rows}
 
+    def load_re_export_aliases(self) -> dict[str, str]:
+        self._check_open()
+        try:
+            rows = self._conn.execute(
+                "SELECT alias_fqn, canonical_fqn FROM re_export_aliases"
+            ).fetchall()
+        except Exception:
+            # Table may not exist in older indexes
+            return {}
+        return {row[0]: row[1] for row in rows}
+
     def get_declaration(self, name: str) -> dict | None:
         self._check_open()
         row = self._conn.execute(

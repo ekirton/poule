@@ -278,6 +278,45 @@ class TestCreateContext:
         assert "Coq.Init.Logic.eq" in fqns
         assert "Coq.Arith.PeanoNat.Nat.eq" in fqns
 
+    @patch("Poule.pipeline.context.IndexReader")
+    def test_suffix_index_enriched_with_re_export_aliases(self, MockIndexReader):
+        """Re-export aliases contribute additional suffixes mapping to
+        the canonical FQN (spec §4.1 suffix index construction).
+
+        Alias: Coq.Lists.List.map → Coq.Lists.ListDef.map
+        Produces suffixes: Lists.List.map, List.map, map → all pointing
+        to Coq.Lists.ListDef.map."""
+        reader = _mock_reader()
+        # Add ListDef.map to the inverted index
+        reader.load_inverted_index.return_value["Coq.Lists.ListDef.map"] = {4}
+        # Add re-export alias
+        reader.load_re_export_aliases = MagicMock(
+            return_value={"Coq.Lists.List.map": "Coq.Lists.ListDef.map"}
+        )
+        MockIndexReader.return_value = reader
+
+        ctx = create_context("/tmp/test.db")
+
+        # "List.map" should be in the suffix index, mapping to the canonical FQN
+        assert "List.map" in ctx.suffix_index
+        assert "Coq.Lists.ListDef.map" in ctx.suffix_index["List.map"]
+        # "Lists.List.map" should also be present
+        assert "Lists.List.map" in ctx.suffix_index
+        assert "Coq.Lists.ListDef.map" in ctx.suffix_index["Lists.List.map"]
+
+    @patch("Poule.pipeline.context.IndexReader")
+    def test_suffix_index_no_aliases_when_reader_has_none(self, MockIndexReader):
+        """When the reader returns empty aliases, suffix index uses only
+        inverted index keys (backward compatibility)."""
+        reader = _mock_reader()
+        reader.load_re_export_aliases = MagicMock(return_value={})
+        MockIndexReader.return_value = reader
+
+        ctx = create_context("/tmp/test.db")
+
+        # Suffix index should still work from inverted index keys
+        assert "Nat.add" in ctx.suffix_index
+
 
 # ---------------------------------------------------------------------------
 # 2. PipelineContext.parser is None initially (lazy)

@@ -29,12 +29,13 @@ Define the read and write interfaces for the SQLite search index database, inclu
 
 ### 4.1 Schema
 
-The database shall contain 6 tables as defined in the architecture:
+The database shall contain 7 tables as defined in the architecture:
 
 - `declarations` — core indexing unit
 - `dependencies` — directed relationship edges
 - `wl_vectors` — precomputed WL histograms (JSON)
 - `symbol_freq` — global symbol frequency counts
+- `re_export_aliases` — re-export path → canonical FQN mapping
 - `index_meta` — key-value metadata
 - `declarations_fts` — FTS5 virtual table (content-synced with `declarations`)
 - `embeddings` — neural premise embedding vectors (optional, populated when neural model is available)
@@ -73,6 +74,11 @@ Declarations and their WL vectors shall be co-inserted in the same batch transac
 
 - REQUIRES: `batch` is a list of `(decl_id, vector_blob)` pairs. Each `decl_id` references an existing declaration. Each `vector_blob` is exactly 3,072 bytes (768 × float32).
 - ENSURES: All embeddings are inserted into the `embeddings` table.
+
+#### insert_re_export_aliases(aliases)
+
+- REQUIRES: `aliases` is a map of `alias_fqn → canonical_fqn`. Each `alias_fqn` is a fully qualified re-export path. Each `canonical_fqn` is a canonical definition FQN present in the inverted index.
+- ENSURES: All entries are inserted into `re_export_aliases`. Duplicate `alias_fqn` keys are silently ignored (first write wins, matching deduplication order).
 
 #### insert_symbol_freq(entries)
 
@@ -122,6 +128,11 @@ The `IndexReader` manages the read path during online queries.
 
 - REQUIRES: Database is open and valid.
 - ENSURES: Returns a map of `decl_id → node_count` from the `declarations` table for all declarations with a non-null `node_count`.
+
+#### load_re_export_aliases()
+
+- REQUIRES: Database is open and valid.
+- ENSURES: Returns a map of `alias_fqn → canonical_fqn` from the `re_export_aliases` table. Returns an empty map if the table does not exist (backward compatibility with older indexes).
 
 #### get_declaration(name)
 

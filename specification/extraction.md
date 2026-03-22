@@ -241,6 +241,8 @@ MAINTAINS: After resolution, the `symbol_set` column in `declarations` and the `
 
 **Declaration deduplication**: When multiple `.vo` files contain the same fully qualified declaration name (e.g., via module re-exports), the pipeline shall keep the first occurrence and skip subsequent duplicates. Duplicates are detected after collection and before Pass 1 processing.
 
+**Re-export alias capture**: During deduplication, when a duplicate declaration is found from a different `.vo` file, the pipeline shall derive a re-export alias. The alias FQN is computed by replacing the canonical declaration's module prefix with the re-export `.vo` file's module path. Specifically: given canonical FQN `M1.X.f` found again in module `M2.Y` (from a different `.vo`), the alias is `M2.Y.f` where `f` is the declaration's short name (the last dot-separated component of the canonical FQN). All collected aliases are stored in the index via `writer.insert_re_export_aliases(aliases)` after Pass 1 completes.
+
 ### 4.5 Pass 2 — Dependency Resolution
 
 After all declarations are inserted:

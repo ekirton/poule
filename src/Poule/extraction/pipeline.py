@@ -257,6 +257,10 @@ class PipelineWriter:
         """Delegate to IndexWriter.insert_symbol_freq()."""
         self._writer.insert_symbol_freq(entries)
 
+    def insert_re_export_aliases(self, aliases: dict[str, str]) -> None:
+        """Delegate to IndexWriter.insert_re_export_aliases()."""
+        self._writer.insert_re_export_aliases(aliases)
+
     def write_metadata(self, **kwargs: Any) -> None:
         """Write each metadata key-value pair via IndexWriter.write_meta()."""
         for key, value in kwargs.items():
@@ -612,12 +616,25 @@ def run_extraction(
 
         # Deduplicate declarations by name (keep first occurrence).
         # The same name can appear in multiple .vo files via re-exports.
-        seen_names: set[str] = set()
+        # Capture re-export aliases: when a duplicate comes from a different
+        # module, record the re-export module path + short name as an alias.
+        seen_names: dict[str, Path] = {}  # name -> first .vo path
         unique_declarations: list[tuple[str, str, Any, Path]] = []
+        re_export_aliases: dict[str, str] = {}
         for decl in all_declarations:
-            if decl[0] not in seen_names:
-                seen_names.add(decl[0])
+            name, _kind, _constr_t, vo_path = decl
+            if name not in seen_names:
+                seen_names[name] = vo_path
                 unique_declarations.append(decl)
+            else:
+                # Duplicate — derive re-export alias if from a different module
+                first_module = CoqLspBackend._vo_to_canonical_module(seen_names[name])
+                dup_module = CoqLspBackend._vo_to_canonical_module(vo_path)
+                if dup_module != first_module:
+                    short_name = name.rsplit(".", 1)[-1]
+                    alias_fqn = f"{dup_module}.{short_name}"
+                    if alias_fqn != name:
+                        re_export_aliases[alias_fqn] = name
         all_declarations = unique_declarations
 
         total_decls = len(all_declarations)
@@ -714,6 +731,9 @@ def run_extraction(
                     symbol_counts[sym] += 1
 
         writer.insert_symbol_freq(dict(symbol_counts))
+
+        # Store re-export aliases captured during deduplication
+        writer.insert_re_export_aliases(re_export_aliases)
 
         if progress_callback is not None:
             progress_callback("Finalizing index...")

@@ -38,7 +38,7 @@ The system shall define a `PipelineContext` that holds:
 | `symbol_frequencies` | `dict[str, int]` | At context creation (from `reader.load_symbol_frequencies()`) |
 | `declaration_symbols` | `dict[int, set[str]]` | At context creation (derived from inverted index) |
 | `declaration_node_counts` | `dict[int, int]` | At context creation (from declarations table) |
-| `suffix_index` | `dict[str, list[str]]` | At context creation (derived from inverted index keys) |
+| `suffix_index` | `dict[str, list[str]]` | At context creation (derived from inverted index keys + re-export aliases) |
 | `parser` | `CoqParser` | Lazily on first structural/type query |
 | `neural_encoder` | `NeuralEncoder` or null | At context creation (if model checkpoint available) |
 | `embedding_index` | `EmbeddingIndex` or null | At context creation (if embeddings available and model hash matches) |
@@ -50,7 +50,7 @@ The system shall define a `PipelineContext` that holds:
 
 **WL histogram h-selection**: `reader.load_wl_histograms()` returns `decl_id → {h → histogram}` (see [storage.md](storage.md) §4.3). `create_context` shall select `h=3` from each declaration's nested map to produce the flat `decl_id → histogram` structure required by `wl_screen`. If a declaration has no h=3 entry, it is omitted from `wl_histograms`.
 
-**Suffix index construction**: For each FQN key in `inverted_index`, generate all proper dot-separated suffixes (e.g., `Coq.Init.Nat.add` → `Init.Nat.add`, `Nat.add`, `add`). Map each suffix to the list of FQNs it matches. Ambiguous suffixes (matching multiple FQNs) retain all matches — they are expanded at query time to maximize recall.
+**Suffix index construction**: For each FQN key in `inverted_index`, generate all proper dot-separated suffixes (e.g., `Coq.Init.Nat.add` → `Init.Nat.add`, `Nat.add`, `add`). Additionally, load re-export aliases via `reader.load_re_export_aliases()` and generate proper suffixes from each alias FQN, mapping them to the **canonical** FQN (e.g., alias `Coq.Lists.List.map` → suffixes `Lists.List.map`, `List.map`, `map`, all mapping to `Coq.Lists.ListDef.map`). Map each suffix to the list of FQNs it matches. Ambiguous suffixes (matching multiple FQNs) retain all matches — they are expanded at query time to maximize recall.
 
 ### 4.1.1 Prefix Aliasing
 
@@ -158,9 +158,9 @@ These are classified as free variables. Collect them in order of first occurrenc
 2. Replace all `Const(name)` references to that variable with `Rel(n)` where `n` is the correct 1-based de Bruijn index (distance from the binding `Prod` to the reference).
 3. Nest binders in order of first occurrence: the first-seen variable is outermost.
 
-> **Given** `type_expr = "List.map f (List.map g l) = List.map (fun x => f (g x)) l"` and the suffix index resolves `List.map` to `Coq.Lists.List.map` and `=` to `Coq.Init.Logic.eq`,
+> **Given** `type_expr = "List.map f (List.map g l) = List.map (fun x => f (g x)) l"` and the suffix index resolves `List.map` to `Coq.Lists.ListDef.map` (via re-export alias) and `=` to `Coq.Init.Logic.eq`,
 > **When** `normalize_type_query` is called,
-> **Then** the result is equivalent to `Prod("f", Sort("Type"), Prod("g", Sort("Type"), Prod("l", Sort("Type"), <body>)))` where `<body>` uses `Const("Coq.Lists.List.map")`, `Const("Coq.Init.Logic.eq")`, and `Rel(3)`, `Rel(2)`, `Rel(1)` for `f`, `g`, `l` respectively.
+> **Then** the result is equivalent to `Prod("f", Sort("Type"), Prod("g", Sort("Type"), Prod("l", Sort("Type"), <body>)))` where `<body>` uses `Const("Coq.Lists.ListDef.map")`, `Const("Coq.Init.Logic.eq")`, and `Rel(3)`, `Rel(2)`, `Rel(1)` for `f`, `g`, `l` respectively.
 
 > **Given** `type_expr = "forall n : nat, n + 0 = n"` (already has forall),
 > **When** `normalize_type_query` is called,

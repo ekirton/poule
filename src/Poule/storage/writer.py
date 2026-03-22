@@ -41,6 +41,11 @@ CREATE TABLE symbol_freq (
     freq INTEGER NOT NULL CHECK(freq > 0)
 );
 
+CREATE TABLE re_export_aliases (
+    alias_fqn TEXT PRIMARY KEY,
+    canonical_fqn TEXT NOT NULL
+);
+
 CREATE TABLE index_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -114,6 +119,16 @@ class IndexWriter:
         self._conn.executemany(
             "INSERT INTO dependencies (src, dst, relation) VALUES (?, ?, ?)",
             [(e["src"], e["dst"], e["relation"]) for e in batch],
+        )
+        self._conn.commit()
+
+    def insert_re_export_aliases(self, aliases: dict[str, str]) -> None:
+        if not aliases:
+            return
+        self._conn.executemany(
+            "INSERT OR IGNORE INTO re_export_aliases (alias_fqn, canonical_fqn) "
+            "VALUES (?, ?)",
+            list(aliases.items()),
         )
         self._conn.commit()
 

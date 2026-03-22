@@ -144,6 +144,21 @@ Tokenizer: Unicode with Porter stemming. BM25 column weights: name=10.0, stateme
 
 ---
 
+## re_export_aliases
+
+A mapping from a Coq re-export path to the canonical definition FQN. Captured during extraction when a declaration appears in a `.vo` file whose module path differs from the declaration's own module prefix — indicating a module re-export.
+
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `alias_fqn` | qualified name | Primary key; the module-qualified re-export path (e.g., `Coq.Lists.List.map`) |
+| `canonical_fqn` | qualified name | Required; the canonical definition FQN (e.g., `Coq.Lists.ListDef.map`); must exist as a key in the inverted index |
+
+### Relationships
+
+- **References** a symbol in the inverted index via `canonical_fqn` (many-to-one, implicit).
+
+---
+
 ## Cross-Entity Relationships
 
 ```
@@ -152,6 +167,7 @@ declarations 1──* dependencies (owns, as dst)
 declarations 1──3 wl_vectors (owns, one per h value)
 declarations *──* symbol_freq (references, via symbol_set)
 declarations 1──1 declarations_fts (mirrors, content-synced)
+re_export_aliases *──1 symbol_freq (references canonical_fqn)
 index_meta (standalone)
 ```
 

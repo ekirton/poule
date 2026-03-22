@@ -51,7 +51,7 @@ Users write type queries as patterns — the body of a type with free variables 
 
 `search_by_type` normalizes user queries before channel processing to bridge this representation gap:
 
-1. **FQN resolution**: Short constant names in the query (e.g., `List.map`) are resolved to their fully qualified kernel names (e.g., `Coq.Lists.List.map`) using the same suffix-matching mechanism as `search_by_symbols`. This enables the symbol overlap and constant name channels to find matching declarations.
+1. **FQN resolution**: Short constant names in the query (e.g., `List.map`) are resolved to their fully qualified kernel names (e.g., `Coq.Lists.ListDef.map`) using the same suffix-matching mechanism as `search_by_symbols`. The suffix index is built from inverted index FQN keys plus re-export aliases captured during extraction. Coq re-exports definitions through convenience modules (e.g., `List.map` is a re-export of the canonical definition `ListDef.map`), so the suffix index must include suffixes of both canonical FQNs and re-export paths to resolve user-facing names correctly.
 
 2. **Free variable detection**: Remaining unresolved short lowercase identifiers (no dots, not numeric, not a Coq keyword) are identified as pattern variables rather than constant references.
 
@@ -69,6 +69,7 @@ Users write type queries as patterns — the body of a type with free variables 
 **Stability:** Draft
 
 - GIVEN a type query with short constant names WHEN `search_by_type` executes THEN constant names are resolved to FQNs before channel processing
+- GIVEN a type query with a re-exported name like `List.map` WHEN FQN resolution executes THEN the name resolves to the canonical FQN (e.g., `Coq.Lists.ListDef.map`) via re-export alias suffixes in the suffix index
 - GIVEN a type query with unbound lowercase identifiers WHEN `search_by_type` executes THEN they are treated as pattern variables and wrapped in universal quantifiers
 - GIVEN a type query without explicit quantifiers WHEN structural screening executes THEN candidates with larger quantifier-wrapped types are not rejected by the size filter
 - GIVEN a type query with auto-detected free variables WHEN structural scoring executes THEN tree edit distance and collapse match are computed on body subtrees with auto-generated binders peeled, not on full quantifier-wrapped trees

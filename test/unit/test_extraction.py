@@ -1992,6 +1992,123 @@ class TestDeclarationDeduplication:
         assert mock_process.call_count == 2
 
 
+class TestReExportAliasCapture:
+    """During deduplication, when a duplicate declaration is found from a
+    different .vo file, the pipeline derives a re-export alias and stores it.
+
+    Spec: extraction.md §4.4 "Re-export alias capture"."""
+
+    def test_re_export_alias_captured(self, tmp_path):
+        """Canonical FQN Coq.Lists.ListDef.map from ListDef.vo, same name
+        found again from List.vo → alias Coq.Lists.List.map is stored."""
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend()
+        # ListDef.vo has the canonical declaration
+        # List.vo has the re-export (same canonical FQN)
+        backend.list_declarations.side_effect = [
+            [("Coq.Lists.ListDef.map", "Definition", {"mock": "constr1"})],
+            [("Coq.Lists.ListDef.map", "Definition", {"mock": "constr2"})],
+        ]
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"Coq.Lists.ListDef.map": 1}
+
+        result_mock = Mock()
+        result_mock.name = "Coq.Lists.ListDef.map"
+        result_mock.kind = "definition"
+        result_mock.symbol_set = []
+        result_mock.dependency_names = []
+
+        db_path = tmp_path / "index.db"
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=[
+                    Path("/fake/lib/ListDef.vo"),
+                    Path("/fake/lib/List.vo"),
+                ],
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                return_value=result_mock,
+            ),
+            patch(
+                "Poule.extraction.pipeline.CoqLspBackend._vo_to_canonical_module",
+                # Called during dedup (first_module, dup_module) and processing
+                side_effect=["Coq.Lists.ListDef", "Coq.Lists.List", "Coq.Lists.ListDef"],
+            ),
+        ):
+            run_extraction(targets=["stdlib"], db_path=db_path)
+
+        # writer.insert_re_export_aliases should be called with the alias
+        writer.insert_re_export_aliases.assert_called_once()
+        aliases = writer.insert_re_export_aliases.call_args[0][0]
+        assert "Coq.Lists.List.map" in aliases
+        assert aliases["Coq.Lists.List.map"] == "Coq.Lists.ListDef.map"
+
+    def test_no_alias_when_same_module(self, tmp_path):
+        """When duplicate comes from same module (same .vo), no alias."""
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend()
+        backend.list_declarations.side_effect = [
+            [("Coq.Init.Nat.add", "Definition", {"mock": "c1"})],
+            [("Coq.Init.Nat.add", "Definition", {"mock": "c2"})],
+        ]
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"Coq.Init.Nat.add": 1}
+
+        result_mock = Mock()
+        result_mock.name = "Coq.Init.Nat.add"
+        result_mock.kind = "definition"
+        result_mock.symbol_set = []
+        result_mock.dependency_names = []
+
+        db_path = tmp_path / "index.db"
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=[
+                    Path("/fake/lib/Nat.vo"),
+                    Path("/fake/lib/Nat2.vo"),
+                ],
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                return_value=result_mock,
+            ),
+            patch(
+                "Poule.extraction.pipeline.CoqLspBackend._vo_to_canonical_module",
+                # Called during dedup (first_module, dup_module) and processing
+                side_effect=["Coq.Init.Nat", "Coq.Init.Nat", "Coq.Init.Nat"],
+            ),
+        ):
+            run_extraction(targets=["stdlib"], db_path=db_path)
+
+        # insert_re_export_aliases should be called with empty dict
+        writer.insert_re_export_aliases.assert_called_once()
+        aliases = writer.insert_re_export_aliases.call_args[0][0]
+        assert len(aliases) == 0
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 14. FQN Derivation — §4.1.2
 # ═══════════════════════════════════════════════════════════════════════════

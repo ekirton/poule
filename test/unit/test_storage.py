@@ -1191,3 +1191,141 @@ class TestLoadInvertedIndexMalformedJson:
                 assert "Good.decl" in inv
             except StorageError:
                 pass  # clean typed error — acceptable
+
+
+# ---------------------------------------------------------------------------
+# re_export_aliases table (storage.md §4.1, §4.2, §4.3)
+# ---------------------------------------------------------------------------
+
+
+class TestReExportAliasesTable:
+    """The re_export_aliases table stores re-export path → canonical FQN mappings."""
+
+    def test_table_exists_after_create(self, tmp_db_path):
+        """re_export_aliases table is created as part of the schema."""
+        writer = IndexWriter.create(tmp_db_path)
+        conn = sqlite3.connect(tmp_db_path)
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+            ).fetchall()
+        }
+        conn.close()
+        writer.finalize()
+        assert "re_export_aliases" in tables
+
+
+class TestInsertReExportAliases:
+    """insert_re_export_aliases writes alias → canonical FQN pairs."""
+
+    def test_inserts_aliases(self, tmp_db_path):
+        writer = IndexWriter.create(tmp_db_path)
+        aliases = {
+            "Coq.Lists.List.map": "Coq.Lists.ListDef.map",
+            "Coq.Lists.List.filter": "Coq.Lists.ListDef.filter",
+        }
+        writer.insert_re_export_aliases(aliases)
+        writer.write_meta("schema_version", "1")
+        writer.finalize()
+
+        conn = sqlite3.connect(tmp_db_path)
+        rows = conn.execute(
+            "SELECT alias_fqn, canonical_fqn FROM re_export_aliases ORDER BY alias_fqn"
+        ).fetchall()
+        conn.close()
+
+        assert len(rows) == 2
+        assert rows[0] == ("Coq.Lists.List.filter", "Coq.Lists.ListDef.filter")
+        assert rows[1] == ("Coq.Lists.List.map", "Coq.Lists.ListDef.map")
+
+    def test_empty_aliases_is_noop(self, tmp_db_path):
+        writer = IndexWriter.create(tmp_db_path)
+        writer.insert_re_export_aliases({})
+        writer.write_meta("schema_version", "1")
+        writer.finalize()
+
+        conn = sqlite3.connect(tmp_db_path)
+        count = conn.execute("SELECT count(*) FROM re_export_aliases").fetchone()[0]
+        conn.close()
+        assert count == 0
+
+    def test_duplicate_alias_fqn_ignored(self, tmp_db_path):
+        """Duplicate alias_fqn keys are silently ignored (first write wins)."""
+        writer = IndexWriter.create(tmp_db_path)
+        writer.insert_re_export_aliases({
+            "Coq.Lists.List.map": "Coq.Lists.ListDef.map",
+        })
+        # Second insert with same key, different value
+        writer.insert_re_export_aliases({
+            "Coq.Lists.List.map": "SomethingElse.map",
+        })
+        writer.write_meta("schema_version", "1")
+        writer.finalize()
+
+        conn = sqlite3.connect(tmp_db_path)
+        rows = conn.execute(
+            "SELECT canonical_fqn FROM re_export_aliases WHERE alias_fqn = 'Coq.Lists.List.map'"
+        ).fetchall()
+        conn.close()
+        assert len(rows) == 1
+        assert rows[0][0] == "Coq.Lists.ListDef.map"
+
+
+class TestLoadReExportAliases:
+    """load_re_export_aliases returns alias → canonical FQN map."""
+
+    def test_loads_aliases(self, tmp_db_path):
+        writer = IndexWriter.create(tmp_db_path)
+        writer.insert_re_export_aliases({
+            "Coq.Lists.List.map": "Coq.Lists.ListDef.map",
+        })
+        _populate_minimal_db_after_writer_created(writer)
+
+        with IndexReader.open(tmp_db_path) as r:
+            aliases = r.load_re_export_aliases()
+
+        assert aliases == {"Coq.Lists.List.map": "Coq.Lists.ListDef.map"}
+
+    def test_empty_table_returns_empty_dict(self, tmp_db_path):
+        writer = IndexWriter.create(tmp_db_path)
+        _populate_minimal_db_after_writer_created(writer)
+
+        with IndexReader.open(tmp_db_path) as r:
+            aliases = r.load_re_export_aliases()
+
+        assert aliases == {}
+
+    def test_missing_table_returns_empty_dict(self, tmp_db_path):
+        """Backward compatibility: older indexes without the table return {}."""
+        writer = IndexWriter.create(tmp_db_path)
+        _populate_minimal_db_after_writer_created(writer)
+
+        # Drop the table to simulate an old index
+        conn = sqlite3.connect(tmp_db_path)
+        conn.execute("DROP TABLE IF EXISTS re_export_aliases")
+        conn.commit()
+        conn.close()
+
+        with IndexReader.open(tmp_db_path) as r:
+            aliases = r.load_re_export_aliases()
+
+        assert aliases == {}
+
+
+def _populate_minimal_db_after_writer_created(writer):
+    """Insert minimal data to make the DB valid for IndexReader, then finalize.
+
+    Assumes writer was already created via IndexWriter.create().
+    """
+    decl = _sample_declaration(
+        "Coq.Init.Nat.add", "Coq.Init.Nat", "lemma",
+        "forall n m, n + m = m + n",
+        "nat -> nat -> Prop",
+    )
+    writer.insert_declarations([decl])
+    writer.insert_symbol_freq({"Coq.Init.Nat.add": 1})
+    writer.write_meta("schema_version", "1")
+    writer.write_meta("coq_version", "9.1.1")
+    writer.write_meta("created_at", "2026-01-01T00:00:00Z")
+    writer.finalize()

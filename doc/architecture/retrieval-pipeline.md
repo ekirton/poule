@@ -90,7 +90,7 @@ Note: `extract_symbols` at query time is equivalent to `extract_consts` (const-j
 4. Return ranked results
 ```
 
-**Suffix index**: At server startup, build a reverse lookup from suffixes to FQNs using the inverted index keys. For each FQN like `Coq.Init.Nat.add`, index all proper suffixes: `Init.Nat.add`, `Nat.add`, `add`. If a suffix maps to multiple FQNs, store all of them (do not discard ambiguous suffixes — expand to the full set at query time to maximize recall).
+**Suffix index**: At server startup, build a reverse lookup from suffixes to FQNs using the inverted index keys **plus re-export aliases** loaded from the index database. For each FQN like `Coq.Init.Nat.add`, index all proper suffixes: `Init.Nat.add`, `Nat.add`, `add`. Re-export aliases (e.g., `Coq.Lists.List.map` aliasing `Coq.Lists.ListDef.map`) contribute additional suffixes that map to the canonical FQN (`List.map` → `Coq.Lists.ListDef.map`). If a suffix maps to multiple FQNs, store all of them (do not discard ambiguous suffixes — expand to the full set at query time to maximize recall).
 
 Note: Const Jaccard refinement for `search_by_symbols` is deferred to Phase 2.
 
