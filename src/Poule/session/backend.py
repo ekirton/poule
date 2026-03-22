@@ -42,7 +42,11 @@ class CoqProofBackend:
     petanque/premises) for stateful proof exploration.
     """
 
-    def __init__(self, proc: asyncio.subprocess.Process) -> None:
+    def __init__(
+        self,
+        proc: asyncio.subprocess.Process,
+        watchdog_timeout: Optional[float] = None,
+    ) -> None:
         self._proc = proc
         self._next_id = 0
         self._notification_buffer: list[dict[str, Any]] = []
@@ -50,6 +54,7 @@ class CoqProofBackend:
         self._file_path: Optional[str] = None
         self._shut_down = False
         self.original_script: list[str] = []
+        self._watchdog_timeout = watchdog_timeout
 
         # Petanque state management
         self._petanque_state: Optional[int] = None  # current state token
@@ -68,21 +73,35 @@ class CoqProofBackend:
 
     async def _read_message(self) -> dict[str, Any]:
         stdout = self._proc.stdout  # type: ignore[union-attr]
-        headers: dict[str, str] = {}
-        while True:
-            line = await stdout.readline()
-            if not line:
-                raise ConnectionError("coq-lsp closed stdout unexpectedly")
-            line_str = line.decode("ascii").rstrip("\r\n")
-            if not line_str:
-                break
-            if ":" in line_str:
-                key, val = line_str.split(":", 1)
-                headers[key.strip().lower()] = val.strip()
+        wt = self._watchdog_timeout
+        try:
+            headers: dict[str, str] = {}
+            while True:
+                if wt is not None:
+                    line = await asyncio.wait_for(stdout.readline(), timeout=wt)
+                else:
+                    line = await stdout.readline()
+                if not line:
+                    raise ConnectionError("coq-lsp closed stdout unexpectedly")
+                line_str = line.decode("ascii").rstrip("\r\n")
+                if not line_str:
+                    break
+                if ":" in line_str:
+                    key, val = line_str.split(":", 1)
+                    headers[key.strip().lower()] = val.strip()
 
-        content_length = int(headers.get("content-length", 0))
-        body = await stdout.readexactly(content_length)
-        return json.loads(body)
+            content_length = int(headers.get("content-length", 0))
+            if wt is not None:
+                body = await asyncio.wait_for(
+                    stdout.readexactly(content_length), timeout=wt,
+                )
+            else:
+                body = await stdout.readexactly(content_length)
+            return json.loads(body)
+        except asyncio.TimeoutError:
+            raise ConnectionError(
+                f"coq-lsp unresponsive for {wt}s"
+            ) from None
 
     async def _send_request(
         self, method: str, params: dict[str, Any],
@@ -578,7 +597,10 @@ class CoqProofBackend:
 # ------------------------------------------------------------------
 
 
-async def create_coq_backend(file_path: str) -> CoqProofBackend:
+async def create_coq_backend(
+    file_path: str,
+    watchdog_timeout: Optional[float] = None,
+) -> CoqProofBackend:
     """Spawn a coq-lsp process and return a connected CoqProofBackend.
 
     Per spec §4.2: the factory is the only way to create backend instances.
@@ -595,7 +617,7 @@ async def create_coq_backend(file_path: str) -> CoqProofBackend:
             f"coq-lsp not found on PATH: {exc}"
         ) from exc
 
-    backend = CoqProofBackend(proc)
+    backend = CoqProofBackend(proc, watchdog_timeout=watchdog_timeout)
 
     # LSP initialize handshake
     await backend._send_request(

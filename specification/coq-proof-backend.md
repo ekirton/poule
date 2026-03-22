@@ -174,10 +174,10 @@ The returned `ProofState` shall have:
 
 The system shall provide an async factory function:
 
-#### create_coq_backend(file_path)
+#### create_coq_backend(file_path, watchdog_timeout=None)
 
-- REQUIRES: `file_path` is a non-empty string.
-- ENSURES: Spawns a new Coq process (coq-lsp or SerAPI, determined by configuration or availability). Returns a `CoqBackend` instance connected to that process. The process is ready for `load_file` to be called.
+- REQUIRES: `file_path` is a non-empty string. `watchdog_timeout` is a positive float (seconds) or `None`.
+- ENSURES: Spawns a new Coq process (coq-lsp or SerAPI, determined by configuration or availability). Returns a `CoqBackend` instance connected to that process with the given `watchdog_timeout` configured. The process is ready for `load_file` to be called.
 - On process spawn failure (coq-lsp not installed, binary not found): raises an exception with a descriptive message.
 
 The factory is the only way to create `CoqBackend` instances. The session manager receives it as a constructor parameter, enabling test injection of mock backends.
@@ -185,6 +185,10 @@ The factory is the only way to create `CoqBackend` instances. The session manage
 > **Given** coq-lsp is installed and available on PATH
 > **When** `create_coq_backend("/path/to/file.v")` is called
 > **Then** a CoqBackend instance is returned with a running coq-lsp process
+
+> **Given** coq-lsp is installed and a watchdog_timeout of 600
+> **When** `create_coq_backend("/path/to/file.v", watchdog_timeout=600)` is called
+> **Then** a CoqBackend instance is returned with watchdog_timeout=600 configured
 
 > **Given** neither coq-lsp nor SerAPI is installed
 > **When** `create_coq_backend("/path/to/file.v")` is called
@@ -330,6 +334,28 @@ The backend shall monitor its Coq process. If the process exits unexpectedly (ex
 
 The session manager detects the crash when it next calls a backend operation, and marks the session as `BACKEND_CRASHED`.
 
+### 7.4 Liveness Watchdog
+
+When `watchdog_timeout` is configured (non-null), the backend shall wrap each I/O read in `_read_message` with a per-read inactivity timeout. If `watchdog_timeout` seconds elapse with no data received on the backend's stdout pipe, the read shall be cancelled and a `ConnectionError` raised with the message `"coq-lsp unresponsive for {watchdog_timeout}s"`.
+
+The watchdog timer resets on every successful data read. A tactic that takes several minutes to compute but then produces a response in one message is not affected — the watchdog only fires during complete silence on the pipe.
+
+When `watchdog_timeout` is `None`, reads block indefinitely (the default for interactive MCP sessions where the user controls timing).
+
+The `ConnectionError` from a watchdog kill is indistinguishable from a genuine backend crash (EOF on pipe). Both propagate through the same error handling path: `execute_tactic` raises → `extract_trace` catches and returns a partial `ProofTrace` → the campaign emits a `PartialExtractionRecord` or `ExtractionError`.
+
+> **Given** a backend with `watchdog_timeout=600` and a coq-lsp process that has stopped producing output
+> **When** 600 seconds of inactivity pass during a `_read_message` call
+> **Then** a `ConnectionError` is raised with message containing "unresponsive"
+
+> **Given** a backend with `watchdog_timeout=600` and a tactic that takes 300 seconds to compute
+> **When** the tactic completes and coq-lsp responds
+> **Then** the response is received normally (the watchdog did not fire because the 600s window was not exceeded)
+
+> **Given** a backend with `watchdog_timeout=None`
+> **When** the coq-lsp process stops producing output
+> **Then** the read blocks indefinitely (no watchdog)
+
 ## 8. Error Specification
 
 ### Error types
@@ -343,6 +369,7 @@ The session manager detects the crash when it next calls a backend operation, an
 | Undo fails (unsupported or backend error) | Exception (backend-dependent) | Dependency error |
 | Coq process not found on PATH | `FileNotFoundError` / `OSError` | Dependency error |
 | Coq process crashes during operation | Exception (detected by EOF on pipe or nonzero exit) | Dependency error |
+| Coq process unresponsive (watchdog) | `ConnectionError` (detected by inactivity timeout on pipe) | Dependency error |
 | Operation called after shutdown | Undefined behavior (caller's obligation to not call) | Invariant violation |
 
 ### Edge cases

@@ -545,3 +545,74 @@ class TestStateMachine:
                 backend.execute_tactic("exact I."),
                 timeout=5.0,
             )
+
+
+# ===========================================================================
+# 7. Liveness Watchdog (§7.4)
+# ===========================================================================
+
+
+class TestLivenessWatchdog:
+    """Spec §7.4: Inactivity-based liveness detection on backend I/O."""
+
+    async def test_watchdog_fires_on_inactivity(self):
+        """When the backend produces no output for watchdog_timeout seconds,
+        _read_message raises ConnectionError."""
+        from Poule.session.backend import CoqProofBackend
+        from unittest.mock import AsyncMock, MagicMock
+
+        proc = MagicMock()
+        # stdout.readline that never returns (simulates dead backend)
+        never_future = asyncio.Future()
+        proc.stdout = MagicMock()
+        proc.stdout.readline = AsyncMock(return_value=never_future)
+        # Make readline actually hang by using a coroutine that never completes
+        async def hang_forever():
+            await asyncio.sleep(3600)
+            return b""
+        proc.stdout.readline = hang_forever
+
+        backend = CoqProofBackend(proc, watchdog_timeout=0.1)
+
+        with pytest.raises(ConnectionError, match="unresponsive"):
+            await backend._read_message()
+
+    async def test_no_watchdog_when_none(self):
+        """When watchdog_timeout is None, reads block normally (no timeout).
+
+        We verify the constructor accepts None without error.
+        """
+        from Poule.session.backend import CoqProofBackend
+        from unittest.mock import MagicMock
+
+        proc = MagicMock()
+        backend = CoqProofBackend(proc, watchdog_timeout=None)
+        assert backend._watchdog_timeout is None
+
+    async def test_watchdog_does_not_fire_on_responsive_backend(self, tmp_path):
+        """A backend that responds within the watchdog window is not killed.
+
+        Integration test: real coq-lsp with generous watchdog_timeout.
+        """
+        create = _import_create_coq_backend()
+        v_file = tmp_path / "test.v"
+        v_file.write_text("Lemma trivial : True. Proof. exact I. Qed.\n")
+
+        backend = await create(str(v_file), watchdog_timeout=600)
+        try:
+            await backend.load_file(str(v_file))
+            state = await backend.position_at_proof("trivial")
+            assert state.is_complete is False
+            state = await backend.execute_tactic("exact I.")
+            assert state.is_complete is True
+        finally:
+            await backend.shutdown()
+
+    async def test_factory_passes_watchdog_timeout(self):
+        """create_coq_backend passes watchdog_timeout to the backend instance."""
+        create = _import_create_coq_backend()
+        backend = await create("/dev/null", watchdog_timeout=42.0)
+        try:
+            assert backend._watchdog_timeout == 42.0
+        finally:
+            await backend.shutdown()

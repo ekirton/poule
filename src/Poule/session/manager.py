@@ -126,11 +126,16 @@ class _SessionState:
 class SessionManager:
     """Manages interactive proof sessions."""
 
-    def __init__(self, backend_factory: Callable | None = None) -> None:
+    def __init__(
+        self,
+        backend_factory: Callable | None = None,
+        watchdog_timeout: float | None = None,
+    ) -> None:
         if backend_factory is None:
             from Poule.session.backend import create_coq_backend
             backend_factory = create_coq_backend
         self._backend_factory = backend_factory
+        self._watchdog_timeout = watchdog_timeout
         self._registry: dict[str, _SessionState] = {}
         self._registry_lock = asyncio.Lock()
         self._expired_ids: set[str] = set()
@@ -142,7 +147,12 @@ class SessionManager:
     async def create_session(
         self, file_path: str, proof_name: str,
     ) -> tuple[str, ProofState]:
-        backend = await self._backend_factory(file_path)
+        if self._watchdog_timeout is not None:
+            backend = await self._backend_factory(
+                file_path, watchdog_timeout=self._watchdog_timeout,
+            )
+        else:
+            backend = await self._backend_factory(file_path)
         try:
             await backend.load_file(file_path)
         except (FileNotFoundError, OSError):

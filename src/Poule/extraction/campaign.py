@@ -270,30 +270,17 @@ async def extract_single_proof(
     source_file: str,
     theorem_name: str,
     project_path: str = "",
-    timeout_seconds: Optional[float] = None,
 ) -> Union[ExtractionRecord, ExtractionError]:
     """Extract a single proof trace, returning a record or error.
 
     The session is always closed in a finally block.
+    Backend liveness is enforced by the CoqBackend's watchdog (§7.4),
+    not by a campaign-level budget timeout.
     """
     session_id: Optional[str] = None
     try:
-        coro = _do_extraction(session_manager, project_id, source_file, theorem_name, project_path)
-        if timeout_seconds is not None:
-            result = await asyncio.wait_for(coro, timeout=timeout_seconds)
-        else:
-            result = await coro
+        result = await _do_extraction(session_manager, project_id, source_file, theorem_name, project_path)
         return result
-    except asyncio.TimeoutError:
-        return ExtractionError(
-            schema_version=1,
-            record_type="extraction_error",
-            theorem_name=theorem_name,
-            source_file=source_file,
-            project_id=project_id,
-            error_kind="timeout",
-            error_message="Extraction timed out",
-        )
     except SessionError as e:
         error_kind = _ERROR_KIND_MAP.get(e.code, "unknown")
         return ExtractionError(
@@ -547,7 +534,6 @@ async def run_campaign(
                 source_file,
                 theorem_name,
                 project_path=project_path_map.get(project_id, ""),
-                timeout_seconds=all_kwargs.get("timeout_seconds"),
             )
         except KeyboardInterrupt:
             interrupted = True

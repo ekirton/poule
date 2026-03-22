@@ -858,8 +858,8 @@ class TestExtractSubcommand:
         call_args = mock_run.call_args
         assert str(dir1) in str(call_args) and str(dir2) in str(call_args)
 
-    def test_timeout_option(self, runner, tmp_path):
-        """--timeout sets per-proof timeout."""
+    def test_watchdog_timeout_option(self, runner, tmp_path):
+        """--watchdog-timeout sets backend inactivity threshold."""
         cli = _import_cli()
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
@@ -878,7 +878,7 @@ class TestExtractSubcommand:
                 "extract", str(project_dir),
                 "--output", str(tmp_path / "out.jsonl"),
                 "--index-db", index_db,
-                "--timeout", "120",
+                "--watchdog-timeout", "600",
             ])
         assert result.exit_code == 0
 
@@ -934,18 +934,15 @@ class TestExtractSubcommand:
                 "extract", str(project_dir),
                 "--output", str(tmp_path / "out.jsonl"),
                 "--index-db", index_db,
-                # No --timeout flag: uses default of 60
+                # No --watchdog-timeout flag: uses default of 600
             ])
         call_args = mock_run.call_args
         kwargs_dict = call_args[0][2]
-        assert "timeout_seconds" in kwargs_dict, (
-            "Default timeout must be passed to run_campaign; "
-            "omitting it means timeout_seconds=None (no timeout)"
-        )
-        assert kwargs_dict["timeout_seconds"] == 60
+        sm = kwargs_dict["session_manager"]
+        assert sm._watchdog_timeout == 600
 
-    def test_custom_timeout_passed_to_run_campaign(self, runner, tmp_path):
-        """--timeout 120 must be forwarded as timeout_seconds=120."""
+    def test_watchdog_timeout_zero_disables(self, runner, tmp_path):
+        """--watchdog-timeout 0 disables the watchdog (passes None)."""
         cli = _import_cli()
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
@@ -963,11 +960,12 @@ class TestExtractSubcommand:
                 "extract", str(project_dir),
                 "--output", str(tmp_path / "out.jsonl"),
                 "--index-db", index_db,
-                "--timeout", "120",
+                "--watchdog-timeout", "0",
             ])
         call_args = mock_run.call_args
         kwargs_dict = call_args[0][2]
-        assert kwargs_dict.get("timeout_seconds") == 120
+        sm = kwargs_dict["session_manager"]
+        assert sm._watchdog_timeout is None
 
 
 # ===========================================================================

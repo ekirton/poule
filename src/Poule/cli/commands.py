@@ -425,7 +425,7 @@ def _handle_session_error(exc: SessionError) -> None:
 @click.option("--incremental", is_flag=True, default=False, help="Re-extract only changed files (P1).")
 @click.option("--resume", "resume_flag", is_flag=True, default=False, help="Resume interrupted extraction (P1).")
 @click.option("--include-diffs", is_flag=True, default=False, help="Include proof state diffs (P1).")
-@click.option("--timeout", default=60, type=int, help="Per-proof timeout in seconds.")
+@click.option("--watchdog-timeout", default=600, type=int, help="Inactivity threshold (seconds) before declaring backend dead. 0 to disable.")
 def cmd_extract(
     project_dirs: tuple[str, ...],
     output: str,
@@ -436,7 +436,7 @@ def cmd_extract(
     incremental: bool,
     resume_flag: bool,
     include_diffs: bool,
-    timeout: int,
+    watchdog_timeout: int,
 ):
     """Batch extract proof traces from Coq project directories."""
     if incremental and resume_flag:
@@ -455,9 +455,9 @@ def cmd_extract(
         module_list = [m.strip() for m in modules.split(",")] if modules else None
         scope_filter = ScopeFilter(name_pattern=name_pattern, module_prefixes=module_list)
 
+    wt = watchdog_timeout if watchdog_timeout > 0 else None
     kwargs = {
-        "session_manager": SessionManager(),
-        "timeout_seconds": timeout,
+        "session_manager": SessionManager(watchdog_timeout=wt),
         "index_db_path": index_db,
     }
     if module_prefix is not None:

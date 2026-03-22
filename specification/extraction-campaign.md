@@ -142,17 +142,15 @@ When a scope filter is provided, the system shall apply it after theorem enumera
 > **When** `extract_single_proof(...)` is called
 > **Then** a PartialExtractionRecord is returned with steps 0-2 if premises were obtainable, or an ExtractionError with `error_kind = "backend_crash"` if premises could not be extracted
 
-#### Per-proof timeout
+#### Backend liveness
 
-The system shall enforce a per-proof time limit on extraction. When the time limit is exceeded:
+The system relies on the CoqBackend's liveness watchdog (see [coq-proof-backend.md](coq-proof-backend.md) §7.4) to detect dead backends during extraction. There is no per-proof budget timeout — complex proofs that take minutes to replay are allowed to complete as long as the backend remains responsive.
 
-- The session is closed (backend process terminated).
-- An ExtractionError is returned with `error_kind` = `timeout`.
-- The timeout duration is implementation-defined (suggested default: 60 seconds per proof).
+When the watchdog fires (backend unresponsive), the `ConnectionError` propagates through `extract_trace`, which returns a partial ProofTrace. The orchestrator converts this to a `PartialExtractionRecord` or `ExtractionError` via the standard partial recovery path.
 
-> **Given** a proof that takes 120 seconds to replay with a 60-second timeout
-> **When** `extract_single_proof(...)` is called
-> **Then** an ExtractionError with `error_kind = "timeout"` is returned after ~60 seconds
+> **Given** a proof where the backend becomes unresponsive at step 5
+> **When** `extract_single_proof(...)` is called with a watchdog-enabled session manager
+> **Then** after the watchdog timeout, a PartialExtractionRecord with steps 0-4 is returned (or ExtractionError if failure is at step 1)
 
 #### ExtractionRecord assembly
 
@@ -241,7 +239,7 @@ Options:
 | `index_db_path` | file path | (required) | Path to SQLite search index for declaration enumeration |
 | `scope_filter` | ScopeFilter or null | null | Name pattern or module filter (P1) |
 | `include_diffs` | boolean | false | Include proof state diffs in output (P1) |
-| `timeout_seconds` | positive integer | 60 | Per-proof extraction timeout |
+| `watchdog_timeout` | positive float or null | 600 | Inactivity threshold (seconds) before declaring backend dead; null to disable |
 
 ### Extraction Campaign Orchestrator → Proof Session Manager
 
@@ -282,9 +280,8 @@ The campaign does not support pause/resume within `run_campaign`. Resumption is 
 |-----------|----------|-----------|
 | `DIRECTORY_NOT_FOUND` | Input error | A project directory in `project_dirs` does not exist |
 | `INDEX_NOT_FOUND` | Input error | `index_db_path` does not exist or is not a valid index |
-| `EXTRACTION_TIMEOUT` | Dependency error | Per-proof time limit exceeded |
 
-Per-proof errors (tactic failure, backend crash, load failure) are not raised — they are captured as ExtractionError records in the output stream.
+Per-proof errors (tactic failure, backend crash, backend unresponsive, load failure) are not raised — they are captured as ExtractionError or PartialExtractionRecord records in the output stream. Backend liveness is enforced by the CoqBackend's watchdog (§7.4 in coq-proof-backend.md), not by a campaign-level timeout.
 
 ### Edge cases
 

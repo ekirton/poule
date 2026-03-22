@@ -405,24 +405,6 @@ class TestExtractSingleProofFailureModes:
     """extract_single_proof returns ExtractionError with correct error_kind
     for various failure modes (§4.2)."""
 
-    def test_timeout_returns_timeout_error(self):
-        """When extraction times out, returns ExtractionError with error_kind='timeout'."""
-        from Poule.extraction.campaign import extract_single_proof
-        from Poule.extraction.types import ExtractionError
-
-        # Mock SessionManager — contract test: test_proof_session.py
-        sm = _make_mock_session_manager(
-            trace_results=asyncio.TimeoutError(),
-        )
-
-        result = asyncio.run(extract_single_proof(
-            sm, "proj", "file.v", "slow_thm",
-            project_path="/path/to/proj", timeout_seconds=1,
-        ))
-
-        assert isinstance(result, ExtractionError)
-        assert result.error_kind == "timeout"
-
     def test_backend_crash_returns_backend_crash_error(self):
         """When the Coq backend crashes, returns ExtractionError
         with error_kind='backend_crash'."""
@@ -654,45 +636,21 @@ class TestExtractSingleProofSessionCleanup:
 
         sm.close_session.assert_called_once()
 
-    def test_session_closed_on_timeout(self):
-        """Session is closed when extraction times out."""
+    def test_session_closed_on_connection_error(self):
+        """Session is closed when backend connection fails (e.g., watchdog kill)."""
         from Poule.extraction.campaign import extract_single_proof
 
-        # Mock SessionManager — contract test: test_proof_session.py
-        sm = _make_mock_session_manager(
-            trace_results=asyncio.TimeoutError(),
+        sm = _make_mock_session_manager()
+        sm.extract_trace = AsyncMock(
+            side_effect=ConnectionError("coq-lsp unresponsive"),
         )
 
         asyncio.run(extract_single_proof(
             sm, "proj", "file.v", "thm",
-            project_path="/path/to/proj", timeout_seconds=1,
+            project_path="/path/to/proj",
         ))
 
         sm.close_session.assert_called_once()
-
-
-class TestExtractSingleProofTimeout:
-    """Per-proof timeout enforcement via asyncio.wait_for (§4.2)."""
-
-    def test_timeout_enforced_with_wait_for(self):
-        """Extraction uses asyncio.wait_for with the configured timeout."""
-        from Poule.extraction.campaign import extract_single_proof
-        from Poule.extraction.types import ExtractionError
-
-        # Mock SessionManager — contract test: test_proof_session.py
-        async def slow_trace(*args, **kwargs):
-            await asyncio.sleep(10)
-
-        sm = _make_mock_session_manager()
-        sm.extract_trace = AsyncMock(side_effect=slow_trace)
-
-        result = asyncio.run(extract_single_proof(
-            sm, "proj", "file.v", "thm",
-            project_path="/path/to/proj", timeout_seconds=0.1,
-        ))
-
-        assert isinstance(result, ExtractionError)
-        assert result.error_kind == "timeout"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
