@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from fnmatch import fnmatch
@@ -382,15 +383,27 @@ async def run_campaign(
         projects=plan.projects,
     )
 
-    results: list[dict] = []
-    results.append(_record_to_dict(metadata))
-
     # Build project_id -> project_path mapping for path resolution.
     project_path_map = {p.project_id: p.project_path for p in plan.projects}
 
+    total_targets = len(plan.targets)
+    print(f"Campaign: {total_targets} theorems to extract", file=sys.stderr)
+
+    # Stream results to JSONL file incrementally so progress is visible.
+    outfile = open(output_path, "w", encoding="utf-8")
+    outfile.write(json.dumps(_record_to_dict(metadata), default=str) + "\n")
+    outfile.flush()
+
     # Extract each target.
     interrupted = False
-    for project_id, source_file, theorem_name in plan.targets:
+    extracted_count = 0
+    failed_count = 0
+    current_file = None
+    for idx, (project_id, source_file, theorem_name) in enumerate(plan.targets, 1):
+        if source_file != current_file:
+            current_file = source_file
+            print(f"  [{idx}/{total_targets}] {source_file}", file=sys.stderr)
+
         try:
             result = await extract_single_proof(
                 all_kwargs.get("session_manager", _NullSessionManager()),
@@ -404,14 +417,25 @@ async def run_campaign(
             interrupted = True
             break
 
-        results.append(_record_to_dict(result))
+        # Write result to disk immediately.
+        outfile.write(json.dumps(_record_to_dict(result), default=str) + "\n")
+        outfile.flush()
 
         # Update stats.
         fs = project_file_stats[project_id][source_file]
         if isinstance(result, ExtractionRecord):
             fs["extracted"] += 1
+            extracted_count += 1
         else:
             fs["failed"] += 1
+            failed_count += 1
+
+        if idx % 100 == 0:
+            print(
+                f"  Progress: {idx}/{total_targets}"
+                f" ({extracted_count} ok, {failed_count} err)",
+                file=sys.stderr,
+            )
 
     # Build summary.
     per_project: list[ProjectSummary] = []
@@ -483,12 +507,9 @@ async def run_campaign(
         per_project=per_project,
     )
 
-    results.append(_record_to_dict(summary))
-
-    # Write JSONL output.
-    with open(output_path, "w", encoding="utf-8") as f:
-        for record_dict in results:
-            f.write(json.dumps(record_dict, default=str) + "\n")
+    # Write final summary record and close the output file.
+    outfile.write(json.dumps(_record_to_dict(summary), default=str) + "\n")
+    outfile.close()
 
     return summary
 

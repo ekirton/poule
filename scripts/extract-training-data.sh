@@ -178,6 +178,12 @@ for lib in "${LIB_ARRAY[@]}"; do
         continue
     fi
 
+    # Delete existing output when --force is used
+    if [[ "$FORCE" == true && -f "$output_file" ]]; then
+        echo "Removing existing ${output_file}" >&2
+        rm -f "$output_file"
+    fi
+
     # Check if already extracted at current version
     if [[ "$FORCE" != true && -f "$output_file" ]]; then
         existing_ver=$(extracted_version "$output_file")
