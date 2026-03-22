@@ -22,6 +22,11 @@ class TrainingDataset:
     val: list[tuple[str, list[str]]]
     test: list[tuple[str, list[str]]]
     premise_corpus: dict
+    train_files: list[str] = field(default_factory=list)
+    val_files: list[str] = field(default_factory=list)
+    test_files: list[str] = field(default_factory=list)
+    file_deps: dict[str, set[str]] = field(default_factory=dict)
+    file_premises: dict[str, set[str]] = field(default_factory=dict)
 
 
 def serialize_goals(goals: list[dict]) -> str:
@@ -108,13 +113,53 @@ class TrainingDataLoader:
                             file_pairs[source_file] = []
                         file_pairs[source_file].append((state_text, premises))
 
-        # Load premise corpus from index database
-        premise_corpus = {}
+        # Load premise corpus and accessibility from index database
+        premise_corpus: dict[str, str] = {}
+        file_deps: dict[str, set[str]] = {}
+        file_premises: dict[str, set[str]] = {}
         try:
             conn = sqlite3.connect(str(index_db_path))
-            rows = conn.execute("SELECT name, statement FROM declarations").fetchall()
-            for name, stmt in rows:
+
+            # Load premises with module info
+            rows = conn.execute(
+                "SELECT id, name, statement, module FROM declarations"
+            ).fetchall()
+            decl_id_to_module: dict[int, str] = {}
+            for decl_id, name, stmt, module in rows:
                 premise_corpus[name] = stmt
+                decl_id_to_module[decl_id] = module
+                if module not in file_premises:
+                    file_premises[module] = set()
+                file_premises[module].add(name)
+
+            # Build module-level dependency graph from declaration-level edges
+            try:
+                dep_rows = conn.execute(
+                    "SELECT src, dst FROM dependencies WHERE relation = 'uses'"
+                ).fetchall()
+                module_adj: dict[str, set[str]] = {}
+                for src_id, dst_id in dep_rows:
+                    src_mod = decl_id_to_module.get(src_id)
+                    dst_mod = decl_id_to_module.get(dst_id)
+                    if src_mod and dst_mod and src_mod != dst_mod:
+                        if src_mod not in module_adj:
+                            module_adj[src_mod] = set()
+                        module_adj[src_mod].add(dst_mod)
+
+                # Transitive closure per module (BFS)
+                for module in file_premises:
+                    visited = {module}
+                    queue = [module]
+                    while queue:
+                        current = queue.pop(0)
+                        for dep in module_adj.get(current, set()):
+                            if dep not in visited:
+                                visited.add(dep)
+                                queue.append(dep)
+                    file_deps[module] = visited
+            except Exception:
+                pass  # dependencies table missing or empty
+
             conn.close()
         except Exception:
             pass
@@ -125,20 +170,31 @@ class TrainingDataLoader:
         train_pairs: list[tuple[str, list[str]]] = []
         val_pairs: list[tuple[str, list[str]]] = []
         test_pairs: list[tuple[str, list[str]]] = []
+        train_files: list[str] = []
+        val_files: list[str] = []
+        test_files: list[str] = []
 
         for position, filepath in enumerate(sorted_files):
             pairs = file_pairs[filepath]
             mod = position % 10
             if mod == 8:
                 val_pairs.extend(pairs)
+                val_files.extend([filepath] * len(pairs))
             elif mod == 9:
                 test_pairs.extend(pairs)
+                test_files.extend([filepath] * len(pairs))
             else:
                 train_pairs.extend(pairs)
+                train_files.extend([filepath] * len(pairs))
 
         return TrainingDataset(
             train=train_pairs,
             val=val_pairs,
             test=test_pairs,
             premise_corpus=premise_corpus,
+            train_files=train_files,
+            val_files=val_files,
+            test_files=test_files,
+            file_deps=file_deps,
+            file_premises=file_premises,
         )
