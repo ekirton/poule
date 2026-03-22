@@ -2,7 +2,7 @@
 
 ## Abstract
 
-Premise selection — identifying which lemmas, definitions, and theorems from a formal library are relevant to a given proof goal — is a critical bottleneck in interactive theorem proving. While neural approaches to this problem have achieved strong results for Lean and Isabelle, the Coq/Rocq ecosystem lacks a neural retrieval system that integrates with practical tooling. We present a bi-encoder retrieval model for Coq premise selection, trained on proof traces extracted directly from compiled Coq libraries via a novel extraction pipeline. Our architecture employs a shared-weight CodeBERT encoder with masked contrastive loss (InfoNCE), hard negatives sampled from the accessible premise set, and file-level data splitting to prevent leakage. The model produces 768-dimensional embeddings enabling sub-millisecond retrieval over corpora of 50K+ declarations. We describe the training data pipeline, which replays Coq proofs to recover per-step premise annotations — information not otherwise available in Coq's ecosystem — and the deployment path through INT8 quantization for CPU-only inference. The system is designed to complement existing symbolic retrieval channels (Weisfeiler-Lehman kernel hashing, Meng-Paulson symbol overlap, full-text search) via reciprocal rank fusion, following evidence that hybrid retrieval consistently outperforms any single signal.
+Premise selection — identifying which lemmas, definitions, and theorems from a formal library are relevant to a given proof goal — is a critical bottleneck in interactive theorem proving. While neural approaches to this problem have achieved strong results for Lean and Isabelle, the Coq/Rocq ecosystem lacks a neural retrieval system that integrates with practical tooling. We present a bi-encoder retrieval model for Coq premise selection, trained on proof traces extracted directly from compiled Coq libraries via a novel extraction pipeline. Our architecture employs a shared-weight CodeBERT encoder with a custom WordPiece tokenizer trained on Coq corpora, masked contrastive loss (InfoNCE), hard negatives sampled from the accessible premise set, and file-level data splitting to prevent leakage. The model produces 768-dimensional embeddings enabling sub-millisecond retrieval over corpora of 50K+ declarations. We describe the training data pipeline, which replays Coq proofs to recover per-step premise annotations — information not otherwise available in Coq's ecosystem — and the deployment path through INT8 quantization for CPU-only inference. The system is designed to complement existing symbolic retrieval channels (Weisfeiler-Lehman kernel hashing, Meng-Paulson symbol overlap, full-text search) via reciprocal rank fusion, following evidence that hybrid retrieval consistently outperforms any single signal.
 
 ## 1. Introduction
 
@@ -86,6 +86,8 @@ The literature reveals several consistent findings that have guided our architec
 
 5. **Hybrid retrieval outperforms any single channel.** Rango's BM25 finding, LeanHammer's neural+MePo union, RGCN's text+graph fusion, and LeanExplore's semantic+lexical+PageRank combination all point to the same conclusion: no single retrieval signal dominates for formal mathematics.
 
+6. **Domain-specific tokenization is critical.** CFR's custom WordPiece tokenizer trained on formal Lean corpora produced +33% Recall@5 over a generic tokenizer — the single largest gain from any individual design decision. Rango's BM25 outperformance of CodeBERT embeddings (+46%) is partly a tokenization story: BM25 treats `Nat.add_comm` as a single lexical unit, while CodeBERT fragments it into five subword tokens. Generic tokenizers over-segment dot-qualified names, underscore-separated components, and Unicode mathematical symbols that are pervasive in Coq syntax.
+
 ## 3. Methods
 
 ### 3.1 Training Data Extraction
@@ -165,14 +167,34 @@ This produces negatives that are semantically proximate (they concern related ma
 
 We employ a bi-encoder with shared weights: a single encoder processes both proof states and premise statements, mapping them into a shared 768-dimensional embedding space.
 
+**Tokenization.** We replace CodeBERT's default RoBERTa BPE tokenizer (50,265-token vocabulary trained on English text and general-purpose code) with a custom WordPiece tokenizer (32,768-token vocabulary) trained on Coq/Rocq corpora. This follows CFR's finding that domain-specific tokenization produced a +33% Recall@5 improvement on formal Lean corpora — the single largest gain from any individual design decision.
+
+CodeBERT's generic tokenizer over-segments Coq syntax: `Nat.add_comm` becomes 5 tokens (`Nat`, `.`, `add`, `_`, `comm`), `mathcomp.algebra.ssralg` becomes 9 tokens, and Unicode symbols (`∀`, `→`, `⊢`) may map to unknown tokens or multi-byte fallback sequences. This over-segmentation wastes the 512-token context window and fragments semantically meaningful identifiers.
+
+The custom tokenizer addresses this through:
+
+- **Coq-aware pre-tokenization.** A regex-based pre-tokenizer preserves dot-qualified names as single pre-tokens (`Nat.add_comm`), keeps SSReflect tacticals intact (`/=`, `//`, `=>`), recognizes scope delimiters (`%N`, `%Z`), and distinguishes sentence-terminating dots from namespace separators.
+- **Unicode mathematical alphabet.** All Unicode symbols used in Coq libraries (`∀`, `∃`, `→`, `⊢`, `≤`, `ℕ`, `ℤ`, Greek letters) are force-included in the vocabulary via the `initial_alphabet` parameter.
+- **Vocabulary trained on both source files and proof states.** The tokenizer corpus combines raw `.v` files from all six target libraries (~417K LOC) with serialized proof states from the extraction pipeline, ensuring coverage of both premise statements and the actual model input distribution.
+
+The vocabulary size of 32,768 follows domain-specific BERT precedent (CFR: 30,522 for Lean; SciBERT: 31,000; PubMedBERT: 30,522). NFC Unicode normalization is applied before tokenization.
+
+The full tokenizer design — including failure mode analysis, algorithm comparison, integration strategies, training configuration, and evaluation methodology — is described in `coq-tokenizer.md`.
+
 **Base encoder.** The encoder is initialized from CodeBERT (microsoft/codebert-base), a 125M-parameter transformer pretrained on six programming languages via masked language modeling and replaced token detection. We chose CodeBERT over alternatives for several reasons: (a) it handles formal syntax better than general NLP models while remaining smaller than 7B decoder-based alternatives; (b) RocqStar demonstrated its suitability for Coq embeddings; (c) at 125M parameters, it permits full fine-tuning on a single consumer GPU and INT8 quantization for CPU deployment at <10ms per encoding.
+
+**Embedding layer initialization.** The custom tokenizer produces a different vocabulary than CodeBERT's pretrained embedding layer. We reinitialize the embedding layer to match the new vocabulary: tokens that overlap with CodeBERT's original vocabulary retain their pretrained embeddings; new tokens are initialized randomly (normal distribution, σ = 0.02). CodeBERT's 12 transformer layers retain their full pretrained weights. This follows the approach validated by CFR, where the tokenizer — not from-scratch pretraining — was the critical ingredient.
 
 **Pooling.** Token-level outputs are combined via mean pooling over non-padding positions, followed by L2 normalization. This produces unit-length embeddings where cosine similarity reduces to dot product.
 
 **Architecture summary:**
 
 ```
-Input: token_ids, attention_mask (max length 512)
+Input text (proof state or premise statement)
+  → NFC Unicode normalization
+  → Coq-aware pre-tokenization (preserves qualified names, ssreflect, Unicode)
+  → Custom WordPiece tokenizer (32,768 vocab)
+  → token_ids, attention_mask (max length 512)
   → CodeBERT encoder (125M params, 12 layers, 768 hidden)
   → Mean pooling over non-padding tokens
   → L2 normalization
