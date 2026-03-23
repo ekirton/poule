@@ -4,11 +4,11 @@ set -euo pipefail
 # Quick-test the indexing and extraction pipelines.
 #
 # Usage:
-#   ./scripts/quick-test-pipeline.sh                                    # all libraries, smoke tier
-#   ./scripts/quick-test-pipeline.sh --tier debug                       # all libraries, debug tier
-#   ./scripts/quick-test-pipeline.sh --libraries coquelicot             # full coquelicot
-#   ./scripts/quick-test-pipeline.sh --libraries flocq,coquelicot       # full flocq + coquelicot
-#   ./scripts/quick-test-pipeline.sh --libraries flocq --tier smoke     # flocq, ~4 files
+#   ./scripts/quick-test-pipeline.sh                                    # all libraries, smoke (~4 files each)
+#   ./scripts/quick-test-pipeline.sh --tier debug                       # all libraries, debug (~14 files each)
+#   ./scripts/quick-test-pipeline.sh --libraries coquelicot             # coquelicot only, smoke
+#   ./scripts/quick-test-pipeline.sh --libraries flocq,coquelicot       # flocq + coquelicot, smoke
+#   ./scripts/quick-test-pipeline.sh --max-files 20                     # all libraries, 20 random files each
 #   ./scripts/quick-test-pipeline.sh --index-only                       # index only
 #   ./scripts/quick-test-pipeline.sh --extract-only                     # extract only (needs prior index)
 
@@ -17,6 +17,7 @@ export ROCQLIB="${ROCQLIB:-${COQLIB:-}}"
 ALL_LIBRARIES="stdlib,mathcomp,stdpp,flocq,coquelicot,coqinterval"
 LIBRARIES=""
 TIER=""
+MAX_FILES=""
 OUTPUT_DIR="/data/quick-test"
 INDEX_ONLY=false
 EXTRACT_ONLY=false
@@ -24,20 +25,22 @@ WATCHDOG_TIMEOUT=120
 
 usage() {
     echo "Usage: $(basename "$0") [--libraries lib1,lib2,...] [--tier smoke|debug]" >&2
-    echo "                        [--output-dir DIR] [--index-only] [--extract-only]" >&2
+    echo "                        [--max-files N] [--output-dir DIR]" >&2
+    echo "                        [--index-only] [--extract-only]" >&2
     echo "" >&2
     echo "Run indexing and extraction for fast pipeline testing." >&2
     echo "" >&2
     echo "Libraries (default: all 6):" >&2
     echo "  stdlib, mathcomp, stdpp, flocq, coquelicot, coqinterval" >&2
     echo "" >&2
-    echo "Tiers (pick a small subdirectory per library, default: smoke):" >&2
-    echo "  smoke   ~4 .vo files   (~30 seconds per library)" >&2
-    echo "  debug   ~14 .vo files  (~1-2 minutes per library)" >&2
+    echo "Tiers (randomly sample .vo files per library, default: smoke):" >&2
+    echo "  smoke   ~4 .vo files   (fast smoke test)" >&2
+    echo "  debug   ~14 .vo files  (broader coverage)" >&2
     echo "" >&2
     echo "Options:" >&2
     echo "  --libraries     Comma-separated list of libraries (default: all 6)" >&2
-    echo "  --tier          Limit scope per library (default: smoke). Omit for full." >&2
+    echo "  --tier          Preset file limit (default: smoke)" >&2
+    echo "  --max-files     Override: sample at most N .vo files per library" >&2
     echo "  --output-dir    Output directory (default: /data/quick-test)" >&2
     echo "  --index-only    Run only the indexing phase" >&2
     echo "  --extract-only  Run only the extraction phase (requires prior index)" >&2
@@ -48,6 +51,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --tier)
             TIER="$2"
+            shift 2
+            ;;
+        --max-files)
+            MAX_FILES="$2"
             shift 2
             ;;
         --libraries)
@@ -77,13 +84,29 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Defaults ---
-# No args → all libraries, smoke tier.  --libraries alone → full libraries.
+# Always default to smoke tier unless --max-files is explicitly set.
 
-if [[ -z "$LIBRARIES" && -z "$TIER" ]]; then
+if [[ -z "$LIBRARIES" ]]; then
     LIBRARIES="$ALL_LIBRARIES"
+fi
+
+if [[ -z "$TIER" && -z "$MAX_FILES" ]]; then
     TIER="smoke"
-elif [[ -z "$LIBRARIES" ]]; then
-    LIBRARIES="$ALL_LIBRARIES"
+fi
+
+# --- Tier → max-files mapping ---
+
+declare -A TIER_MAX_FILES=(
+    [smoke]=4
+    [debug]=14
+)
+
+if [[ -n "$TIER" && -z "$MAX_FILES" ]]; then
+    if [[ -z "${TIER_MAX_FILES[$TIER]+x}" ]]; then
+        echo "Unknown tier: $TIER (expected smoke or debug)" >&2
+        exit 1
+    fi
+    MAX_FILES="${TIER_MAX_FILES[$TIER]}"
 fi
 
 # --- Resolve Coq library path ---
@@ -110,59 +133,6 @@ declare -A LIB_MODULE_PREFIXES=(
     [coqinterval]="Interval."
 )
 
-# --- Tier file limits ---
-
-declare -A TIER_LIMITS=(
-    [smoke]=4
-    [debug]=14
-)
-
-if [[ -n "$TIER" && -z "${TIER_LIMITS[$TIER]+x}" ]]; then
-    echo "Unknown tier: $TIER (expected smoke or debug)" >&2
-    exit 1
-fi
-
-# --- Resolve project directory for a library ---
-
-resolve_project_dir() {
-    local lib="$1"
-    if [[ "$lib" == "stdlib" ]]; then
-        local root="${COQ_LIB}/user-contrib/Stdlib"
-        if [[ ! -d "$root" ]]; then
-            root="${COQ_LIB}/theories"
-        fi
-        echo "$root"
-    else
-        echo "${COQ_LIB}/user-contrib/${LIB_CONTRIB_DIRS[$lib]}"
-    fi
-}
-
-# --- Find a subdirectory with at most N .vo files for tier-limited indexing ---
-# The subdirectory must be within the real Coq lib tree so that the backend's
-# _vo_to_canonical_module path heuristic (which looks for user-contrib/ or
-# theories/ markers) works correctly.
-
-find_tier_target() {
-    local project_dir="$1" tier_limit="$2"
-
-    local best_dir="" best_count=0
-    while IFS= read -r subdir; do
-        local count
-        count=$(find "$subdir" -name "*.vo" | wc -l)
-        if [[ $count -le $tier_limit && $count -gt $best_count ]]; then
-            best_dir="$subdir"
-            best_count=$count
-        fi
-    done < <(find "$project_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
-
-    # Fall back to full directory for flat libraries (e.g. stdpp, coquelicot)
-    if [[ -n "$best_dir" ]]; then
-        echo "$best_dir"
-    else
-        echo "$project_dir"
-    fi
-}
-
 # --- Parse library list ---
 
 IFS=',' read -ra LIB_ARRAY <<< "$LIBRARIES"
@@ -177,8 +147,8 @@ done
 
 mkdir -p "$OUTPUT_DIR"
 
-if [[ -n "$TIER" ]]; then
-    echo "Quick test pipeline — ${#LIB_ARRAY[@]} libraries, ${TIER} tier"
+if [[ -n "$MAX_FILES" ]]; then
+    echo "Quick test pipeline — ${#LIB_ARRAY[@]} libraries, max ${MAX_FILES} files each"
 else
     echo "Quick test pipeline — ${#LIB_ARRAY[@]} libraries, full"
 fi
@@ -194,33 +164,22 @@ declare -A RESULTS
 
 for lib in "${LIB_ARRAY[@]}"; do
     MODULE_PREFIX="${LIB_MODULE_PREFIXES[$lib]}"
-    PROJECT_DIR="$(resolve_project_dir "$lib")"
 
-    if [[ ! -d "$PROJECT_DIR" ]]; then
-        echo "WARNING: ${lib} not found at ${PROJECT_DIR}, skipping" >&2
-        RESULTS[$lib]="skipped"
-        continue
-    fi
+    # Always pass the library name as --target so the Python pipeline
+    # handles discovery (including stdlib path detection) and applies
+    # --max-files sampling across the entire library tree.
+    INDEX_TARGET="$lib"
 
-    # Determine index target
-    if [[ -n "$TIER" ]]; then
-        TIER_LIMIT="${TIER_LIMITS[$TIER]}"
-        INDEX_TARGET="$(find_tier_target "$PROJECT_DIR" "$TIER_LIMIT")"
-        DB_SUFFIX="${lib}-${TIER}"
+    if [[ -n "$MAX_FILES" ]]; then
+        DB_SUFFIX="${lib}-max${MAX_FILES}"
     else
-        # Full library: use library name so pipeline applies library-specific logic
-        INDEX_TARGET="$lib"
         DB_SUFFIX="$lib"
     fi
 
-    VO_COUNT=$(find "$INDEX_TARGET" -name "*.vo" 2>/dev/null | wc -l)
     DB_PATH="${OUTPUT_DIR}/index-${DB_SUFFIX}.db"
     JSONL_PATH="${OUTPUT_DIR}/${DB_SUFFIX}.jsonl"
 
-    echo "=== ${lib} (${VO_COUNT} .vo files) ==="
-    if [[ -n "$TIER" ]]; then
-        echo "  Index target: ${INDEX_TARGET}"
-    fi
+    echo "=== ${lib} ==="
 
     # --- Indexing phase ---
 
@@ -229,7 +188,12 @@ for lib in "${LIB_ARRAY[@]}"; do
         rm -f "$DB_PATH"
         INDEX_START=$(date +%s)
 
-        if ! python -m Poule.extraction --target "$INDEX_TARGET" --db "$DB_PATH" --progress; then
+        INDEX_CMD=(python -m Poule.extraction --target "$INDEX_TARGET" --db "$DB_PATH" --progress)
+        if [[ -n "$MAX_FILES" ]]; then
+            INDEX_CMD+=(--max-files "$MAX_FILES")
+        fi
+
+        if ! "${INDEX_CMD[@]}"; then
             echo "  ERROR: Indexing failed for ${lib}" >&2
             RESULTS[$lib]="FAILED (index)"
             continue
@@ -249,6 +213,17 @@ for lib in "${LIB_ARRAY[@]}"; do
             echo "  Run without --extract-only first." >&2
             RESULTS[$lib]="FAILED (no index)"
             continue
+        fi
+
+        # Resolve the project directory for extraction (needs the actual
+        # filesystem path, not the library name).
+        if [[ "$lib" == "stdlib" ]]; then
+            PROJECT_DIR="${COQ_LIB}/user-contrib/Stdlib"
+            if [[ ! -d "$PROJECT_DIR" ]]; then
+                PROJECT_DIR="${COQ_LIB}/theories"
+            fi
+        else
+            PROJECT_DIR="${COQ_LIB}/user-contrib/${LIB_CONTRIB_DIRS[$lib]}"
         fi
 
         echo "--- Extraction ---" >&2
@@ -283,8 +258,11 @@ echo "  Total time: ${OVERALL_ELAPSED}s"
 echo ""
 
 for lib in "${LIB_ARRAY[@]}"; do
-    DB_SUFFIX="${lib}"
-    [[ -n "$TIER" ]] && DB_SUFFIX="${lib}-${TIER}"
+    if [[ -n "$MAX_FILES" ]]; then
+        DB_SUFFIX="${lib}-max${MAX_FILES}"
+    else
+        DB_SUFFIX="${lib}"
+    fi
     DB_PATH="${OUTPUT_DIR}/index-${DB_SUFFIX}.db"
     JSONL_PATH="${OUTPUT_DIR}/${DB_SUFFIX}.jsonl"
 
