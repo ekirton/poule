@@ -94,6 +94,30 @@ class TestExtractTacticsRegexWithFQN:
         tactics = backend._extract_tactics_regex(text, "Mod.foo")
         assert tactics == []
 
+    def test_no_proof_keyword_extracts_tactics(self):
+        """Proof without explicit Proof. keyword (old Coq style) extracts tactics.
+
+        Spec: coq-proof-backend.md §original_script — proofs without Proof.
+        keyword shall return the tactic list."""
+        backend = _make_backend_stub()
+        text = (
+            "Lemma Iftrue_inv : forall (A B:Prop) (b:bool), IfProp A B b -> b = true -> A.\n"
+            "destruct 1; intros; auto with bool.\n"
+            "case diff_true_false; auto with bool.\n"
+            "Qed.\n"
+        )
+        tactics = backend._extract_tactics_regex(text, "Iftrue_inv")
+        assert len(tactics) >= 1
+        assert any("destruct" in t for t in tactics)
+
+    def test_no_proof_keyword_single_line(self):
+        """Proof without Proof. keyword, all on one line after statement."""
+        backend = _make_backend_stub()
+        text = "Lemma foo : True. exact I. Qed.\n"
+        tactics = backend._extract_tactics_regex(text, "foo")
+        assert len(tactics) >= 1
+        assert any("exact" in t for t in tactics)
+
     def test_fixpoint_does_not_steal_next_proof(self):
         """Fixpoint without proof body must not capture the next declaration's
         Proof. block (e.g., Fixpoint fact followed by Lemma lt_O_fact)."""
@@ -230,4 +254,36 @@ class TestExtractTacticsFromSpansWithFQN:
         spans = self._make_spans(texts)
 
         tactics = backend._extract_tactics_from_spans(full_text, spans, "fact")
+        assert tactics == []
+
+    def test_no_proof_keyword_extracts_tactics_spans(self):
+        """Proof without explicit Proof. keyword extracts tactics from spans.
+
+        Spec: coq-proof-backend.md §original_script — proofs without Proof.
+        keyword shall return the tactic list."""
+        backend = _make_backend_stub()
+        texts = [
+            "Lemma Iftrue_inv : forall (A B:Prop) (b:bool), IfProp A B b -> b = true -> A.",
+            "destruct 1; intros; auto with bool.",
+            "case diff_true_false; auto with bool.",
+            "Qed.",
+        ]
+        full_text = "\n".join(texts)
+        spans = self._make_spans(texts)
+
+        tactics = backend._extract_tactics_from_spans(full_text, spans, "Iftrue_inv")
+        assert len(tactics) == 2
+        assert "destruct" in tactics[0]
+        assert "case" in tactics[1]
+
+    def test_no_proof_keyword_definition_without_body_spans(self):
+        """Definition without := and without Proof. or tactics returns empty."""
+        backend = _make_backend_stub()
+        texts = [
+            "Definition foo := 42.",
+        ]
+        full_text = "\n".join(texts)
+        spans = self._make_spans(texts)
+
+        tactics = backend._extract_tactics_from_spans(full_text, spans, "foo")
         assert tactics == []

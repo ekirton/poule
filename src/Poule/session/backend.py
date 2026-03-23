@@ -345,6 +345,7 @@ class CoqProofBackend:
 
         # Find "Proof." span after the declaration, but stop if another
         # declaration is encountered first (the Proof. would belong to it).
+        hit_another_decl = False
         for i in range(decl_idx + 1, len(spans)):
             txt = span_text(spans[i]).strip()
             if re.match(r"Proof\b", txt):
@@ -355,12 +356,21 @@ class CoqProofBackend:
                 r"Fixpoint|CoFixpoint|Example|Let|Instance)\s+\w+",
                 txt,
             ):
+                hit_another_decl = True
                 break  # Another declaration before Proof. — not our proof
 
-        if proof_start_idx is None:
+        # If no Proof. keyword and another declaration was found first,
+        # there is no proof body for this declaration.
+        if proof_start_idx is None and hit_another_decl:
             return []
 
-        # Find Qed/Defined/Admitted/Abort span after Proof.
+        # If no Proof. keyword but no intervening declaration, treat the
+        # declaration span as the boundary (old Coq style: tactics start
+        # immediately after the statement).
+        if proof_start_idx is None:
+            proof_start_idx = decl_idx
+
+        # Find Qed/Defined/Admitted/Abort span after the proof start
         for i in range(proof_start_idx + 1, len(spans)):
             txt = span_text(spans[i]).strip()
             if re.match(r"(Qed|Defined|Admitted|Abort)\s*\.", txt):
@@ -370,7 +380,7 @@ class CoqProofBackend:
         if proof_end_idx is None:
             return []
 
-        # Extract tactic text from spans between Proof. and Qed.
+        # Extract tactic text from spans between start boundary and Qed.
         tactics = []
         for i in range(proof_start_idx + 1, proof_end_idx):
             txt = span_text(spans[i]).strip()
@@ -395,26 +405,34 @@ class CoqProofBackend:
             return []
 
         proof_kw_match = re.search(r"\bProof\s*\.", text[decl_match.start():])
-        if proof_kw_match is None:
-            return []
 
-        # Guard: if another declaration appears between this declaration and
-        # the Proof. keyword, the Proof. belongs to a different declaration.
-        between_text = text[decl_match.end():decl_match.start() + proof_kw_match.start()]
-        if re.search(
-            r"\b(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|"
-            r"Fixpoint|CoFixpoint|Example|Let|Instance)\s+\w+",
-            between_text,
-        ):
-            return []
+        if proof_kw_match is not None:
+            # Guard: if another declaration appears between this declaration
+            # and the Proof. keyword, the Proof. belongs to a different
+            # declaration.
+            between_text = text[decl_match.end():decl_match.start() + proof_kw_match.start()]
+            if re.search(
+                r"\b(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|"
+                r"Fixpoint|CoFixpoint|Example|Let|Instance)\s+\w+",
+                between_text,
+            ):
+                return []
 
-        proof_kw_end = decl_match.start() + proof_kw_match.end()
+            body_start = decl_match.start() + proof_kw_match.end()
+        else:
+            # No Proof. keyword — old Coq style where tactics start
+            # immediately after the declaration statement's period.
+            # Find the end of the declaration (the period after the type).
+            stmt_end = re.search(r"\.\s", text[decl_match.start():])
+            if stmt_end is None:
+                return []
+            body_start = decl_match.start() + stmt_end.end()
 
         end_match = re.search(
-            r"\b(Qed|Defined|Admitted|Abort)\s*\.", text[proof_kw_end:]
+            r"\b(Qed|Defined|Admitted|Abort)\s*\.", text[body_start:]
         )
         if end_match:
-            body_text = text[proof_kw_end:proof_kw_end + end_match.start()].strip()
+            body_text = text[body_start:body_start + end_match.start()].strip()
         else:
             body_text = ""
 

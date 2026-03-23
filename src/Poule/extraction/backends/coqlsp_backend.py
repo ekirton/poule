@@ -494,12 +494,20 @@ class CoqLspBackend:
         return results
 
     def query_declaration_data(
-        self, names: list[str]
+        self,
+        names: list[str],
+        *,
+        name_to_import: dict[str, str] | None = None,
     ) -> dict[str, tuple[str, list[tuple[str, str]]]]:
         """Batch Print + Print Assumptions queries for multiple declarations.
 
         For each name, issues ``Print <name>.`` and ``Print Assumptions <name>.``
         in shared documents (≤50 declarations = ≤100 lines per document).
+
+        When *name_to_import* is provided, names are grouped by their import
+        path and each batch document begins with
+        ``Require Import <import_path>.`` so that declaration names are in
+        scope.  The result for this preamble line is discarded.
 
         Returns a dict mapping name → ``(statement, dependency_pairs)``.
         """
@@ -507,37 +515,53 @@ class CoqLspBackend:
         result: dict[str, tuple[str, list[tuple[str, str]]]] = {}
         batch_size = 50  # 50 declarations = 100 lines (Print + Print Assumptions)
 
-        for i in range(0, len(names), batch_size):
-            batch_names = names[i : i + batch_size]
-            commands: list[str] = []
-            for name in batch_names:
-                commands.append(f"Print {name}.")
-                commands.append(f"Print Assumptions {name}.")
+        if name_to_import:
+            # Group names by import path so each group shares one preamble.
+            groups: dict[str, list[str]] = {}
+            for name in names:
+                imp = name_to_import.get(name, "")
+                groups.setdefault(imp, []).append(name)
+            ordered_groups = list(groups.items())
+        else:
+            ordered_groups = [("", names)]
 
-            all_messages = self._run_vernac_batch(commands)
+        for import_path, group_names in ordered_groups:
+            for i in range(0, len(group_names), batch_size):
+                batch_names = group_names[i : i + batch_size]
+                commands: list[str] = []
+                if import_path:
+                    commands.append(f"Require Import {import_path}.")
+                for name in batch_names:
+                    commands.append(f"Print {name}.")
+                    commands.append(f"Print Assumptions {name}.")
 
-            for j, name in enumerate(batch_names):
-                # Print messages at index j*2, Print Assumptions at j*2+1
-                print_msgs = all_messages[j * 2] if j * 2 < len(all_messages) else []
-                assumptions_msgs = all_messages[j * 2 + 1] if j * 2 + 1 < len(all_messages) else []
+                all_messages = self._run_vernac_batch(commands)
 
-                # Parse Print output → statement
-                texts = [
-                    m["text"] for m in print_msgs if m.get("level", 3) != 1
-                ]
-                statement = "\n".join(texts).strip()
+                # Skip preamble result if import was prepended.
+                offset = 1 if import_path else 0
 
-                # Parse Print Assumptions output → dependencies
-                all_text = "\n".join(
-                    m["text"] for m in assumptions_msgs if m.get("level", 3) != 1
-                )
-                deps: list[tuple[str, str]] = []
-                if "Closed under the global context" not in all_text:
-                    for match in _ASSUMPTION_RE.finditer(all_text):
-                        dep_name = match.group(1)
-                        deps.append((dep_name, "uses"))
+                for j, name in enumerate(batch_names):
+                    idx = offset + j * 2
+                    print_msgs = all_messages[idx] if idx < len(all_messages) else []
+                    assumptions_msgs = all_messages[idx + 1] if idx + 1 < len(all_messages) else []
 
-                result[name] = (statement, deps)
+                    # Parse Print output → statement
+                    texts = [
+                        m["text"] for m in print_msgs if m.get("level", 3) != 1
+                    ]
+                    statement = "\n".join(texts).strip()
+
+                    # Parse Print Assumptions output → dependencies
+                    all_text = "\n".join(
+                        m["text"] for m in assumptions_msgs if m.get("level", 3) != 1
+                    )
+                    deps: list[tuple[str, str]] = []
+                    if "Closed under the global context" not in all_text:
+                        for match in _ASSUMPTION_RE.finditer(all_text):
+                            dep_name = match.group(1)
+                            deps.append((dep_name, "uses"))
+
+                    result[name] = (statement, deps)
 
         return result
 
@@ -743,7 +767,7 @@ class CoqLspBackend:
 
         # Batch About queries for kind detection + metadata
         names = [name for name, _type_sig in search_results]
-        about_results = self._batch_get_about_metadata(names)
+        about_results = self._batch_get_about_metadata(names, import_path=import_path)
 
         declarations: list[tuple[str, str, Any]] = []
         for (short_name, type_sig), about in zip(search_results, about_results):
@@ -760,15 +784,27 @@ class CoqLspBackend:
 
         return declarations
 
-    def _batch_get_about_metadata(self, names: list[str]) -> list[AboutResult]:
-        """Batch About queries and parse kind + metadata for declaration names."""
+    def _batch_get_about_metadata(
+        self, names: list[str], *, import_path: str | None = None,
+    ) -> list[AboutResult]:
+        """Batch About queries and parse kind + metadata for declaration names.
+
+        When *import_path* is provided, each batch document begins with
+        ``Require Import <import_path>.`` so that short declaration names
+        (from Search output) are in scope.  The result for this preamble
+        line is discarded.
+        """
         results: list[AboutResult] = []
         batch_size = self._VERNAC_BATCH_SIZE
 
         for i in range(0, len(names), batch_size):
             batch_names = names[i : i + batch_size]
             commands = [f"About {name}." for name in batch_names]
+            if import_path:
+                commands = [f"Require Import {import_path}."] + commands
             all_messages = self._run_vernac_batch(commands)
+            if import_path:
+                all_messages = all_messages[1:]  # discard Require Import result
 
             for name, messages in zip(batch_names, all_messages):
                 results.append(self._parse_about_kind(name, messages))

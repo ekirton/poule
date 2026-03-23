@@ -41,7 +41,7 @@ The system shall define a `Backend` protocol with operations:
 
 The backend shall determine each declaration's kind during `list_declarations`. The mechanism is backend-dependent because not all backends return kind information directly from declaration listing.
 
-**coq-lsp backend:** The `Search _ inside M.` command returns `(name, type_sig)` pairs without declaration kinds. Each result may be formatted as a single line (`name : type`) or span multiple lines when the type signature is long — coq-lsp breaks complex types across lines with indentation. The declaration listing parser shall handle both formats, extracting the name from the first line and joining continuation lines into the full type signature. The backend shall issue an `About <name>.` Vernac command per declaration and parse the response to determine the kind. About queries for declarations within a single module may be batched into a single synthetic document with one command per line (batch size capped at 100 commands per document). The contract (one About per declaration, version-dependent parsing) is unchanged.
+**coq-lsp backend:** The `Search _ inside M.` command returns `(name, type_sig)` pairs without declaration kinds. Each result may be formatted as a single line (`name : type`) or span multiple lines when the type signature is long — coq-lsp breaks complex types across lines with indentation. The declaration listing parser shall handle both formats, extracting the name from the first line and joining continuation lines into the full type signature. The backend shall issue an `About <name>.` Vernac command per declaration and parse the response to determine the kind. About queries for declarations within a single module may be batched into a single synthetic document with one command per line (batch size capped at 100 commands per document). Each batch document shall begin with `Require Import <import_path>.` (the same import used for the `Search` query) so that short declaration names are in scope; the result for this preamble line is discarded. The contract (one About per declaration, version-dependent parsing) is unchanged.
 
 > **Given** a coq-lsp Search result with a single-line message `"foo : nat -> nat"`,
 > **When** `list_declarations` parses the result,
@@ -508,7 +508,7 @@ Error hierarchy:
 - The entire process runs without GPU, network access, or external API keys.
 - Batch size: 1000 declarations per transaction.
 - Progress reporting at per-declaration granularity.
-- **Kind detection overhead (coq-lsp):** About queries are batched into shared documents (≤100 commands each), and Print + Print Assumptions queries are batched similarly (≤50 declarations = ≤100 lines per document), reducing document lifecycle overhead by 3–10x compared to per-declaration queries.
+- **Kind detection overhead (coq-lsp):** About queries are batched into shared documents (≤100 commands each), and Print + Print Assumptions queries are batched similarly (≤50 declarations = ≤100 lines per document), reducing document lifecycle overhead by 3–10x compared to per-declaration queries. Each Print batch document shall begin with `Require Import <import_path>.` so that declaration names are in scope; names shall be grouped by source module so each group shares a single import preamble.
 
 ## 7. Examples
 

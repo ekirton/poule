@@ -94,6 +94,10 @@ The returned `ProofState` shall have:
 > **When** `original_script` is accessed after `position_at_proof`
 > **Then** each bullet marker and its tactic are correctly split as separate sentences, matching coq-lsp's sentence segmentation
 
+> **Given** a proof without an explicit `Proof.` keyword where tactics begin directly after the statement (e.g., `Lemma foo : P. intros. auto. Qed.`)
+> **When** `original_script` is accessed after `position_at_proof`
+> **Then** it returns the tactic list (same as if `Proof.` were present)
+
 #### original_states (attribute)
 
 - REQUIRES: `position_at_proof` has been called successfully.

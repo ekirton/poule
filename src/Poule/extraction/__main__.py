@@ -38,6 +38,12 @@ from Poule.extraction.pipeline import run_extraction
     default=False,
     help="Print progress messages to stderr during extraction.",
 )
+@click.option(
+    "--max-files",
+    default=None,
+    type=int,
+    help="Randomly sample at most N .vo files from the discovered set.",
+)
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -45,6 +51,7 @@ def cli(
     db: Path | None,
     verbose: bool,
     progress: bool,
+    max_files: int | None,
 ) -> None:
     """Extract and index Coq libraries into a SQLite database."""
     # Backward compatibility: `python -m Poule.extraction --target X --db Y`
@@ -70,6 +77,7 @@ def cli(
             targets=targets,
             db_path=db,
             progress_callback=_progress if progress else None,
+            max_files=max_files,
         )
     except Exception as exc:
         click.echo(f"Error: {exc}", err=True)

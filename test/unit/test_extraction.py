@@ -1364,6 +1364,237 @@ class TestProgressReporting:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# 7b. max_files sampling
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestMaxFilesSampling:
+    """run_extraction(max_files=N) randomly samples N .vo files."""
+
+    def test_max_files_samples_subset(self):
+        """When max_files < total .vo files, only max_files are processed."""
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend(
+            declarations=[("A.decl", "Lemma", {"mock": "c"})]
+        )
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"A.decl": 1}
+
+        mock_result = Mock()
+        mock_result.name = "A.decl"
+        mock_result.dependency_names = []
+
+        # 10 .vo files discovered, but max_files=3
+        all_vo = [Path(f"/fake/Module{i}.vo") for i in range(10)]
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=all_vo,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                return_value=mock_result,
+            ),
+        ):
+            run_extraction(
+                targets=["stdlib"],
+                db_path=Path("/tmp/test.db"),
+                max_files=3,
+            )
+
+        # Backend should have been called for exactly 3 .vo files
+        assert backend.list_declarations.call_count == 3
+
+    def test_max_files_none_processes_all(self):
+        """When max_files is None, all .vo files are processed."""
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend(
+            declarations=[("A.decl", "Lemma", {"mock": "c"})]
+        )
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"A.decl": 1}
+
+        mock_result = Mock()
+        mock_result.name = "A.decl"
+        mock_result.dependency_names = []
+
+        all_vo = [Path(f"/fake/Module{i}.vo") for i in range(5)]
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=all_vo,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                return_value=mock_result,
+            ),
+        ):
+            run_extraction(
+                targets=["stdlib"],
+                db_path=Path("/tmp/test.db"),
+                max_files=None,
+            )
+
+        assert backend.list_declarations.call_count == 5
+
+    def test_max_files_greater_than_total_processes_all(self):
+        """When max_files >= total .vo files, all are processed (no error)."""
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend(
+            declarations=[("A.decl", "Lemma", {"mock": "c"})]
+        )
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"A.decl": 1}
+
+        mock_result = Mock()
+        mock_result.name = "A.decl"
+        mock_result.dependency_names = []
+
+        all_vo = [Path(f"/fake/Module{i}.vo") for i in range(3)]
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=all_vo,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                return_value=mock_result,
+            ),
+        ):
+            run_extraction(
+                targets=["stdlib"],
+                db_path=Path("/tmp/test.db"),
+                max_files=100,
+            )
+
+        assert backend.list_declarations.call_count == 3
+
+    def test_max_files_progress_callback(self):
+        """Progress callback reports sampling when max_files is active."""
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend(
+            declarations=[("A.decl", "Lemma", {"mock": "c"})]
+        )
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"A.decl": 1}
+
+        mock_result = Mock()
+        mock_result.name = "A.decl"
+        mock_result.dependency_names = []
+
+        all_vo = [Path(f"/fake/Module{i}.vo") for i in range(10)]
+        progress = Mock()
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=all_vo,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                return_value=mock_result,
+            ),
+        ):
+            run_extraction(
+                targets=["stdlib"],
+                db_path=Path("/tmp/test.db"),
+                max_files=4,
+                progress_callback=progress,
+            )
+
+        msgs = [str(c) for c in progress.call_args_list]
+        found_sampled = any("Sampled" in m and "--max-files 4" in m for m in msgs)
+        assert found_sampled, f"Expected sampling progress message, got: {msgs}"
+
+    def test_max_files_sampled_files_are_sorted(self):
+        """Sampled .vo files are sorted by path for deterministic import order."""
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend(
+            declarations=[("A.decl", "Lemma", {"mock": "c"})]
+        )
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"A.decl": 1}
+
+        mock_result = Mock()
+        mock_result.name = "A.decl"
+        mock_result.dependency_names = []
+
+        # Create paths that sort differently than discovery order
+        all_vo = [Path(f"/fake/Z{i}.vo") for i in range(5)] + \
+                 [Path(f"/fake/A{i}.vo") for i in range(5)]
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=all_vo,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                return_value=mock_result,
+            ),
+        ):
+            run_extraction(
+                targets=["stdlib"],
+                db_path=Path("/tmp/test.db"),
+                max_files=5,
+            )
+
+        # Verify the .vo paths passed to list_declarations are sorted
+        called_paths = [
+            c[0][0] for c in backend.list_declarations.call_args_list
+        ]
+        assert called_paths == sorted(called_paths)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # 8. Full Pipeline Integration (mock backend, 3 declarations)
 # ═══════════════════════════════════════════════════════════════════════════
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import pickle
+import random
 import re
 import subprocess
 from collections import Counter
@@ -711,6 +712,7 @@ def run_extraction(
     targets: list[str],
     db_path: Path,
     progress_callback: Callable[[str], None] | None = None,
+    max_files: int | None = None,
 ) -> dict[str, Any]:
     """Run the two-pass extraction pipeline.
 
@@ -722,6 +724,10 @@ def run_extraction(
         Path where the SQLite index database will be created.
     progress_callback:
         Optional callable invoked with progress messages.
+    max_files:
+        If set, randomly sample at most this many ``.vo`` files from the
+        full discovery list.  Useful for fast smoke tests that need
+        representative coverage across the whole library tree.
 
     Returns
     -------
@@ -742,6 +748,12 @@ def run_extraction(
         all_vo_files.extend(discover_libraries(t))
     if progress_callback is not None:
         progress_callback(f"Discovered {len(all_vo_files)} .vo files")
+
+    # Randomly sample if --max-files is set and smaller than total
+    if max_files is not None and max_files < len(all_vo_files):
+        all_vo_files = sorted(random.sample(all_vo_files, max_files))
+        if progress_callback is not None:
+            progress_callback(f"Sampled {len(all_vo_files)} .vo files (--max-files {max_files})")
 
     # Delete existing database file if present (idempotent re-indexing)
     if db_path.exists():
@@ -816,8 +828,12 @@ def run_extraction(
             if progress_callback is not None:
                 progress_callback("Querying declaration data...")
             decl_names = [name for name, _kind, _constr_t, _vo in all_declarations]
+            name_to_import = {
+                name: CoqLspBackend._vo_to_logical_path(vo)
+                for name, _kind, _constr_t, vo in all_declarations
+            }
             try:
-                batch_result = _query_fn(decl_names)
+                batch_result = _query_fn(decl_names, name_to_import=name_to_import)
                 # Validate result is a real dict (not a Mock artifact)
                 if isinstance(batch_result, dict):
                     decl_data = batch_result
