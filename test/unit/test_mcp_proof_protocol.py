@@ -70,14 +70,14 @@ async def _run_with_session(tmp_path, callback):
 
 
 class TestToolListing:
-    """Verify all 49 tools (7 search + 12 proof + 4 visualization + 26 wrapper) are advertised."""
+    """Verify all 50 tools (7 search + 12 proof + 4 visualization + 26 wrapper + 1 education) are advertised."""
 
     @pytest.mark.asyncio
-    async def test_lists_all_49_tools(self, tmp_path):
+    async def test_lists_all_50_tools(self, tmp_path):
         async def check(session):
             result = await session.list_tools()
             tool_names = [t.name for t in result.tools]
-            assert len(tool_names) == 49
+            assert len(tool_names) == 50
         await _run_with_session(tmp_path, check)
 
     @pytest.mark.asyncio

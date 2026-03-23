@@ -108,6 +108,17 @@ After the step-by-step walkthrough, provide a high-level summary covering:
 
 For **brief** mode, compress the summary to 2-3 sentences. For **verbose** mode, expand each point with additional context.
 
+## Step 7: Add educational context
+
+After the summary, call `education_context` with a query describing the overall proof strategy identified in the walkthrough (e.g., "proof by induction on natural numbers", "case analysis on boolean expressions", "rewriting with associativity and commutativity").
+
+If results are returned, append a brief **Further reading** note at the end:
+- Cite the most relevant Software Foundations passage in one to two sentences.
+- Include the browser path so the user can open the chapter.
+- Tell the user: "Use `/textbook` to explore this topic further in Software Foundations."
+
+Keep the educational annotation brief — do not reproduce the full passage. If `education_context` returns an error or no results, skip this step silently.
+
 ## Edge cases
 
 - **Very long proofs (>30 tactic steps):** Produce the full walkthrough but offer to group consecutive similar steps (e.g., a sequence of `simpl; rewrite` pairs) into summarized blocks. Ask the user before truncating.

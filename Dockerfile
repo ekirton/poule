@@ -187,12 +187,37 @@ ARG CACHEBUST_INDEX=0
 COPY --chown=${HOST_UID}:${HOST_GID} docker/validate-index.py /tmp/validate-index.py
 RUN python3 /tmp/validate-index.py && rm -f /tmp/validate-index.py
 
+# ── Education model + Software Foundations textbook ──────────────────────
+# Both are downloaded at build time (not checked into the repo).
+# Placed before source COPY so changes don't invalidate the source layer.
+
+# Download pre-quantized all-MiniLM-L6-v2 ONNX model + tokenizer from HuggingFace.
+RUN mkdir -p /data/models/education && \
+    curl -fsSL https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model_quint8_avx2.onnx \
+         -o /data/models/education/encoder.onnx && \
+    curl -fsSL https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json \
+         -o /data/models/education/tokenizer.json
+
+# Download SF volumes from upstream.
+# CACHEBUST_SF is set by CI when a new SF release is published.
+ARG CACHEBUST_SF=0
+COPY --chown=${HOST_UID}:${HOST_GID} scripts/download-software-foundations.sh /tmp/download-sf.sh
+RUN bash /tmp/download-sf.sh && rm -f /tmp/download-sf.sh
+
 # ── Application code ─────────────────────────────────────────────────────
 COPY --chown=${HOST_UID}:${HOST_GID} src/ src/
 COPY --chown=${HOST_UID}:${HOST_GID} test/ test/
 COPY --chown=${HOST_UID}:${HOST_GID} examples/ examples/
 COPY --chown=${HOST_UID}:${HOST_GID} commands/ commands/
 COPY --chown=${HOST_UID}:${HOST_GID} .mcp.json CLAUDE.md README.md ./
+
+# ── Build education database from SF HTML ────────────────────────────────
+# Uses PYTHONPATH directly to avoid uv rebuilding the project package.
+RUN PYTHONPATH=/poule/src python -m Poule.education.build \
+        --sf-dir /poule/software-foundations \
+        --output /data/education.db \
+        --model /data/models/education/encoder.onnx \
+        --tokenizer /data/models/education/tokenizer.json
 
 # Minimal zshrc (overridden by persistent home mount at runtime)
 RUN cat > ~/.zshrc << 'ZSHEOF'

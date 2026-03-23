@@ -54,6 +54,12 @@ No search index required — invokes `coqc` directly or instruments a proof sess
 
 **Bottleneck classification:** All modes classify bottlenecks by category (`SlowQed`, `SlowReduction`, `TypeclassBlowup`, `HighSearchDepth`, `ExpensiveMatch`, `General`) with severity levels and optimization suggestion hints.
 
+## Education Tools
+
+| Tool | Required params | Optional params | Notes |
+|------|----------------|-----------------|-------|
+| `education_context` | `query` (string) | `limit` (integer, default 3, max 10), `volume` (string) | Retrieves relevant passages from Software Foundations. `volume` filters by book: `lf`, `plf`, `vfa`, `qc`, `secf`, `slf`, `vc`. Returns text, code blocks, source citation, and browser path. |
+
 ## Visualization Tools
 
 Generate Mermaid diagram syntax. If the Mermaid Chart MCP server is configured, diagrams render automatically.

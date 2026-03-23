@@ -92,6 +92,19 @@ Check whether a project's declared dependencies are mutually compatible before y
 
 Claude reads your opam/dune dependency declarations, queries package metadata, analyzes version constraints for conflicts, and explains any incompatibilities in plain language with resolution suggestions.
 
+## Education
+
+### /textbook
+
+Search the Software Foundations textbook for explanations of Coq concepts, tactics, and proof techniques.
+
+```
+/textbook how does induction work?
+/textbook --volume lf rewrite tactic
+```
+
+Claude queries the bundled Software Foundations vector database, retrieves the most relevant passages with source citations, and provides local file paths so you can open chapters in your browser for extended reading.
+
 ## Error Diagnosis
 
 ### /explain-error
@@ -131,4 +144,5 @@ Claude asks for project parameters (name, build system, Coq version, dependencie
 | `/migrate-rocq` | Coq→Rocq namespace migration | Semi-automated |
 | `/check-compat` | Dependency compatibility analysis | Automated |
 | `/explain-error` | Type error explanation + fix suggestions | Automated |
+| `/textbook` | Search Software Foundations for concept explanations | Automated |
 | `/scaffold` | Project skeleton generation | Interactive |

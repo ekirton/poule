@@ -130,6 +130,17 @@ If you find a relevant lemma or function via `search_by_type` or `search_by_name
 
 If you cannot determine a fix with confidence, say so explicitly. Do not guess. Provide the diagnostic context you have gathered so the user can investigate further.
 
+## Step 5b: Add educational context
+
+After suggesting fixes, call `education_context` with a query describing the error category and relevant Coq concept (e.g., "type mismatch in function application", "universe inconsistency", "coercion between types").
+
+If relevant Software Foundations content is found, add a brief **See also** note:
+- One sentence summarizing the relevant SF teaching on this concept.
+- Citation: "Software Foundations, {location}" with the browser path.
+- Suggest: "Run `/textbook [concept]` for a deeper explanation."
+
+Keep this annotation brief. If `education_context` returns an error or no results, skip this step silently.
+
 ## Step 6: Handle edge cases
 
 **Multiple errors:** If the build produced multiple type errors, diagnose the first one only. Tell the user how many additional errors were found and suggest running `/explain-error` again after fixing the first.

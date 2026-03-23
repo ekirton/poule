@@ -53,6 +53,13 @@ Six Coq libraries are available as prebuilt indexes: **stdlib**, **MathComp**, *
 - **Convoy pattern assistant** — detect dependent pattern matching failures, recommend repair techniques (`revert`-before-`destruct`, `dependent destruction`, convoy pattern, Equations `depelim`), generate boilerplate, and warn about axiom implications
 - **Setoid rewriting assistant** — diagnose `setoid_rewrite` failures, identify missing `Proper` instances, generate `Instance Proper ...` declarations with correct `respectful` signatures, and suggest `setoid_rewrite` when `rewrite` fails under binders
 
+### Education
+
+- **Textbook retrieval** — search the *Software Foundations* textbook by concept, tactic, or proof technique via `/textbook`
+- Retrieval-augmented generation over all 7 SF volumes, bundled offline in the container
+- `/explain-proof` and `/explain-error` automatically cite relevant SF passages with browser-openable links
+- SF HTML books available at `~/software-foundations/` for direct browser reading
+
 ### Visualization
 
 - Proof state, proof tree, dependency subgraph, and step-by-step sequence diagrams

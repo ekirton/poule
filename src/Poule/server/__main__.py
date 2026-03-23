@@ -893,6 +893,34 @@ TOOL_DEFINITIONS = [
             "required": ["file_path"],
         },
     ),
+    Tool(
+        name="education_context",
+        description=(
+            "Retrieve educational content from the Software Foundations textbook. "
+            "Returns relevant passages with source citations (volume, chapter, section) "
+            "and a local file path for browser viewing. Use this during proof explanation "
+            "or error diagnosis to add pedagogical context."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural-language query about a Coq concept, tactic, or proof technique",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max passages to return (default: 3, max: 10)",
+                },
+                "volume": {
+                    "type": "string",
+                    "enum": ["lf", "plf", "vfa", "qc", "secf", "slf", "vc"],
+                    "description": "Filter results to a specific SF volume (optional)",
+                },
+            },
+            "required": ["query"],
+        },
+    ),
 ]
 
 
@@ -1062,6 +1090,7 @@ class _ServerContext:
         self.process_pool: Any = None  # ProcessPool | None; for session-free coq_query
         self.renderer: _MermaidFacade = _MermaidFacade()
         self.diagram_dir: Any = None  # Path | None; set externally if configured
+        self.education_rag: Any = None  # EducationRAG | None
 
 
 def _dispatch_tool(ctx: _ServerContext, name: str, arguments: dict):
@@ -1355,6 +1384,14 @@ def _dispatch_tool(ctx: _ServerContext, name: str, arguments: dict):
             baseline_path=arguments.get("baseline_path"),
             timeout_seconds=arguments.get("timeout_seconds"),
         )
+    elif name == "education_context":
+        from Poule.education.handler import handle_education_context
+        return handle_education_context(
+            ctx,
+            query=arguments.get("query", ""),
+            limit=arguments.get("limit", 3),
+            volume=arguments.get("volume"),
+        )
     else:
         from Poule.server.errors import format_error, PARSE_ERROR
         return format_error(PARSE_ERROR, f"Unknown tool: {name}")
@@ -1396,6 +1433,18 @@ async def _init_context(db_path: Path, log_level: str) -> _ServerContext:
             ctx.found_version = getattr(exc, "found", "unknown")
             ctx.expected_version = getattr(exc, "expected", "unknown")
             logger.error("Schema version mismatch: %s", exc)
+
+    # Education RAG (optional — server starts normally if absent)
+    education_db = Path("/data/education.db")
+    education_model = Path("/data/models/education/encoder.onnx")
+    education_tokenizer = Path("/data/models/education/tokenizer.json")
+    if education_db.exists() and education_model.exists() and education_tokenizer.exists():
+        try:
+            from Poule.education import EducationRAG
+            ctx.education_rag = EducationRAG(education_db, education_model, education_tokenizer)
+            logger.info("Education RAG loaded from %s", education_db)
+        except Exception:
+            logger.warning("Failed to load education RAG", exc_info=True)
 
     return ctx
 

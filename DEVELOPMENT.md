@@ -291,6 +291,10 @@ To override the commit message at merge time:
 gh pr merge <number> --squash --subject "Custom commit message"
 ```
 
+## Textbook RAG
+
+See [doc/textbook-rag.md](doc/textbook-rag.md) for the education database build pipeline: updating when a new Software Foundations version is released, model file setup, chunking details, and troubleshooting.
+
 ## Neural Premise Selection
 
 See [doc/neural-training-guide.md](doc/neural-training-guide.md) for the full training and deployment workflow: data extraction, validation, model training, evaluation, quantization, publishing, and fine-tuning.

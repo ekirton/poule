@@ -32,6 +32,13 @@ if [ ! -e examples ] && [ -d /poule/examples ]; then
     ln -sf /poule/examples examples
 fi
 
+# ── Software Foundations textbook ──────────────────────────────────────────
+# Symlink baked-in SF HTML into the user's persistent home so the host
+# browser can open chapters at ~/poule-home/software-foundations/lf/Basics.html
+if [ ! -e "$HOME/software-foundations" ] && [ -d /poule/software-foundations ]; then
+    ln -sf /poule/software-foundations "$HOME/software-foundations"
+fi
+
 # ── MCP config ──────────────────────────────────────────────────────────
 # Claude Code discovers MCP servers via .mcp.json in the working directory.
 # Copy the baked-in config so it's present regardless of where Claude runs.
