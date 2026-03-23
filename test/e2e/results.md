@@ -1,10 +1,10 @@
 # E2E Test Results
 
-Tested: 2026-03-22 (full retest of all prompts)
+Tested: 2026-03-23 (full retest of all prompts)
 
 Run `/run-e2e` to retest prompts and update this file.
 
-**Summary: 88 PASS, 1 FAIL, 0 SKIP (89 total)**
+**Summary: 98 PASS, 1 FAIL, 0 SKIP (99 total)**
 
 | Section | PASS | FAIL | SKIP |
 |---------|------|------|------|
@@ -16,6 +16,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 6. Library and Ecosystem | 5 | 0 | 0 |
 | 7. Debugging | 12 | 0 | 0 |
 | 8. Performance | 9 | 0 | 0 |
+| 9. Textbook / Education RAG | 10 | 0 | 0 |
 
 ---
 
@@ -144,9 +145,24 @@ Run `/run-e2e` to retest prompts and update this file.
 | 8.4 | Which sentences in examples/algebra.v take the most compilation time? | PASS | profile_proof timing mode returned per-sentence entries with real_time_s, user_time_s, sys_time_s |
 | 8.5 | simpl in * is taking 15 seconds — why is it slow? | PASS | tactic_lookup returned simpl metadata (kind: ltac, is_recursive: true) |
 | 8.6 | Typeclass resolution is the bottleneck — how do I speed it up? | PASS | tactic_lookup returned eauto metadata (kind: ltac, category: automation, is_recursive: true) |
-| 8.7 | Show me the Ltac call-tree breakdown for my_crush in examples/automation.v | PASS | profile_proof ltac mode returned call-tree: my_crush 100% → lia 85% → zchecker 31%, zify_op 17.2%, reflexivity 6.2%, intros 2.7% |
+| 8.7 | Show me the Ltac call-tree breakdown for my_crush in examples/automation.v | PASS | profile_proof ltac mode returned call-tree: my_crush 100% → reflexivity 53.3%, intros 15.0% (via crush_test_1) |
 | 8.8 | Profile overcomplicated in examples/lint_targets.v, then profile Nat.add_comm — compare the timings | PASS | extract_proof_trace returned duration_ms for both: overcomplicated 4 steps, add_comm 2 steps — timing comparison possible |
-| 8.9 | Profile all .v files in examples/ and show me the slowest files and lemmas | PASS | profile_proof timing mode called on all 8 .v files; slowest: algebra.v 0.272s, flocq.v 0.156s, automation.v 0.109s, typeclasses.v 0.105s |
+| 8.9 | Profile all .v files in examples/ and show me the slowest files and lemmas | PASS | profile_proof timing mode called on all 8 .v files; slowest: typeclasses.v 0.223s, algebra.v 0.216s, lint_targets.v 0.210s, automation.v 0.207s |
+
+## 9. Textbook / Education RAG
+
+| # | Prompt | Result | Reason |
+|---|--------|--------|--------|
+| 9.1 | /textbook how does induction work in Coq? | PASS | education_context returned 5 passages from LF > IndPrinciples (score 0.49), LF > IndProp (score 0.49), VFA > Trie (score 0.55) |
+| 9.2 | /textbook what is a proposition vs a boolean in Coq? | PASS | education_context returned 5 passages including VFA > Decide on sumbool/Prop/bool (score 0.59) |
+| 9.3 | /textbook how do I use the rewrite tactic? | PASS | education_context returned 5 passages from LF > Tactics (score 0.67), PLF > LibTactics, PLF > UseTactics |
+| 9.4 | /textbook when should I use inversion vs destruct? | PASS | education_context returned 5 passages from PLF > UseTactics (score 0.51), LF > Tactics (score 0.50), LF > ProofObjects |
+| 9.5 | /textbook --volume lf what are inductively defined types? | PASS | education_context with volume=lf returned 5 passages all from LF: Basics (score 0.77), IndPrinciples (score 0.65), Poly, Lists |
+| 9.6 | /textbook --volume plf what is the simply typed lambda calculus? | PASS | education_context with volume=plf returned 5 passages all from PLF: Stlc (score 0.81), References, StlcProp, MoreStlc |
+| 9.7 | /textbook how do I prove things by case analysis? | PASS | education_context returned 5 passages from LF > Imp, LF > Induction, LF > Tactics, LF > Basics |
+| 9.8 | /textbook what is the difference between assert and have? | PASS | education_context returned 5 passages from PLF > LibTactics on asserts (score 0.58), PLF > Hoare on Assertions (score 0.56) |
+| 9.9 | /textbook forall n : nat, n + 0 = n | PASS | education_context returned 5 passages from LF > Basics (score 0.76), LF > Induction with add_0_r proof (score 0.69) |
+| 9.10 | /textbook what is a Hoare triple? | PASS | education_context returned 5 passages from PLF > Hoare (score 0.68), PLF > HoareAsLogic, SLF > Triples |
 
 ---
 
