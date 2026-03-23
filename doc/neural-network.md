@@ -109,6 +109,23 @@ Target extraction success rates are ≥ 95% for Stdlib and ≥ 90% for MathComp.
 
 **Proof trace structure.** For each successfully extracted proof, the pipeline records a sequence of steps. Each step contains: (a) the proof state after the tactic application (goal types and hypotheses), and (b) the premises used by that tactic (with kind annotations distinguishing global declarations from local hypotheses). Step 0 is the initial state with no tactic.
 
+**Proof state, tactics, goals, and hypotheses.** A *proof state* is a snapshot of the Coq proof environment at a single point in time. It contains a list of *goals* — the propositions that remain to be proved — and a *focused goal index* indicating which goal the next tactic will act on. Each goal carries its own list of *hypotheses*: the named assumptions in scope above the turnstile (⊢). For example, in the context `n : nat, IHn : P n ⊢ P (S n)`, `n` and `IHn` are hypotheses and `P (S n)` is the goal type.
+
+A *tactic* is a proof command that transforms one proof state into the next. Different tactics affect the goal list in different ways: `induction n` replaces one goal with a base case and inductive step (increasing the goal count); `split` decomposes a conjunction into two subgoals; `exact` or `reflexivity` discharges the focused goal entirely (decreasing the count); `rewrite` modifies the focused goal's type while preserving the hypothesis context. When the goal list is empty, the proof is complete.
+
+The extraction pipeline records a `TraceStep` for each tactic application. Each `TraceStep` pairs a tactic string with the `ProofState` that results *after* executing that tactic. Step 0 is the initial state (no tactic); steps 1 through *N* each record both the tactic and its resulting state. The full proof trace is the sequence `[step_0, step_1, …, step_N]`, where `step_N.state.goals` is empty for a complete proof.
+
+Concretely, a proof of `forall n, n + 0 = n` produces a trace like:
+
+| Step | Tactic | Goals after | Hypotheses (focused goal) | Premises used |
+|------|--------|-------------|---------------------------|---------------|
+| 0 | *(none)* | `n + 0 = n` | `n : nat` | — |
+| 1 | `induction n` | `0 + 0 = 0`; `S n + 0 = S n` | goal 0: *(none)*; goal 1: `n : nat`, `IHn : n + 0 = n` | `nat_ind` |
+| 2 | `reflexivity` | `S n + 0 = S n` | `n : nat`, `IHn : n + 0 = n` | `eq_refl` |
+| 3 | `simpl; rewrite IHn; reflexivity` | *(empty — proof complete)* | — | `IHn` |
+
+This structure means each training example has access to the full proof context — not just the tactic text, but the precise set of goals and hypotheses that motivated the tactic choice and determined which premises were relevant.
+
 **Training pair construction.** From the step sequence, we construct (proof_state, premises_used) pairs by pairing the goals from step *k*−1 (the state *before* the tactic) with the global premises from step *k* (the premises the tactic consumed):
 
 ```
