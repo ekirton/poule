@@ -11,8 +11,6 @@ Poule indexes compiled Coq `.vo` libraries into a SQLite database and provides m
 
 Six Coq libraries are available as prebuilt indexes: **stdlib**, **MathComp**, **std++**, **Flocq**, **Coquelicot**, and **CoqInterval**. All 6 are downloaded and merged into a single searchable index — no configuration required.
 
-> 👉 **TL;DR — [See examples of what you can ask Poule](examples/README.md)**
-
 ## Features
 
 ### Search
@@ -125,58 +123,7 @@ The launcher automatically pulls the latest container image each time you run `p
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is Anthropic's agentic coding tool — you interact with it in natural language from your terminal. Poule extends Claude's capabilities through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/): when you ask Claude a question about Coq, it automatically calls the right Poule tools behind the scenes and presents the results in plain language. You never need to invoke Poule tools directly.
 
-For example, you can ask Claude things like:
-
-**Search — find lemmas you didn't know existed:**
-- *"Find lemmas about list reversal being involutive"*
-- *"Search for lemmas with type `forall n : nat, n + 0 = n`"*
-- *"I need a lemma that says filtering a list twice is the same as filtering once"*
-- *"What MathComp lemmas deal with matrix determinants?"*
-- *"Find something in Flocq about rounding errors on addition"*
-
-**Exploration — navigate unfamiliar libraries:**
-- *"What's in the Corelib.Arith module?"*
-- *"Give me an overview of the MathComp ssreflect sequence lemmas"*
-- *"What typeclasses does std++ provide for finite maps?"*
-- *"How does Coquelicot define integration?"*
-
-**Proof interaction:**
-- *"Open a proof session on `rev_involutive` in `examples/lists.v` and show me the current goal"*
-- *"Step through the proof of `add_comm` in `examples/arith.v` and explain each tactic"*
-- *"Try applying `intros` then `induction l` in my current proof session"*
-
-**Profiling — find and fix performance bottlenecks:**
-- *"Profile the proof of `ring_morph` in `examples/algebra.v` — what's making it slow?"*
-- *"Profile `examples/algebra.v` and show me the slowest lemmas"*
-- *"Why does `Qed` take 30 seconds on this proof? Is it the tactics or the kernel re-checking?"*
-- *"Compare timing before and after my optimization"*
-
-**Debugging automation — understand why tactics fail:**
-- *"Why doesn't `auto` solve this goal? The lemma is right there in the hint database"*
-- *"Why wasn't `bpow_ge_0` used by `auto`? I registered it as a hint"*
-- *"Compare `auto`, `eauto`, and `typeclasses eauto` on my current goal"*
-
-**Dependent pattern matching — fix `destruct` failures:**
-- *"I got 'Abstracting over ... leads to an ill-typed term' — what went wrong?"*
-- *"`destruct` lost the equality between my index and the constructor — how do I fix this?"*
-- *"Generate the convoy pattern boilerplate for this match"*
-
-**Setoid rewriting — fix `Proper` constraint errors:**
-- *"Why does `setoid_rewrite` fail with 'Unable to satisfy Proper constraint'?"*
-- *"Generate the `Proper` instance I need for `union` with `eq_set`"*
-- *"`rewrite` can't find the subterm inside this `forall` — what do I do?"*
-
-**Dependencies — understand how lemmas connect:**
-- *"What lemmas does `Nat.add_comm` depend on?"*
-- *"Which lemmas use `Nat.add_0_r`?"*
-- *"Show me other lemmas in the same module as `List.rev_append`"*
-
-**Visualization:**
-- *"Visualize the proof tree for `app_nil_r` in `examples/lists.v`"*
-- *"Show me the dependency graph around `Nat.add_comm`"*
-- *"Render the step-by-step proof evolution of `modus_ponens` in `examples/logic.v`"*
-
-Claude will search the index, manage proof sessions, and generate diagrams on your behalf. When Claude calls a visualization tool, it writes `proof-diagram.html` to your project directory (the folder you started `poule` from, or `POULE_PROJECT_DIR` if set) — open it in your browser to see the rendered diagram. Bookmark the file and refresh after each visualization call.
+> 👉 **[See examples of what you can ask](https://github.com/ekirton/Poule/blob/main/examples/README.md)** — search, proof interaction, profiling, debugging, visualization, and more.
 
 **Skills (slash commands):**
 
