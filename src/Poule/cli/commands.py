@@ -1076,6 +1076,151 @@ def cmd_tune(
     click.echo(f"Study database:  {result.study_path}", err=True)
 
 
+@cli.command("tune-rrf")
+@_db_option
+@click.argument("data", nargs=-1, required=True)
+@click.option("--output-dir", required=True, type=click.Path(), help="Directory for RRF study output.")
+@click.option("--n-trials", default=30, type=int, help="Number of Optuna trials (default: 30).")
+@click.option("--study-name", default="poule-rrf-hpo", help="Optuna study name.")
+@click.option("--resume", is_flag=True, default=False, help="Resume an existing study.")
+@click.option("--checkpoint", default=None, type=click.Path(exists=True), help="Neural model checkpoint for phase 3 (combined).")
+def cmd_tune_rrf(
+    db: str,
+    data: tuple[str, ...],
+    output_dir: str,
+    n_trials: int,
+    study_name: str,
+    resume: bool,
+    checkpoint: str | None,
+):
+    """Optimize RRF k and per-channel weights for premise retrieval.
+
+    Without --checkpoint: Phase 1 (symbol-only, 3 channels).
+    With --checkpoint: Phase 3 (combined symbol + neural, 4 channels).
+    """
+    from Poule.fusion.rrf_tuner import (
+        RRFTuner,
+        precompute_channel_results,
+    )
+    from Poule.neural.training.data import TrainingDataLoader
+    from Poule.pipeline.context import create_context
+
+    jsonl_paths = _validate_input_files(data)
+
+    click.echo("Loading training data...", err=True)
+    dataset = TrainingDataLoader.load(jsonl_paths, Path(db))
+    val_data = dataset.val
+    if not val_data:
+        click.echo("No validation data found (need files at position % 10 == 8).", err=True)
+        sys.exit(1)
+    click.echo(f"  val queries: {len(val_data)}", err=True)
+
+    click.echo("Loading pipeline context...", err=True)
+    ctx = create_context(db)
+
+    click.echo("Pre-computing channel results...", err=True)
+    cached = precompute_channel_results(val_data, ctx)
+    click.echo(f"  cached {len(cached)} queries", err=True)
+
+    channel_names = ["structural", "mepo", "fts"]
+
+    if checkpoint is not None:
+        channel_names.append("neural")
+        click.echo("Loading neural model for phase 3...", err=True)
+        try:
+            from Poule.neural.training.trainer import load_checkpoint
+            from Poule.neural.training.evaluator import RetrievalEvaluator
+
+            ckpt = load_checkpoint(checkpoint)
+            evaluator = RetrievalEvaluator()
+            # Encode neural rankings for each cached query
+            click.echo("Computing neural rankings...", err=True)
+            _add_neural_rankings(cached, val_data, checkpoint, dataset, db)
+        except Exception as exc:
+            click.echo(f"Failed to load neural model: {exc}", err=True)
+            sys.exit(1)
+
+    click.echo(
+        f"Starting RRF optimization ({n_trials} trials, "
+        f"{len(channel_names)} channels: {', '.join(channel_names)})...",
+        err=True,
+    )
+    result = RRFTuner.tune(
+        cached_results=cached,
+        output_dir=Path(output_dir),
+        n_trials=n_trials,
+        channel_names=channel_names,
+        study_name=study_name,
+        resume=resume,
+    )
+
+    # Human-readable summary
+    click.echo("\nRRF Optimization Results", err=True)
+    click.echo("=" * 24, err=True)
+    click.echo(f"Trials:       {result.n_trials}", err=True)
+    click.echo(f"Best k:       {result.best_k}", err=True)
+    click.echo(f"Best R@32:    {result.best_recall_32:.4f}", err=True)
+    click.echo("", err=True)
+    click.echo("Best channel weights:", err=True)
+    for name, weight in sorted(result.best_weights.items()):
+        click.echo(f"  {name:20s} {weight:.4f}", err=True)
+    click.echo("", err=True)
+    click.echo(f"Study database:  {result.study_path}", err=True)
+
+
+def _add_neural_rankings(cached, val_data, checkpoint_path, dataset, db_path):
+    """Add neural channel rankings to pre-computed queries."""
+    import torch
+    from Poule.neural.training.trainer import load_checkpoint
+    from Poule.neural.training.model import BiEncoder
+    from transformers import AutoTokenizer
+
+    ckpt = load_checkpoint(checkpoint_path)
+    model = BiEncoder(embedding_dim=ckpt.get("embedding_dim", 256))
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.eval()
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        ckpt.get("tokenizer_name", "bert-base-uncased")
+    )
+    max_seq = ckpt.get("max_seq_length", 256)
+
+    # Encode all premises
+    premise_names = list(dataset.premise_corpus.keys())
+    premise_texts = [dataset.premise_corpus[n] for n in premise_names]
+
+    with torch.no_grad():
+        premise_embs = _batch_encode(model, tokenizer, premise_texts, max_seq)
+
+        for i, (proof_state, _) in enumerate(val_data):
+            state_emb = _batch_encode(model, tokenizer, [proof_state], max_seq)
+            similarities = torch.nn.functional.cosine_similarity(
+                state_emb, premise_embs, dim=1,
+            )
+            top_k = torch.topk(similarities, min(500, len(premise_names)))
+            neural_ranked = [
+                (premise_names[idx], similarities[idx].item())
+                for idx in top_k.indices
+            ]
+            cached[i].neural = neural_ranked
+
+
+def _batch_encode(model, tokenizer, texts, max_seq, batch_size=64):
+    """Encode texts through model in batches."""
+    import torch
+
+    all_embs = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        tokens = tokenizer(
+            batch, padding=True, truncation=True,
+            max_length=max_seq, return_tensors="pt",
+        )
+        embs = model(tokens["input_ids"], tokens["attention_mask"])
+        all_embs.append(embs.detach().cpu())
+    return torch.cat(all_embs, dim=0)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

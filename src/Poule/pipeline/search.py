@@ -15,7 +15,7 @@ from Poule.models.tree import ExprTree, recompute_depths, assign_node_ids
 from Poule.models.tree import node_count as _node_count
 from Poule.channels.ted import ted_similarity
 from Poule.channels.wl_kernel import wl_histogram, wl_screen
-from Poule.fusion.fusion import collapse_match, rrf_fuse
+from Poule.fusion.fusion import collapse_match, rrf_fuse, weighted_rrf_fuse
 from Poule.normalization.constr_node import App, Const, Lambda, Prod, Rel, Sort
 from Poule.normalization.cse import cse_normalize
 from Poule.normalization.errors import NormalizationError as _InternalNormalizationError
@@ -538,7 +538,13 @@ def search_by_type(ctx: Any, type_expr: str, limit: int) -> list[Any]:
     fts_pairs = [(r.name, r.score) for r in fts_results]
 
     # Step 5: RRF fusion
-    fused = rrf_fuse([structural_scored, mepo_results, fts_pairs], k=60)
+    ranked_lists = [structural_scored, mepo_results, fts_pairs]
+    if ctx.rrf_weights is not None:
+        channel_names = ["structural", "mepo", "fts"]
+        weights = [ctx.rrf_weights.get(name, 1.0) for name in channel_names]
+        fused = weighted_rrf_fuse(ranked_lists, weights, k=ctx.rrf_k)
+    else:
+        fused = rrf_fuse(ranked_lists, k=ctx.rrf_k)
 
     # Step 6: Sort by RRF score descending, take top limit
     fused = sorted(

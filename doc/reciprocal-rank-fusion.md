@@ -119,44 +119,85 @@ Fused ranking: [d2, d3, d1, d4]
 
 Declaration d2 ranks highest because it appears in both channels. The fusion naturally rewards declarations that are relevant across multiple independent signals.
 
-## 5. Optimizing *k*
+## 5. Optimizing *k* and Per-Channel Weights
 
 ### 5.1 Motivation
 
 The value *k* = 60 is a literature default, not an empirically validated choice for Coq premise retrieval. Research on fusion functions for hybrid retrieval (Bruch et al., 2022) demonstrates that RRF is sensitive to *k*: sweeping *k* from 1 to 100 causes multi-point swings in NDCG@1000 and Recall@*K*, and values tuned on one domain generalize poorly to others. The recommended practical range is *k* ≈ 46–60, but domain-specific optimization is necessary.
 
-For Coq premise selection specifically, the channels have distinctive rank distributions — MePo tends to produce short, high-confidence lists while WL screening produces longer, noisier lists — suggesting that the optimal *k* may differ from the generic default.
+For Coq premise selection specifically, the channels have distinctive rank distributions — MePo tends to produce short, high-confidence lists while WL screening produces longer, noisier lists — suggesting that the optimal *k* may differ from the generic default. Furthermore, equal weighting of channels is unlikely to be optimal when channels differ in both precision and recall characteristics.
 
-### 5.2 Optimization Protocol
+### 5.2 Weighted RRF
 
-We optimize *k* using Optuna with the Tree-structured Parzen Estimator (TPE) sampler, the same framework already used for neural training hyperparameter optimization.
-
-**Objective.** Recall@32 on the held-out test set (the same evaluation set described in §4 of the neural premise selection paper). For each trial, the full retrieval pipeline runs over all evaluation queries with the trial's *k* value, and the mean Recall@32 across queries is reported to Optuna.
-
-**Search space.**
-
-| Parameter | Range | Type |
-|-----------|-------|------|
-| *k* | [1, 100] | Integer |
-
-**Sampler.** TPE with default settings. For a 1-dimensional integer search over 100 values, TPE converges in approximately 20–30 trials.
-
-**Protocol.**
-
-1. Load the held-out test set: (proof_state, ground_truth_premises) pairs from files in the test split.
-2. For each Optuna trial:
-   a. Sample *k* from [1, 100].
-   b. For each test query, run all channels and fuse via `rrf_fuse(ranked_lists, k=k_trial)`.
-   c. Compute Recall@32 for each query; report the mean to Optuna.
-3. After all trials complete, report the best *k* and its Recall@32.
-
-### 5.3 Extensions
-
-**Per-channel weights.** Standard RRF weights all channels equally. An extension assigns a weight *w_c* to each channel:
+Standard RRF weights all channels equally. We extend it with per-channel weights *w_c*:
 
 $$\text{WRRF}(d) = \sum_{c \in \text{channels}} \frac{w_c}{k + \text{rank}_c(d)}$$
 
-This can be optimized jointly with *k* by adding *w_c* ∈ [0.0, 2.0] for each channel to the Optuna search space. The dimensionality remains low (5 parameters for 4 channels + *k*), well within TPE's effective range.
+A weight of 0.0 silences a channel entirely; 1.0 recovers standard RRF for that channel; values above 1.0 amplify its contribution. This is implemented as `weighted_rrf_fuse(ranked_lists, weights, k)` in `src/Poule/fusion/fusion.py`.
+
+### 5.3 Three-Phase Optimization Pipeline
+
+Optimization proceeds in three independent phases, each producing comparable Recall@32 numbers on the same held-out test set. This structure isolates each retrieval signal's contribution.
+
+**Phase 1: Symbol-only optimization.** Optimize *k* and per-channel weights (*w*_structural, *w*_mepo, *w*_fts) for the three symbolic channels. This establishes the symbol-only baseline.
+
+**Phase 2: Neural training with HPO.** Train the bi-encoder model with Optuna hyperparameter optimization (existing `HyperparameterTuner`). This establishes the neural-only baseline.
+
+**Phase 3: Combined optimization.** Optimize *k* and per-channel weights (*w*_structural, *w*_mepo, *w*_fts, *w*_neural) for all four channels using the trained model from phase 2. The *k* value may differ from phase 1 because the neural channel's rank distribution changes the fusion dynamics.
+
+Phases 1 and 2 are independent and can run in parallel. Phase 3 requires the trained checkpoint from phase 2.
+
+### 5.4 Optimization Protocol
+
+We optimize *k* and weights using Optuna with the TPE sampler, the same framework used for neural training hyperparameter optimization.
+
+**Objective.** Recall@32 on the validation split (position mod 10 == 8). The test split (position mod 10 == 9) is reserved for final evaluation only — optimizing against it would leak.
+
+**Search space.**
+
+| Parameter | Range | Type | Phase 1 | Phase 3 |
+|-----------|-------|------|---------|---------|
+| *k* | [1, 100] | Integer | Yes | Yes |
+| *w*_structural | [0.0, 2.0] | Float | Yes | Yes |
+| *w*_mepo | [0.0, 2.0] | Float | Yes | Yes |
+| *w*_fts | [0.0, 2.0] | Float | Yes | Yes |
+| *w*_neural | [0.0, 2.0] | Float | No | Yes |
+
+**Sampler.** TPE with seed=42. For 4–5 parameters, TPE converges in approximately 30–50 trials.
+
+**Pre-compute then sweep.** Channel ranked lists are independent of *k* and weights. The protocol pre-computes all channel results for all validation queries once (expensive), then each Optuna trial only re-fuses with different parameters (sub-second). This reduces total optimization time from hours to minutes.
+
+**Protocol.**
+
+1. Load the validation split: (proof_state, ground_truth_premises) pairs from files at position mod 10 == 8.
+2. Pre-compute channel ranked lists for all validation queries (structural, MePo, FTS, and optionally neural). Resolve all declaration IDs to names for comparison with ground truth.
+3. For each Optuna trial:
+   a. Sample *k* and per-channel weights.
+   b. For each query, fuse pre-computed ranked lists via `weighted_rrf_fuse(channels, weights, k=k_trial)`.
+   c. Compute Recall@32; report the mean to Optuna.
+4. After all trials complete, report the best *k*, weights, and Recall@32.
+5. Evaluate the best parameters on the held-out test split and report final Recall@32.
+
+**CLI.**
+
+```bash
+# Phase 1: symbol-only (3 channels, 4 parameters)
+poule tune-rrf --db index.db training-data.jsonl --output-dir rrf-sym --n-trials 30
+
+# Phase 3: combined (4 channels, 5 parameters)
+poule tune-rrf --db index.db training-data.jsonl --output-dir rrf-combined \
+  --n-trials 50 --checkpoint model.pt
+```
+
+### 5.5 Validation Set Considerations
+
+The validation split is used for three tuning tasks: symbol-only *k*/weights (phase 1), neural HPO/early stopping (phase 2), and combined *k*/weights (phase 3). This is standard practice — the validation set exists for all tuning decisions. The test set remains untouched for final reporting.
+
+The neural model selected via validation in phase 2 may perform slightly better on validation queries than on unseen data (the model was selected to maximize validation Recall@32). This could cause phase 3 to slightly overweight the neural channel. In practice, this bias is small because early stopping creates only a modest val-test gap for well-regularized models. Reporting both validation and test Recall@32 for all three phases reveals whether this is significant.
+
+With 10,000+ ground truth pairs, the 10% validation split provides ~1,000 queries — sufficient for a 5-parameter search (standard error ≈ 1.6 percentage points at Recall@32 ≈ 0.5). If the validation set is smaller (<200 queries), consider increasing it to 20% (position mod 10 == 7 or 8 → validation).
+
+### 5.6 Future Extensions
 
 **Convex combination as alternative.** Bruch et al. (2022) advocate for convex combination (CC) fusion — a learned weight α ∈ [0, 1] combining normalized channel scores — as superior to RRF when annotated queries are available. CC requires only ~40 annotated queries to outperform RRF via Bayesian optimization. This could be explored as an alternative to RRF if score normalization across channels proves tractable.
 

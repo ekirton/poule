@@ -132,7 +132,27 @@ Training details:
 | 50K pairs (stdlib + MathComp) | 24GB GPU (A6000/4090) | ~8 hours | $50–100 |
 | 100K+ pairs (multi-project) | 24GB GPU (A6000/4090) | ~16 hours | $100–200 |
 
-## Step 5: Evaluate the model
+## Step 5: Optimize RRF fusion parameters
+
+Before evaluating the combined pipeline, optimize the RRF smoothing constant *k* and per-channel weights. This is done in two phases:
+
+```bash
+# Phase 1: Symbol-only — optimize k and weights for structural, MePo, FTS channels
+poule tune-rrf --db index.db training-data.jsonl --output-dir rrf-sym --n-trials 30
+
+# Phase 3: Combined — optimize k and weights for all 4 channels (requires trained model)
+poule tune-rrf --db index.db training-data.jsonl --output-dir rrf-combined \
+  --n-trials 50 --checkpoint model.pt
+```
+
+Each phase pre-computes all channel ranked lists once, then sweeps parameters via Optuna — each trial is sub-second. The optimizer uses the validation split (position mod 10 == 8) and reports:
+- Best *k* value
+- Per-channel weights (*w*_structural, *w*_mepo, *w*_fts, and optionally *w*_neural)
+- Best Recall@32 on validation
+
+The *k* values for symbol-only and combined fusion may differ — this is expected since the neural channel changes the rank distribution dynamics. Use `--resume` to continue an interrupted study.
+
+## Step 6: Evaluate the model
 
 Measure retrieval quality on the held-out test set.
 
@@ -152,7 +172,7 @@ Deployment gates (advisory):
 - Neural Recall@32 ≥ 50%
 - Union relative improvement ≥ 15% over symbolic-only
 
-## Step 6: Quantize for deployment
+## Step 7: Quantize for deployment
 
 Convert the PyTorch checkpoint to INT8 ONNX for CPU inference.
 
@@ -167,7 +187,7 @@ The quantization pipeline:
 
 Result: ~100MB ONNX file (vs. ~400MB full precision), <10ms per encoding on CPU.
 
-## Step 7: Publish the model
+## Step 8: Publish the model
 
 Include the ONNX model and vocabulary in the `index-merged` GitHub Release:
 
@@ -185,7 +205,7 @@ Users can also download the model separately:
 poule-dev uv run python -m poule.cli download-index --output ~/data/index.db --include-model
 ```
 
-## Step 8: Rebuild the index with embeddings
+## Step 9: Rebuild the index with embeddings
 
 When the search index is rebuilt with a model checkpoint and vocabulary present, an embedding pass runs automatically after the standard indexing pass:
 
@@ -231,14 +251,21 @@ poule train \
   --db index.db \
   --output model.pt
 
-# 5. Evaluate
+# 5. Optimize RRF fusion parameters
+# Phase 1: symbol-only baseline
+poule tune-rrf --db index.db training-data.jsonl --output-dir rrf-sym --n-trials 30
+# Phase 3: combined symbol + neural
+poule tune-rrf --db index.db training-data.jsonl --output-dir rrf-combined \
+  --n-trials 50 --checkpoint model.pt
+
+# 6. Evaluate
 poule evaluate --checkpoint model.pt --test-data training-data.jsonl --db index.db
 poule compare  --checkpoint model.pt --test-data training-data.jsonl --db index.db
 
-# 6. Quantize
+# 7. Quantize
 poule quantize --checkpoint model.pt --output neural-premise-selector.onnx
 
-# 7. Publish (includes model + vocabulary in the GitHub Release)
+# 8. Publish (includes model + vocabulary in the GitHub Release)
 ./scripts/publish-indexes.sh \
   --model neural-premise-selector.onnx \
   --vocabulary coq-vocabulary.json

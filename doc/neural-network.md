@@ -248,7 +248,13 @@ The quantized model runs at <10ms per encoding on CPU, enabling sub-second retri
 
 ### 3.8 Integration with Hybrid Retrieval
 
-The neural retrieval channel is one of several in the search pipeline. At query time, a proof state is encoded and compared against precomputed premise embeddings via cosine similarity. The neural rankings are fused with symbolic channel rankings (WL kernel, MePo symbol overlap, FTS5) using reciprocal rank fusion (RRF). The fused ranking is returned to an LLM reasoning layer via MCP, which serves as an implicit reranking and reasoning stage — performing a function analogous to the cross-encoder reranking stage in systems like Magnushammer, but with the additional capability of incorporating contextual reasoning about the proof state.
+The neural retrieval channel is one of several in the search pipeline. At query time, a proof state is encoded and compared against precomputed premise embeddings via cosine similarity. The neural rankings are fused with symbolic channel rankings (WL kernel, MePo symbol overlap, FTS5) using weighted reciprocal rank fusion (WRRF):
+
+$$\text{WRRF}(d) = \sum_{c \in \text{channels}} \frac{w_c}{k + \text{rank}_c(d)}$$
+
+The smoothing constant *k* and per-channel weights *w_c* are optimized via Optuna in a three-phase pipeline: (1) optimize *k* and weights for the three symbolic channels alone, (2) train the neural model with HPO, (3) optimize *k* and weights for all four channels jointly. Phases 1 and 2 are independent; phase 3 requires the trained model from phase 2. The optimization uses the validation split and pre-computes all channel ranked lists once — each Optuna trial only re-fuses, making it sub-second. See `doc/reciprocal-rank-fusion.md` §5 for the full protocol.
+
+The fused ranking is returned to an LLM reasoning layer via MCP, which serves as an implicit reranking and reasoning stage — performing a function analogous to the cross-encoder reranking stage in systems like Magnushammer, but with the additional capability of incorporating contextual reasoning about the proof state.
 
 ## 4. Evaluation
 
@@ -262,7 +268,7 @@ The central claim of this work is that adding a neural retrieval channel to the 
 
 ### 4.2 Baseline: Symbolic Pipeline
 
-The baseline is the existing symbolic retrieval pipeline operating without the neural channel. It comprises four channels fused via reciprocal rank fusion (RRF) with *k* = 60:
+The baseline is the existing symbolic retrieval pipeline operating without the neural channel. It comprises four channels fused via weighted RRF with empirically optimized *k* and per-channel weights (see §3.8):
 
 | Channel | Algorithm | Signal |
 |---------|-----------|--------|
@@ -271,15 +277,17 @@ The baseline is the existing symbolic retrieval pipeline operating without the n
 | Symbol Overlap | Meng-Paulson (MePo) | Iterative breadth-first symbol overlap |
 | Lexical | FTS5 with BM25 | Full-text lexical matching |
 
-This symbolic pipeline is the base model against which the neural channel must demonstrate improvement. It represents the strongest retrieval configuration achievable without learned embeddings or training data.
+This symbolic pipeline, with optimized fusion parameters, is the base model against which the neural channel must demonstrate improvement. It represents the strongest retrieval configuration achievable without learned embeddings or training data.
 
 ### 4.3 Retrieval Configurations
 
-We evaluate three retrieval configurations to isolate the neural channel's contribution:
+We evaluate three retrieval configurations to isolate the neural channel's contribution, corresponding to the three-phase optimization pipeline described in `doc/reciprocal-rank-fusion.md` §5.3:
 
-1. **Symbolic-only.** The four symbolic channels (§4.2) fused via RRF. This is the baseline.
-2. **Neural-only.** Bi-encoder cosine similarity retrieval using the trained model (§3.4). No symbolic channels.
-3. **Hybrid.** All five channels (four symbolic + neural) fused via RRF with *k* = 60. This is the target deployment configuration.
+1. **Symbolic-only.** The four symbolic channels (§4.2) fused via weighted RRF with optimized *k* and weights from phase 1. This is the baseline.
+2. **Neural-only.** Bi-encoder cosine similarity retrieval using the trained model (§3.4). No symbolic channels. Evaluated after phase 2 (neural training with HPO).
+3. **Hybrid.** All five channels (four symbolic + neural) fused via weighted RRF with separately optimized *k* and weights from phase 3. This is the target deployment configuration.
+
+The *k* values for symbolic-only and hybrid configurations may differ, since the neural channel's rank distribution changes the fusion dynamics.
 
 ### 4.4 Metrics
 
