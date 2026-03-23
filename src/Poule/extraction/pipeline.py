@@ -142,10 +142,8 @@ class PipelineWriter:
         3. Suffix match — find any FQN in *name_to_id* that ends with
            ``.<short_name>``.
 
-        Additionally, if a result carries a normalised expression tree,
-        fully-qualified ``uses`` edges are extracted directly from
-        ``LConst`` nodes in the tree, bypassing ``Print Assumptions``
-        entirely for those edges.
+        Tree-based ``uses`` edges (from ``LConst`` nodes) are pre-merged
+        into ``dependency_names`` by ``process_declaration`` during Pass 1.
         """
         # Build a reverse lookup: short suffix → FQN for efficient
         # suffix matching.  For each FQN like "Coq.Init.Nat.add", we
@@ -189,21 +187,9 @@ class PipelineWriter:
             if src_id is None:
                 continue
 
-            # Collect dependency pairs from Print Assumptions
+            # Collect dependency pairs (Print Assumptions + tree deps,
+            # pre-merged by process_declaration).
             dep_names: list[tuple[str, str]] = getattr(r, "dependency_names", []) or []
-
-            # Supplement with tree-based extraction (FQN names)
-            tree = getattr(r, "tree", None)
-            if tree is not None:
-                try:
-                    from .dependency_extraction import extract_dependencies
-                    tree_deps = extract_dependencies(tree, r.name)
-                    dep_names = list(dep_names) + tree_deps
-                except Exception:
-                    logger.debug(
-                        "Tree-based dependency extraction failed for %s",
-                        r.name, exc_info=True,
-                    )
 
             for target_name, relation in dep_names:
                 dst_id = _resolve(target_name)
@@ -583,6 +569,19 @@ def process_declaration(
     if dependency_names is None:
         dependency_names = backend.get_dependencies(name)
 
+    # Pre-compute tree-based dependencies while the tree is still available.
+    # extract_dependencies is a pure function of (tree, decl_name) — same
+    # result regardless of when it runs.  Existing dedup in
+    # resolve_and_insert_dependencies via seen_edges handles overlap with
+    # Print Assumptions edges.
+    if tree is not None:
+        try:
+            from .dependency_extraction import extract_dependencies
+            tree_deps = extract_dependencies(tree, name)
+            dependency_names = list(dependency_names or []) + tree_deps
+        except Exception:
+            logger.debug("Tree dep extraction failed for %s", name, exc_info=True)
+
     # Extract About metadata from constr_t if available (coq-lsp path).
     about_opacity = constr_t.get("opacity") if isinstance(constr_t, dict) else None
     about_declared_lib = constr_t.get("declared_library") if isinstance(constr_t, dict) else None
@@ -868,6 +867,8 @@ def run_extraction(
                 ids = writer.batch_insert(batch)
                 if ids:
                     name_to_id.update(ids)
+                for r in batch:
+                    r.tree = None
                 batch = []
 
         # Flush remaining batch
@@ -875,6 +876,12 @@ def run_extraction(
             ids = writer.batch_insert(batch)
             if ids:
                 name_to_id.update(ids)
+            for r in batch:
+                r.tree = None
+
+        # Free Pass 1 intermediates no longer needed.
+        del all_declarations
+        decl_data.clear()
 
         # ------------------------------------------------------------------
         # Pass 2: Dependency resolution
@@ -934,6 +941,7 @@ def run_extraction(
     finally:
         if hasattr(backend, "stop"):
             backend.stop()
+        _v_file_cache.clear()
 
 
 def _cleanup_db(db_path: Path) -> None:

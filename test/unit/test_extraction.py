@@ -406,6 +406,73 @@ class TestPass1BatchSize:
             assert len(batch) <= 1000
 
 
+class TestProcessDeclarationMergesTreeDeps:
+    """process_declaration pre-merges tree-extracted deps into dependency_names."""
+
+    def test_process_declaration_merges_tree_deps(self):
+        """dependency_names includes tree-extracted deps after process_declaration."""
+        from Poule.extraction.pipeline import process_declaration
+
+        mock_tree = Mock()
+        backend = Mock()
+        backend.pretty_print.return_value = "forall n, n = n"
+        backend.pretty_print_type.return_value = "Prop"
+
+        with patch("Poule.normalization.normalize.coq_normalize", return_value=mock_tree), \
+             patch("Poule.normalization.cse.cse_normalize"), \
+             patch("Poule.channels.const_jaccard.extract_consts", return_value=[]), \
+             patch("Poule.channels.wl_kernel.wl_histogram", return_value={}), \
+             patch(
+                 "Poule.extraction.dependency_extraction.extract_dependencies",
+                 return_value=[("B.helper", "uses")],
+             ):
+            result = process_declaration(
+                "A.lemma1",
+                "Lemma",
+                object(),  # non-dict constr_t triggers normalization path
+                backend,
+                "A",
+                statement="forall n, n = n",
+                dependency_names=[("C.dep1", "uses")],
+            )
+
+        assert result is not None
+        dep_targets = [t for t, _rel in result.dependency_names]
+        # Tree dep "B.helper" should have been merged
+        assert "B.helper" in dep_targets
+        # Original dep should still be present
+        assert "C.dep1" in dep_targets
+
+    def test_process_declaration_tree_dep_failure_is_silent(self):
+        """If extract_dependencies raises, dependency_names is unchanged."""
+        from Poule.extraction.pipeline import process_declaration
+
+        backend = Mock()
+        backend.pretty_print.return_value = "forall n, n = n"
+        backend.pretty_print_type.return_value = "Prop"
+
+        # Use a dict constr_t with type_signature to trigger text-based path
+        # that will produce a tree, then patch extract_dependencies to fail
+        with patch(
+            "Poule.extraction.dependency_extraction.extract_dependencies",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = process_declaration(
+                "A.lemma1",
+                "Lemma",
+                {"type_signature": "nat -> nat"},
+                backend,
+                "A",
+                statement="forall n, n = n",
+                dependency_names=[("C.dep1", "uses")],
+            )
+
+        assert result is not None
+        # Original deps preserved even if tree dep extraction failed
+        dep_targets = [t for t, _rel in result.dependency_names]
+        assert "C.dep1" in dep_targets
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. Pass 2 — Dependency Resolution
 # ═══════════════════════════════════════════════════════════════════════════
@@ -598,66 +665,45 @@ class TestPass2NameResolution:
         iw.insert_dependencies.assert_not_called()
 
     def test_tree_based_extraction_supplements(self):
-        """When a result has a normalised tree, LConst edges from
-        extract_dependencies are merged with Print Assumptions edges."""
-        # Create a mock tree so the tree-based branch is entered
-        mock_tree = Mock()
+        """Tree deps are pre-merged into dependency_names by process_declaration.
+
+        resolve_and_insert_dependencies no longer reads r.tree — it just
+        processes whatever is in dependency_names.  Tree is None because
+        it was nulled after batch_insert to save memory.
+        """
+        # Tree deps already merged into dependency_names by process_declaration
         r = self._make_result(
             "A.lemma1",
-            [("B.lemma2", "uses")],  # from Print Assumptions
-            tree=mock_tree,
+            [("B.lemma2", "uses"), ("C.def1", "uses")],
+            tree=None,
         )
         name_to_id = {"A.lemma1": 1, "B.lemma2": 2, "C.def1": 3}
 
-        # Patch extract_dependencies to return an additional edge
-        with patch(
-            "Poule.extraction.pipeline.extract_dependencies",
-            create=True,
-        ) as mock_extract, patch(
-            "Poule.extraction.dependency_extraction.extract_dependencies",
-            create=True,
-        ):
-            mock_extract.return_value = [("C.def1", "uses")]
-
-            # We need to patch inside the module where it's imported
-            # The function is imported lazily inside resolve_and_insert_dependencies
-            with patch.dict(
-                "sys.modules",
-                {"Poule.extraction.dependency_extraction": Mock(
-                    extract_dependencies=Mock(return_value=[("C.def1", "uses")])
-                )},
-            ):
-                iw = self._make_writer_and_call([r], name_to_id)
+        iw = self._make_writer_and_call([r], name_to_id)
 
         iw.insert_dependencies.assert_called_once()
         edges = iw.insert_dependencies.call_args[0][0]
-        # Should have edges from both sources
+        # Should have edges from both sources (pre-merged)
         src_dst_pairs = {(e["src"], e["dst"]) for e in edges}
         assert (1, 2) in src_dst_pairs  # from Print Assumptions
         assert (1, 3) in src_dst_pairs  # from tree-based extraction
 
     def test_deduplication(self):
-        """Same edge from both sources is only inserted once."""
-        mock_tree = Mock()
-        # Both Print Assumptions and tree extraction yield the same edge
+        """Same edge appearing twice in dependency_names is only inserted once."""
+        # Both Print Assumptions and tree extraction yielded the same edge;
+        # process_declaration merged them into dependency_names.
         r = self._make_result(
             "A.lemma1",
-            [("B.lemma2", "uses")],
-            tree=mock_tree,
+            [("B.lemma2", "uses"), ("B.lemma2", "uses")],
+            tree=None,
         )
         name_to_id = {"A.lemma1": 1, "B.lemma2": 2}
 
-        with patch.dict(
-            "sys.modules",
-            {"Poule.extraction.dependency_extraction": Mock(
-                extract_dependencies=Mock(return_value=[("B.lemma2", "uses")])
-            )},
-        ):
-            iw = self._make_writer_and_call([r], name_to_id)
+        iw = self._make_writer_and_call([r], name_to_id)
 
         iw.insert_dependencies.assert_called_once()
         edges = iw.insert_dependencies.call_args[0][0]
-        # Deduplicated: only one edge despite two sources
+        # Deduplicated: only one edge despite duplicate entries
         assert len(edges) == 1
         assert edges[0] == {"src": 1, "dst": 2, "relation": "uses"}
 
