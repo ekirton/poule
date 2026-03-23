@@ -212,7 +212,8 @@ COPY --chown=${HOST_UID}:${HOST_GID} commands/ commands/
 COPY --chown=${HOST_UID}:${HOST_GID} .mcp.json CLAUDE.md README.md ./
 
 # ── Build education database from SF HTML ────────────────────────────────
-RUN uv run python -m Poule.education.build \
+# Uses PYTHONPATH directly to avoid uv rebuilding the project package.
+RUN PYTHONPATH=/poule/src python -m Poule.education.build \
         --sf-dir /poule/software-foundations \
         --output /data/education.db \
         --model /data/models/education/encoder.onnx \
