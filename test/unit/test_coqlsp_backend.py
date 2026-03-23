@@ -706,15 +706,18 @@ class TestListDeclarations:
         ]
 
         # _wait_for_diagnostics returns empty list (document-ready signal).
-        # _send_request returns proof/goals results for Search, then About queries.
-        uri_base = "file:///tmp/wily_query_"
-        goals_responses = []
-        for i, msgs in enumerate(
-            [search_messages, about_messages_add, about_messages_mul]
-        ):
-            goals_responses.append(
-                _make_goals_result(f"{uri_base}{i}.v", line=0, messages=msgs)
-            )
+        # _send_request returns proof/goals results for Search, then
+        # Require Import (empty), then About queries.
+        uri_base = "file:///tmp/poule_query_"
+        require_import_result = _make_goals_result(
+            f"{uri_base}1.v", line=0, messages=[]
+        )
+        goals_responses = [
+            _make_goals_result(f"{uri_base}0.v", line=0, messages=search_messages),
+            require_import_result,
+            _make_goals_result(f"{uri_base}1.v", line=1, messages=about_messages_add),
+            _make_goals_result(f"{uri_base}1.v", line=2, messages=about_messages_mul),
+        ]
 
         with (
             patch.object(backend, "_open_document"),
@@ -1795,8 +1798,9 @@ class TestBatchedListDeclarations:
             "file:///tmp/wily_query_0.v", line=1, messages=search_messages
         )
 
-        # Batched About returns 3 message lists in one document
+        # Batched About returns: Require Import result (empty) + 3 About results
         about_batch = [
+            [],  # Require Import result (discarded)
             [_make_sentence_message("Nat.add is a definition")],
             [_make_sentence_message("Nat.mul is a definition")],
             [_make_sentence_message("Nat.sub is a definition")],
@@ -1837,6 +1841,7 @@ class TestBatchedListDeclarations:
         )
 
         about_batch = [
+            [],  # Require Import result (discarded)
             [_make_sentence_message("Expands to: Constant Corelib.Init.Nat.add")],
             [_make_sentence_message("Expands to: Inductive Corelib.Init.Datatypes.nat")],
         ]
@@ -1857,6 +1862,55 @@ class TestBatchedListDeclarations:
         # For /coq/user-contrib/Stdlib/Init/Nat.vo, canonical module is Coq.Init.Nat
         assert kinds["Coq.Init.Nat.Nat.add"] == "definition"
         assert kinds["Coq.Init.Nat.nat"] == "inductive"
+
+    def test_batch_about_includes_require_import(self):
+        """Batch About documents must include Require Import so short names resolve."""
+        backend = self._make_backend()
+
+        search_messages = [
+            _make_sentence_message("Nat.add_comm : forall n m : nat, n + m = m + n"),
+        ]
+        search_goals = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=1, messages=search_messages
+        )
+
+        # _run_vernac_batch receives Require Import + About commands;
+        # first result (for Require Import) is discarded.
+        captured_commands = []
+
+        def capture_batch(commands):
+            captured_commands.extend(commands)
+            # Return one result per command: empty for Require, real for About
+            return [[] for _ in commands[:-1]] + [
+                [_make_sentence_message(
+                    "Nat.add_comm is opaque\n"
+                    "Expands to: Constant Stdlib.Arith.PeanoNat.Nat.add_comm\n"
+                    "Declared in library Stdlib.Numbers.NatInt.NZAdd, line 59"
+                )]
+            ]
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=search_goals),
+            patch.object(backend, "_run_vernac_batch", side_effect=capture_batch),
+        ):
+            result = backend.list_declarations(
+                Path("/coq/user-contrib/Stdlib/Arith/PeanoNat.vo")
+            )
+
+        # The batch must start with Require Import for the module
+        assert captured_commands[0] == "Require Import Arith.PeanoNat."
+        assert captured_commands[1] == "About Nat.add_comm."
+        # Result should have the declaration with correct metadata
+        assert len(result) == 1
+        fqn, kind, constr_t = result[0]
+        assert fqn == "Coq.Arith.PeanoNat.Nat.add_comm"
+        assert kind == "definition"
+        assert constr_t["opacity"] == "opaque"
+        assert constr_t["declared_library"] == "Stdlib.Numbers.NatInt.NZAdd"
+        assert constr_t["declared_line"] == 59
 
 
 # ═══════════════════════════════════════════════════════════════════════════

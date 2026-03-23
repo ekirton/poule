@@ -743,7 +743,7 @@ class CoqLspBackend:
 
         # Batch About queries for kind detection + metadata
         names = [name for name, _type_sig in search_results]
-        about_results = self._batch_get_about_metadata(names)
+        about_results = self._batch_get_about_metadata(names, import_path=import_path)
 
         declarations: list[tuple[str, str, Any]] = []
         for (short_name, type_sig), about in zip(search_results, about_results):
@@ -760,15 +760,27 @@ class CoqLspBackend:
 
         return declarations
 
-    def _batch_get_about_metadata(self, names: list[str]) -> list[AboutResult]:
-        """Batch About queries and parse kind + metadata for declaration names."""
+    def _batch_get_about_metadata(
+        self, names: list[str], *, import_path: str | None = None,
+    ) -> list[AboutResult]:
+        """Batch About queries and parse kind + metadata for declaration names.
+
+        When *import_path* is provided, each batch document begins with
+        ``Require Import <import_path>.`` so that short declaration names
+        (from Search output) are in scope.  The result for this preamble
+        line is discarded.
+        """
         results: list[AboutResult] = []
         batch_size = self._VERNAC_BATCH_SIZE
 
         for i in range(0, len(names), batch_size):
             batch_names = names[i : i + batch_size]
             commands = [f"About {name}." for name in batch_names]
+            if import_path:
+                commands = [f"Require Import {import_path}."] + commands
             all_messages = self._run_vernac_batch(commands)
+            if import_path:
+                all_messages = all_messages[1:]  # discard Require Import result
 
             for name, messages in zip(batch_names, all_messages):
                 results.append(self._parse_about_kind(name, messages))
