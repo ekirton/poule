@@ -296,7 +296,7 @@ done
 # - Symlink Claude Code from /opt into the persistent home
 # - Symlink live-mounted commands/ for immediate edits
 # - Start MCP server, stop on exit via trap
-INIT_CMD='mkdir -p ~/.local/bin ~/.local/share ~/.claude/commands && ln -sf "$(ls -d /opt/claude/versions/* | head -1)" ~/.local/bin/claude && ln -sf /opt/claude ~/.local/share/claude && for f in /poule/commands/*.md; do [ -f "$f" ] && [ "$(basename "$f")" != "CLAUDE.md" ] && ln -sf "$f" ~/.claude/commands/; done && if [ -d ~/.gnupg ]; then rm -f ~/.gnupg/S.gpg-agent* 2>/dev/null; gpg-agent --daemon 2>/dev/null; fi && poule-mcp start && trap "poule-mcp stop 2>/dev/null" EXIT INT TERM'
+INIT_CMD='mkdir -p ~/.local/bin ~/.local/share ~/.claude/commands && ln -sf "$(ls -d /opt/claude/versions/* | head -1)" ~/.local/bin/claude && ln -sf /opt/claude ~/.local/share/claude && for f in /poule/commands/*.md; do [ -f "$f" ] && [ "$(basename "$f")" != "CLAUDE.md" ] && ln -sf "$f" ~/.claude/commands/; done && if [ -d ~/.gnupg ]; then for f in ~/.gnupg/S.gpg-agent*; do [ -e "$f" ] && rm -f "$f"; done; gpg-agent --daemon 2>/dev/null; fi && poule-mcp start && trap "poule-mcp stop 2>/dev/null" EXIT INT TERM'
 
 # Run container with project root mounted
 if [ ${#ARGS[@]} -eq 0 ]; then

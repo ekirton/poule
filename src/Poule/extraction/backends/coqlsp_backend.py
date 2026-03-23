@@ -15,7 +15,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from Poule.extraction.errors import BackendCrashError, ExtractionError
 
@@ -55,6 +55,25 @@ _ASSUMPTION_RE = re.compile(r"^\s*(\S+)\s*:\s*(.+)$", re.MULTILINE)
 
 # Regex for the coqc version string.
 _VERSION_RE = re.compile(r"version\s+([\d.]+)")
+
+# Regex for opacity from About output: "<name> is opaque" / "<name> is transparent"
+_OPACITY_RE = re.compile(r"^\S+\s+is\s+(opaque|transparent)\s*$", re.MULTILINE)
+
+# Regex for declared library and line from About output:
+# "Declared in library <lib>, line <n>[, characters <range>]"
+_DECLARED_LIB_RE = re.compile(
+    r"^Declared in library\s+([\w.]+),\s*line\s+(\d+)", re.MULTILINE
+)
+
+
+class AboutResult(NamedTuple):
+    """Result of parsing an About response: kind, opacity, declared library, and line."""
+
+    kind: str
+    opacity: str | None  # "opaque", "transparent", or None
+    declared_library: str | None  # e.g. "Stdlib.Numbers.NatInt.NZAdd"
+    declared_line: int | None  # 1-based source line number
+
 
 # Kind normalization map for About output.
 _KIND_MAP: dict[str, str] = {
@@ -353,22 +372,38 @@ class CoqLspBackend:
         return diags, messages
 
     @staticmethod
-    def _parse_about_kind(name: str, messages: list[dict[str, Any]]) -> str:
-        """Parse ``About`` output messages to determine the declaration kind.
+    def _parse_about_kind(name: str, messages: list[dict[str, Any]]) -> AboutResult:
+        """Parse ``About`` output messages to determine kind, opacity, declared library, and line.
 
-        Extracted from ``_get_declaration_kind`` so it can be reused for
-        batched About queries.
+        Returns an :class:`AboutResult` namedtuple with ``kind``, ``opacity``,
+        ``declared_library``, and ``declared_line`` fields.  Callers that only
+        need the kind can access ``result.kind``.
         """
         all_text = "\n".join(
             m["text"] for m in messages if m.get("level", 3) != 1
         )
         logger.debug("About output for %s: %r", name, all_text)
 
+        # Extract opacity and declared_library/declared_line from the full text.
+        opacity_match = _OPACITY_RE.search(all_text)
+        opacity: str | None = opacity_match.group(1) if opacity_match else None
+
+        # Take the *last* Declared-in-library line — when a notation aliases
+        # a constant the About output may include two Declared-in lines; the
+        # second one describes the underlying constant.
+        declared_library: str | None = None
+        declared_line: int | None = None
+        for dl_match in _DECLARED_LIB_RE.finditer(all_text):
+            declared_library = dl_match.group(1)
+            declared_line = int(dl_match.group(2))
+
+        # --- Kind detection (unchanged logic) ---
+
         # Rocq 9.x: detect Ltac and Module formats before Expands-to
         if _LTAC_RE.search(all_text):
-            return "ltac"
+            return AboutResult("ltac", opacity, declared_library, declared_line)
         if _MODULE_RE.search(all_text):
-            return "module"
+            return AboutResult("module", opacity, declared_library, declared_line)
 
         # Rocq 9.x: parse all "Expands to: <Category> ..." lines.
         # Prefer Constant/Inductive/Constructor over Notation when both
@@ -380,11 +415,11 @@ class CoqLspBackend:
                 category = category_raw.lower()
                 kind = _EXPANDS_TO_KIND.get(category)
                 if kind and kind != "notation":
-                    return kind
+                    return AboutResult(kind, opacity, declared_library, declared_line)
                 if kind == "notation":
                     notation_seen = True
             if notation_seen:
-                return "notation"
+                return AboutResult("notation", opacity, declared_library, declared_line)
 
         # Coq ≤8.x: parse "X is a Definition/Lemma/Theorem."
         match = _ABOUT_KIND_RE.search(all_text)
@@ -394,11 +429,11 @@ class CoqLspBackend:
             if "universe" not in raw_kind and "transparent" not in raw_kind:
                 for key, value in _KIND_MAP.items():
                     if key in raw_kind:
-                        return value
+                        return AboutResult(value, opacity, declared_library, declared_line)
                 logger.warning(
                     "Unknown declaration kind for %s: %r", name, raw_kind
                 )
-                return raw_kind
+                return AboutResult(raw_kind, opacity, declared_library, declared_line)
 
         if "not a defined object" in all_text:
             logger.debug("About failed for %s (not a defined object)", name)
@@ -406,9 +441,9 @@ class CoqLspBackend:
             logger.warning(
                 "Could not determine kind for %s from About output", name
             )
-        return "definition"
+        return AboutResult("definition", opacity, declared_library, declared_line)
 
-    def _get_declaration_kind(self, name: str) -> str:
+    def _get_declaration_kind(self, name: str) -> AboutResult:
         """Use ``About`` to determine the kind of a declaration."""
         _diags, messages = self._run_vernac_query(f"About {name}.")
         return self._parse_about_kind(name, messages)
@@ -706,25 +741,28 @@ class CoqLspBackend:
         if not search_results:
             return []
 
-        # Batch About queries for kind detection
+        # Batch About queries for kind detection + metadata
         names = [name for name, _type_sig in search_results]
-        kinds = self._batch_get_kinds(names)
+        about_results = self._batch_get_about_metadata(names)
 
         declarations: list[tuple[str, str, Any]] = []
-        for (short_name, type_sig), kind in zip(search_results, kinds):
+        for (short_name, type_sig), about in zip(search_results, about_results):
             fqn = f"{canonical_module}.{short_name}"
             constr_t: dict[str, Any] = {
                 "name": fqn,
                 "type_signature": type_sig,
                 "source": "coq-lsp",
+                "opacity": about.opacity,
+                "declared_library": about.declared_library,
+                "declared_line": about.declared_line,
             }
-            declarations.append((fqn, kind, constr_t))
+            declarations.append((fqn, about.kind, constr_t))
 
         return declarations
 
-    def _batch_get_kinds(self, names: list[str]) -> list[str]:
-        """Batch About queries and parse kinds for a list of declaration names."""
-        kinds: list[str] = []
+    def _batch_get_about_metadata(self, names: list[str]) -> list[AboutResult]:
+        """Batch About queries and parse kind + metadata for declaration names."""
+        results: list[AboutResult] = []
         batch_size = self._VERNAC_BATCH_SIZE
 
         for i in range(0, len(names), batch_size):
@@ -733,9 +771,9 @@ class CoqLspBackend:
             all_messages = self._run_vernac_batch(commands)
 
             for name, messages in zip(batch_names, all_messages):
-                kinds.append(self._parse_about_kind(name, messages))
+                results.append(self._parse_about_kind(name, messages))
 
-        return kinds
+        return results
 
     def pretty_print(self, name: str) -> str:
         """Return the human-readable statement of a declaration."""

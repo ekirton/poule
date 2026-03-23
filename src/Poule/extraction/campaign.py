@@ -136,15 +136,16 @@ def build_campaign_plan(
 ) -> CampaignPlan:
     """Build a deterministic campaign plan from project directories.
 
-    When *index_db_path* is provided, declarations are enumerated from
-    the SQLite index.  Otherwise falls back to legacy regex enumeration
-    (deprecated).
+    Declarations are enumerated from the SQLite index at *index_db_path*.
 
-    Raises ``ValueError`` for empty *project_dirs* and a
-    ``DIRECTORY_NOT_FOUND`` exception for nonexistent directories.
+    Raises ``ValueError`` for empty *project_dirs* or missing
+    *index_db_path*, and a ``DIRECTORY_NOT_FOUND`` exception for
+    nonexistent directories.
     """
     if not project_dirs:
         raise ValueError("project_dirs must not be empty")
+    if index_db_path is None:
+        raise ValueError("index_db_path is required")
 
     # Validate all directories exist before doing anything else.
     for d in project_dirs:
@@ -168,15 +169,10 @@ def build_campaign_plan(
         ))
         dir_to_id.append(project_id)
 
-    if index_db_path is not None:
-        return _build_plan_from_index(
-            project_dirs, projects, dir_to_id,
-            index_db_path, module_prefix or "", scope_filter,
-        )
-
-    # Legacy regex fallback — kept for backward compatibility with existing
-    # tests that don't provide an index.  Will be removed in a future release.
-    return _build_plan_from_regex(project_dirs, projects, dir_to_id, scope_filter)
+    return _build_plan_from_index(
+        project_dirs, projects, dir_to_id,
+        index_db_path, module_prefix or "", scope_filter,
+    )
 
 
 def _build_plan_from_index(
@@ -223,48 +219,6 @@ def _build_plan_from_index(
             skipped += 1
             continue
         targets.append((project_id, source_file, fqn, decl_kind))
-
-    return CampaignPlan(
-        projects=projects,
-        targets=targets,
-        skipped_count=skipped,
-    )
-
-
-def _build_plan_from_regex(
-    project_dirs: list[str],
-    projects: list[ProjectMetadata],
-    dir_to_id: list[str],
-    scope_filter,
-) -> CampaignPlan:
-    """Legacy regex-based campaign plan builder (deprecated)."""
-    import re
-
-    _THEOREM_RE = re.compile(
-        r"^\s*(?:Theorem|Lemma|Proposition|Corollary|Fact)\s+(\w+)\b",
-        re.MULTILINE,
-    )
-
-    targets: list[tuple[str, str, str]] = []
-    skipped = 0
-
-    for idx, d in enumerate(project_dirs):
-        project_id = dir_to_id[idx]
-        v_files = sorted(Path(d).rglob("*.v"))
-
-        for vf in v_files:
-            rel = str(vf.relative_to(d))
-            try:
-                text = vf.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            all_theorems = [m.group(1) for m in _THEOREM_RE.finditer(text)]
-
-            for thm in all_theorems:
-                if scope_filter is not None and _should_skip(scope_filter, thm):
-                    skipped += 1
-                    continue
-                targets.append((project_id, rel, thm))
 
     return CampaignPlan(
         projects=projects,

@@ -1000,7 +1000,7 @@ class TestDeclarationKindDetection:
         ):
             kind = backend._get_declaration_kind("Nat.add")
 
-        assert kind == "definition"
+        assert kind.kind == "definition"
 
     def test_rocq9_inductive_detected(self):
         """Rocq 9.x: 'Expands to: Inductive ...' → inductive."""
@@ -1024,7 +1024,7 @@ class TestDeclarationKindDetection:
         ):
             kind = backend._get_declaration_kind("nat")
 
-        assert kind == "inductive"
+        assert kind.kind == "inductive"
 
     def test_rocq9_constructor_detected(self):
         """Rocq 9.x: 'Expands to: Constructor ...' → constructor."""
@@ -1049,7 +1049,7 @@ class TestDeclarationKindDetection:
         ):
             kind = backend._get_declaration_kind("S")
 
-        assert kind == "constructor"
+        assert kind.kind == "constructor"
 
     def test_rocq9_not_defined_object_falls_back_to_definition(self):
         """Rocq 9.x: 'X not a defined object.' → fallback to definition."""
@@ -1068,7 +1068,7 @@ class TestDeclarationKindDetection:
         ):
             kind = backend._get_declaration_kind("Nat.add_comm")
 
-        assert kind == "definition"
+        assert kind.kind == "definition"
 
     def test_coq8_legacy_kind_format(self):
         """Coq ≤8.x: 'X is a Definition.' → definition."""
@@ -1086,7 +1086,7 @@ class TestDeclarationKindDetection:
         ):
             kind = backend._get_declaration_kind("Nat.add")
 
-        assert kind == "definition"
+        assert kind.kind == "definition"
 
     def test_coq8_legacy_lemma_format(self):
         """Coq ≤8.x: 'X is a Lemma.' → lemma."""
@@ -1104,7 +1104,7 @@ class TestDeclarationKindDetection:
         ):
             kind = backend._get_declaration_kind("foo")
 
-        assert kind == "lemma"
+        assert kind.kind == "lemma"
 
     def test_universe_polymorphic_not_mistaken_for_kind(self):
         """'is not universe polymorphic' must NOT be parsed as a kind."""
@@ -1129,8 +1129,8 @@ class TestDeclarationKindDetection:
             kind = backend._get_declaration_kind("foo")
 
         # Must NOT be "not universe polymorphic"
-        assert "universe" not in kind
-        assert kind == "definition"
+        assert "universe" not in kind.kind
+        assert kind.kind == "definition"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1949,44 +1949,44 @@ class TestParseAboutKind:
         from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
 
         msgs = [_make_sentence_message("Expands to: Constant Corelib.Init.Nat.add")]
-        assert CoqLspBackend._parse_about_kind("Nat.add", msgs) == "definition"
+        assert CoqLspBackend._parse_about_kind("Nat.add", msgs).kind == "definition"
 
     def test_rocq9_inductive(self):
         from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
 
         msgs = [_make_sentence_message("Expands to: Inductive Corelib.Init.Datatypes.nat")]
-        assert CoqLspBackend._parse_about_kind("nat", msgs) == "inductive"
+        assert CoqLspBackend._parse_about_kind("nat", msgs).kind == "inductive"
 
     def test_coq8_lemma(self):
         from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
 
         msgs = [_make_sentence_message("foo is a lemma")]
-        assert CoqLspBackend._parse_about_kind("foo", msgs) == "lemma"
+        assert CoqLspBackend._parse_about_kind("foo", msgs).kind == "lemma"
 
     def test_not_defined_falls_back(self):
         from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
 
         msgs = [_make_sentence_message("X not a defined object.")]
-        assert CoqLspBackend._parse_about_kind("X", msgs) == "definition"
+        assert CoqLspBackend._parse_about_kind("X", msgs).kind == "definition"
 
     def test_empty_messages_falls_back(self):
         from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
 
-        assert CoqLspBackend._parse_about_kind("X", []) == "definition"
+        assert CoqLspBackend._parse_about_kind("X", []).kind == "definition"
 
     def test_rocq9_ltac_detected(self):
         """Rocq 9.x: 'Ltac <path>' → ltac."""
         from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
 
         msgs = [_make_sentence_message("Ltac Corelib.Init.Ltac.reflexivity")]
-        assert CoqLspBackend._parse_about_kind("reflexivity", msgs) == "ltac"
+        assert CoqLspBackend._parse_about_kind("reflexivity", msgs).kind == "ltac"
 
     def test_rocq9_module_detected(self):
         """Rocq 9.x: 'Module <path>' → module."""
         from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
 
         msgs = [_make_sentence_message("Module Corelib.Init.Decimal")]
-        assert CoqLspBackend._parse_about_kind("Decimal", msgs) == "module"
+        assert CoqLspBackend._parse_about_kind("Decimal", msgs).kind == "module"
 
     def test_rocq9_notation_alias_prefers_constant(self):
         """Rocq 9.x: notation aliasing a constant → definition (not notation).
@@ -2010,7 +2010,7 @@ class TestParseAboutKind:
             "Declared in library Corelib.Init.Nat, line 39, characters 11-15"
         )
         msgs = [_make_sentence_message(about_text)]
-        assert CoqLspBackend._parse_about_kind("pred", msgs) == "definition"
+        assert CoqLspBackend._parse_about_kind("pred", msgs).kind == "definition"
 
     def test_rocq9_pure_notation_detected(self):
         """Rocq 9.x: notation with only 'Expands to: Notation' → notation."""
@@ -2022,7 +2022,141 @@ class TestParseAboutKind:
             "Declared in library Corelib.Some, line 10, characters 0-30"
         )
         msgs = [_make_sentence_message(about_text)]
-        assert CoqLspBackend._parse_about_kind("some_notation", msgs) == "notation"
+        assert CoqLspBackend._parse_about_kind("some_notation", msgs).kind == "notation"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 20. About metadata extraction: opacity, declared_library, declared_line (spec §4.1.1)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestParseAboutMetadata:
+    """_parse_about_kind returns AboutResult with kind, opacity, declared_library, declared_line."""
+
+    def test_opaque_constant_rocq9(self):
+        """GIVEN a Rocq 9.x About response with 'is opaque' and 'Declared in library'
+        WHEN _parse_about_kind parses the response
+        THEN it returns kind='definition', opacity='opaque', declared_library and declared_line set.
+
+        Spec §4.1.1: opacity='opaque' indicates Qed-terminated proof.
+        """
+        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        about_text = (
+            "Nat.add_comm : forall n m : nat, n + m = m + n\n"
+            "\n"
+            "Nat.add_comm is not universe polymorphic\n"
+            "Arguments Nat.add_comm (n m)%_nat_scope\n"
+            "Nat.add_comm is opaque\n"
+            "Expands to: Constant Stdlib.Arith.PeanoNat.Nat.add_comm\n"
+            "Declared in library Stdlib.Numbers.NatInt.NZAdd, line 59, characters 8-16"
+        )
+        msgs = [_make_sentence_message(about_text)]
+        result = CoqLspBackend._parse_about_kind("Nat.add_comm", msgs)
+        assert result.kind == "definition"
+        assert result.opacity == "opaque"
+        assert result.declared_library == "Stdlib.Numbers.NatInt.NZAdd"
+        assert result.declared_line == 59
+
+    def test_transparent_constant_rocq9(self):
+        """GIVEN a Rocq 9.x About response with 'is transparent'
+        WHEN _parse_about_kind parses the response
+        THEN opacity='transparent', declared_line extracted.
+
+        Spec §4.1.1: transparent means := definition or Proof...Defined.
+        """
+        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        about_text = (
+            "Nat.add : nat -> nat -> nat\n"
+            "\n"
+            "Nat.add is not universe polymorphic\n"
+            "Nat.add is transparent\n"
+            "Expands to: Constant Corelib.Init.Nat.add\n"
+            "Declared in library Corelib.Init.Nat, line 20, characters 0-40"
+        )
+        msgs = [_make_sentence_message(about_text)]
+        result = CoqLspBackend._parse_about_kind("Nat.add", msgs)
+        assert result.kind == "definition"
+        assert result.opacity == "transparent"
+        assert result.declared_library == "Corelib.Init.Nat"
+        assert result.declared_line == 20
+
+    def test_coq8_no_opacity_no_declared_library(self):
+        """GIVEN a Coq 8.x About response without opacity or declared-library lines
+        WHEN _parse_about_kind parses the response
+        THEN opacity=None, declared_library=None, declared_line=None.
+
+        Spec §4.1.1: these fields are absent in Coq ≤8.x.
+        """
+        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        msgs = [_make_sentence_message("foo is a lemma")]
+        result = CoqLspBackend._parse_about_kind("foo", msgs)
+        assert result.kind == "lemma"
+        assert result.opacity is None
+        assert result.declared_library is None
+        assert result.declared_line is None
+
+    def test_not_defined_object_no_metadata(self):
+        """GIVEN About returns 'not a defined object'
+        WHEN _parse_about_kind parses the response
+        THEN kind defaults to 'definition', all metadata None.
+        """
+        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        msgs = [_make_sentence_message("X not a defined object.")]
+        result = CoqLspBackend._parse_about_kind("X", msgs)
+        assert result.kind == "definition"
+        assert result.opacity is None
+        assert result.declared_library is None
+        assert result.declared_line is None
+
+    def test_declared_library_with_different_module(self):
+        """GIVEN a re-exported declaration where declared_library differs from discovery module
+        WHEN _parse_about_kind parses the response
+        THEN declared_library and declared_line reflect the originating module.
+        """
+        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        about_text = (
+            "Nat.EvenT_0 : Nat.EvenT 0\n"
+            "\n"
+            "Nat.EvenT_0 is not universe polymorphic\n"
+            "Nat.EvenT_0 is opaque\n"
+            "Expands to: Constant Stdlib.Arith.PeanoNat.Nat.EvenT_0\n"
+            "Declared in library Stdlib.Arith.PeanoNat, line 1222, characters 6-13"
+        )
+        msgs = [_make_sentence_message(about_text)]
+        result = CoqLspBackend._parse_about_kind("Nat.EvenT_0", msgs)
+        assert result.opacity == "opaque"
+        assert result.declared_library == "Stdlib.Arith.PeanoNat"
+        assert result.declared_line == 1222
+
+    def test_declared_line_without_characters(self):
+        """GIVEN a Declared-in-library line without the characters suffix
+        WHEN _parse_about_kind parses the response
+        THEN declared_line is still extracted.
+        """
+        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        about_text = (
+            "Expands to: Constant Corelib.Init.Nat.add\n"
+            "Declared in library Corelib.Init.Nat, line 20"
+        )
+        msgs = [_make_sentence_message(about_text)]
+        result = CoqLspBackend._parse_about_kind("Nat.add", msgs)
+        assert result.declared_library == "Corelib.Init.Nat"
+        assert result.declared_line == 20
+
+    def test_backward_compat_kind_only_access(self):
+        """Existing callers that compare result to a string should still work
+        via the .kind attribute — verify the tuple is indexable."""
+        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        msgs = [_make_sentence_message("Expands to: Constant Corelib.Init.Nat.add")]
+        result = CoqLspBackend._parse_about_kind("Nat.add", msgs)
+        assert result.kind == "definition"
 
 
 # ===========================================================================

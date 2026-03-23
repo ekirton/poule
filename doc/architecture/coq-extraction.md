@@ -34,18 +34,35 @@ Per-declaration processing:
 
   8b. Proof-body detection:
      For each declaration whose kind ∈ {lemma, theorem, definition, instance}:
-       Derive .v source path from .vo path: vo_path.with_suffix('.v')
-       If .v file exists:
-         Regex-scan for the declaration's short name preceded by a declaration
-         keyword (Lemma|Theorem|Proposition|Corollary|Fact|Definition|
-         Fixpoint|Instance|...) AND followed by a Proof. keyword before the
-         next declaration keyword.
-         Set has_proof_body = true if both conditions are met, false otherwise.
-       If .v file does not exist:
-         Set has_proof_body = false (conservative default).
-     This check runs during per-declaration processing; it reads each .v file
-     once (cached across all declarations from the same .vo file) and uses
-     the same regex patterns as the session backend's _extract_tactics_regex.
+       Signal 1 — opacity from About output:
+         The About query (already issued for kind detection) includes an
+         opacity annotation in Rocq 9.x: "opaque" for Qed-terminated proofs,
+         "transparent" for := definitions and Defined-terminated proofs.
+         The backend extracts this flag during kind detection at no extra cost.
+         If opacity == "opaque": set has_proof_body = true (done).
+       Signal 2 — Vernacular kind from About output (Coq ≤8.x):
+         In Coq ≤8.x, About preserves the original Vernacular keyword
+         (e.g., "foo is a Lemma"). If kind ∈ {lemma, theorem}: set
+         has_proof_body = true (done). These keywords always enter proof mode.
+         In Rocq 9.x this signal is unavailable — all constants report
+         "Expands to: Constant" regardless of original keyword.
+       Signal 3 — line-anchored .v source check (for transparent/unknown declarations):
+         The About output includes "Declared in library X, line Y, characters ..."
+         which provides the exact source location. The backend extracts both
+         the declared library and the declared line number.
+         Resolve the declared library name to a .v file path using the same
+         prefix-stripping logic as module path derivation (in reverse).
+         Read the .v source line at the declared line number. If the line
+         starts with a proof-requiring Vernacular keyword that always enters
+         proof mode (Lemma, Theorem, Proposition, Corollary, Fact, Remark):
+         set has_proof_body = true (done).
+         For ambiguous keywords at the declared line (Definition, Instance,
+         Fixpoint): scan forward from that line for a Proof keyword
+         (matching "Proof.", "Proof using ...", "Proof with ...") before
+         the next declaration keyword. Set has_proof_body = true if found.
+         If declared_line is unavailable, or the .v file does not exist:
+         set has_proof_body = false (conservative default).
+       .v file reads are cached across all declarations from the same source file.
 
   Pass 2 (after all declarations are inserted):
   9. For each declaration, issue Print Assumptions <name> via coq-lsp.
@@ -80,11 +97,16 @@ The `module` field on each declaration is the logical path of the `.vo` file fro
 
 The logical path is derived from the `.vo` file's filesystem path by stripping known directory prefixes (`user-contrib/`, `theories/`), removing version-specific prefixes (e.g., `Stdlib/`), converting path separators to dots, and removing the `.vo` extension.
 
-### Kind detection
+### Kind detection and About metadata
 
 Declaration kind is not always available directly from the backend's declaration listing. Some backends (e.g., coq-lsp) return only `(name, type_sig)` pairs and require a separate query per declaration to determine the kind. The kind detection mechanism is backend-dependent, and the response format may vary across Coq/Rocq versions. See the extraction specification (§4.1.1) for backend-specific detection contracts.
 
 In Rocq 9.x, the `About` response may include multiple `Expands to:` lines when a notation aliases a real constant (e.g., `pred` is a notation that expands to `Nat.pred`, which is a `Constant`). Kind detection must prefer the underlying constant/inductive/constructor category over the notation category when both are present. This ensures that notation aliases of indexable declarations remain in the index.
+
+The `About` response also contains two additional signals extracted during the same batch:
+
+- **Opacity**: Rocq 9.x About output includes "`<name> is opaque`" or "`<name> is transparent`". Opaque declarations were proved with `Qed` (tactic proof body); transparent declarations were defined with `:=` or proved with `Defined`. This is the primary signal for proof-body detection (see step 8b above).
+- **Declared library and line**: The line "`Declared in library <lib>, line <n>, characters <range>`" names the library and exact source position where the declaration was originally defined. For re-exported declarations (via `Include` or functor application), the declared library differs from the `.vo` file where the declaration was discovered. The backend extracts both the library name and the line number. Proof-body detection uses the declared library to locate the `.v` source file and the declared line to anchor its Vernacular keyword check to the exact declaration (eliminating ambiguity from same-named declarations in nested modules).
 
 ### Kind mapping
 

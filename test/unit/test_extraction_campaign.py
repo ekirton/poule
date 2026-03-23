@@ -16,12 +16,68 @@ import signal
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, MagicMock, call, patch
 
+import sqlite3
+
 import pytest
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+def _create_test_index(db_path, declarations=None):
+    """Create a minimal index.db for testing.
+
+    Each declaration dict needs: name, module, kind.
+    Optional: has_proof_body (default 1).
+    """
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE declarations ("
+        "  id INTEGER PRIMARY KEY,"
+        "  name TEXT UNIQUE NOT NULL,"
+        "  module TEXT NOT NULL,"
+        "  kind TEXT NOT NULL,"
+        "  statement TEXT DEFAULT '',"
+        "  type_expr TEXT,"
+        "  constr_tree BLOB,"
+        "  node_count INTEGER DEFAULT 1,"
+        "  symbol_set TEXT DEFAULT '[]',"
+        "  has_proof_body INTEGER NOT NULL DEFAULT 0"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE dependencies (src INTEGER, dst INTEGER, relation TEXT)"
+    )
+    conn.execute("CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO index_meta VALUES ('schema_version', '1')")
+    conn.execute("INSERT INTO index_meta VALUES ('coq_version', '9.1.1')")
+    conn.execute(
+        "INSERT INTO index_meta VALUES ('created_at', '2026-03-22T00:00:00Z')"
+    )
+    if declarations:
+        for i, decl in enumerate(declarations, 1):
+            conn.execute(
+                "INSERT INTO declarations (id, name, module, kind, has_proof_body) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    i,
+                    decl["name"],
+                    decl["module"],
+                    decl["kind"],
+                    decl.get("has_proof_body", 1),
+                ),
+            )
+    conn.commit()
+    conn.close()
+
+
+def _make_index(tmp_path, declarations=None):
+    """Create a test index.db and return its path as a string."""
+    db_path = tmp_path / "index.db"
+    _create_test_index(db_path, declarations)
+    return str(db_path)
 
 
 def _make_extraction_record(
@@ -135,8 +191,11 @@ class TestBuildCampaignPlanDeterministicOrdering:
         dir_b = tmp_path / "mathcomp"
         dir_a.mkdir()
         dir_b.mkdir()
+        idx = _make_index(tmp_path)
 
-        plan = build_campaign_plan([str(dir_a), str(dir_b)], scope_filter=None)
+        plan = build_campaign_plan(
+            [str(dir_a), str(dir_b)], scope_filter=None, index_db_path=idx,
+        )
 
         assert len(plan.projects) == 2
         assert plan.projects[0].project_id == "stdlib"
@@ -148,10 +207,14 @@ class TestBuildCampaignPlanDeterministicOrdering:
 
         proj = tmp_path / "proj"
         proj.mkdir()
-        (proj / "B.v").write_text("Theorem b1 : True. Proof. exact I. Qed.\n")
-        (proj / "A.v").write_text("Theorem a1 : True. Proof. exact I. Qed.\n")
+        idx = _make_index(tmp_path, [
+            {"name": "B.b1", "module": "B", "kind": "lemma"},
+            {"name": "A.a1", "module": "A", "kind": "lemma"},
+        ])
 
-        plan = build_campaign_plan([str(proj)], scope_filter=None)
+        plan = build_campaign_plan(
+            [str(proj)], scope_filter=None, index_db_path=idx,
+        )
 
         files = [t[1] for t in plan.targets]
         # A.v should come before B.v
@@ -165,16 +228,18 @@ class TestBuildCampaignPlanDeterministicOrdering:
 
         proj = tmp_path / "proj"
         proj.mkdir()
-        (proj / "Test.v").write_text(
-            "Theorem alpha : True. Proof. exact I. Qed.\n"
-            "Theorem beta : True. Proof. exact I. Qed.\n"
-            "Theorem gamma : True. Proof. exact I. Qed.\n"
+        idx = _make_index(tmp_path, [
+            {"name": "Test.alpha", "module": "Test", "kind": "theorem"},
+            {"name": "Test.beta", "module": "Test", "kind": "theorem"},
+            {"name": "Test.gamma", "module": "Test", "kind": "theorem"},
+        ])
+
+        plan = build_campaign_plan(
+            [str(proj)], scope_filter=None, index_db_path=idx,
         )
 
-        plan = build_campaign_plan([str(proj)], scope_filter=None)
-
         thm_names = [t[2] for t in plan.targets]
-        assert thm_names == ["alpha", "beta", "gamma"]
+        assert thm_names == ["Test.alpha", "Test.beta", "Test.gamma"]
 
 
 class TestProjectMetadataDetection:
@@ -186,8 +251,11 @@ class TestProjectMetadataDetection:
 
         proj = tmp_path / "my_project"
         proj.mkdir()
+        idx = _make_index(tmp_path)
 
-        plan = build_campaign_plan([str(proj)], scope_filter=None)
+        plan = build_campaign_plan(
+            [str(proj)], scope_filter=None, index_db_path=idx,
+        )
 
         assert plan.projects[0].project_id == "my_project"
 
@@ -199,8 +267,11 @@ class TestProjectMetadataDetection:
         dir2 = tmp_path / "b" / "theories"
         dir1.mkdir(parents=True)
         dir2.mkdir(parents=True)
+        idx = _make_index(tmp_path)
 
-        plan = build_campaign_plan([str(dir1), str(dir2)], scope_filter=None)
+        plan = build_campaign_plan(
+            [str(dir1), str(dir2)], scope_filter=None, index_db_path=idx,
+        )
 
         ids = [p.project_id for p in plan.projects]
         assert ids[0] == "theories"
@@ -212,8 +283,11 @@ class TestProjectMetadataDetection:
 
         proj = tmp_path / "proj"
         proj.mkdir()
+        idx = _make_index(tmp_path)
 
-        plan = build_campaign_plan([str(proj)], scope_filter=None)
+        plan = build_campaign_plan(
+            [str(proj)], scope_filter=None, index_db_path=idx,
+        )
 
         assert Path(plan.projects[0].project_path).is_absolute()
 
@@ -221,38 +295,41 @@ class TestProjectMetadataDetection:
 class TestTheoremEnumeration:
     """Theorem enumeration queries Coq backend for provable theorems (§4.1)."""
 
-    def test_enumerates_theorems_from_v_files(self, tmp_path):
-        """Theorems are enumerated from .v files in the project."""
+    def test_enumerates_theorems_from_index(self, tmp_path):
+        """Theorems are enumerated from the index database."""
         from Poule.extraction.campaign import build_campaign_plan
 
         proj = tmp_path / "proj"
         proj.mkdir()
-        (proj / "Logic.v").write_text(
-            "Theorem eq_refl : True. Proof. exact I. Qed.\n"
-        )
+        idx = _make_index(tmp_path, [
+            {"name": "Logic.eq_refl", "module": "Logic", "kind": "lemma"},
+        ])
 
-        plan = build_campaign_plan([str(proj)], scope_filter=None)
+        plan = build_campaign_plan(
+            [str(proj)], scope_filter=None, index_db_path=idx,
+        )
 
         assert len(plan.targets) >= 1
-        assert any(t[2] == "eq_refl" for t in plan.targets)
+        assert any(t[2] == "Logic.eq_refl" for t in plan.targets)
 
-    def test_file_load_failure_records_error(self, tmp_path):
-        """When a .v file fails to load, a load_failure error is recorded
-        and enumeration continues with the next file."""
+    def test_declarations_from_multiple_modules(self, tmp_path):
+        """Declarations from multiple modules are all included in the plan."""
         from Poule.extraction.campaign import build_campaign_plan
 
         proj = tmp_path / "proj"
         proj.mkdir()
-        (proj / "Bad.v").write_text("This is not valid Coq syntax !!!\n")
-        (proj / "Good.v").write_text(
-            "Theorem good_thm : True. Proof. exact I. Qed.\n"
+        idx = _make_index(tmp_path, [
+            {"name": "Bad.bad_thm", "module": "Bad", "kind": "lemma"},
+            {"name": "Good.good_thm", "module": "Good", "kind": "lemma"},
+        ])
+
+        plan = build_campaign_plan(
+            [str(proj)], scope_filter=None, index_db_path=idx,
         )
 
-        plan = build_campaign_plan([str(proj)], scope_filter=None)
-
-        # Good.v theorems should still be in the plan
-        good_targets = [t for t in plan.targets if "Good.v" in t[1]]
-        assert len(good_targets) >= 1
+        names = [t[2] for t in plan.targets]
+        assert "Bad.bad_thm" in names
+        assert "Good.good_thm" in names
 
 
 class TestScopeFiltering:
@@ -264,22 +341,24 @@ class TestScopeFiltering:
 
         proj = tmp_path / "proj"
         proj.mkdir()
-        (proj / "Arith.v").write_text(
-            "Theorem add_comm : True. Proof. exact I. Qed.\n"
-            "Theorem mul_comm : True. Proof. exact I. Qed.\n"
-            "Theorem add_assoc : True. Proof. exact I. Qed.\n"
-        )
+        idx = _make_index(tmp_path, [
+            {"name": "Arith.add_comm", "module": "Arith", "kind": "theorem"},
+            {"name": "Arith.mul_comm", "module": "Arith", "kind": "theorem"},
+            {"name": "Arith.add_assoc", "module": "Arith", "kind": "theorem"},
+        ])
 
         scope_filter = Mock()  # contract test: test_extraction_campaign_types.py
         scope_filter.name_pattern = "*add*"
         scope_filter.module_prefixes = None
 
-        plan = build_campaign_plan([str(proj)], scope_filter=scope_filter)
+        plan = build_campaign_plan(
+            [str(proj)], scope_filter=scope_filter, index_db_path=idx,
+        )
 
         thm_names = [t[2] for t in plan.targets]
-        assert "add_comm" in thm_names
-        assert "add_assoc" in thm_names
-        assert "mul_comm" not in thm_names
+        assert "Arith.add_comm" in thm_names
+        assert "Arith.add_assoc" in thm_names
+        assert "Arith.mul_comm" not in [t[2] for t in plan.targets]
 
     def test_filtered_theorems_counted_as_skipped(self, tmp_path):
         """Theorems excluded by scope filter are counted as skipped."""
@@ -287,17 +366,19 @@ class TestScopeFiltering:
 
         proj = tmp_path / "proj"
         proj.mkdir()
-        (proj / "Arith.v").write_text(
-            "Theorem add_comm : True. Proof. exact I. Qed.\n"
-            "Theorem mul_comm : True. Proof. exact I. Qed.\n"
-            "Theorem add_assoc : True. Proof. exact I. Qed.\n"
-        )
+        idx = _make_index(tmp_path, [
+            {"name": "Arith.add_comm", "module": "Arith", "kind": "theorem"},
+            {"name": "Arith.mul_comm", "module": "Arith", "kind": "theorem"},
+            {"name": "Arith.add_assoc", "module": "Arith", "kind": "theorem"},
+        ])
 
         scope_filter = Mock()  # contract test: test_extraction_campaign_types.py
         scope_filter.name_pattern = "*add*"
         scope_filter.module_prefixes = None
 
-        plan = build_campaign_plan([str(proj)], scope_filter=scope_filter)
+        plan = build_campaign_plan(
+            [str(proj)], scope_filter=scope_filter, index_db_path=idx,
+        )
 
         assert plan.skipped_count == 1  # mul_comm
 
@@ -310,7 +391,10 @@ class TestDirectoryNotFoundError:
         from Poule.extraction.campaign import build_campaign_plan
 
         with pytest.raises(Exception, match="DIRECTORY_NOT_FOUND"):
-            build_campaign_plan(["/nonexistent/path"], scope_filter=None)
+            build_campaign_plan(
+                ["/nonexistent/path"], scope_filter=None,
+                index_db_path="/dummy",
+            )
 
     def test_error_raised_before_any_extraction(self, tmp_path):
         """Error is raised before extraction begins, even if some dirs exist."""
@@ -321,7 +405,8 @@ class TestDirectoryNotFoundError:
 
         with pytest.raises(Exception, match="DIRECTORY_NOT_FOUND"):
             build_campaign_plan(
-                [str(good_dir), "/nonexistent/path"], scope_filter=None
+                [str(good_dir), "/nonexistent/path"], scope_filter=None,
+                index_db_path="/dummy",
             )
 
 
@@ -708,10 +793,11 @@ class TestRunCampaignOutputStructure:
 
         proj = tmp_path / "proj"
         proj.mkdir()
+        idx = _make_index(tmp_path)
         output = tmp_path / "out.jsonl"
 
         summary = asyncio.run(run_campaign(
-            [str(proj)], str(output), {},
+            [str(proj)], str(output), {"index_db_path": idx},
         ))
 
         import json
@@ -725,9 +811,10 @@ class TestRunCampaignOutputStructure:
 
         proj = tmp_path / "proj"
         proj.mkdir()
+        idx = _make_index(tmp_path)
         output = tmp_path / "out.jsonl"
 
-        asyncio.run(run_campaign([str(proj)], str(output), {}))
+        asyncio.run(run_campaign([str(proj)], str(output), {"index_db_path": idx}))
 
         import json
         lines = output.read_text().strip().split("\n")
@@ -741,9 +828,14 @@ class TestRunCampaignOutputStructure:
         proj = tmp_path / "proj"
         proj.mkdir()
         (proj / "Bad.v").write_text("Theorem bad : False. Proof. Qed.\n")
+        idx = _make_index(tmp_path, [
+            {"name": "Bad.bad", "module": "Bad", "kind": "theorem"},
+        ])
         output = tmp_path / "out.jsonl"
 
-        summary = asyncio.run(run_campaign([str(proj)], str(output), {}))
+        summary = asyncio.run(run_campaign(
+            [str(proj)], str(output), {"index_db_path": idx},
+        ))
 
         import json
         lines = output.read_text().strip().split("\n")
@@ -769,9 +861,14 @@ class TestRunCampaignDeterministicOrdering:
         (proj / "B.v").write_text(
             "Theorem b1 : True. Proof. exact I. Qed.\n"
         )
+        idx = _make_index(tmp_path, [
+            {"name": "A.a1", "module": "A", "kind": "theorem"},
+            {"name": "A.a2", "module": "A", "kind": "theorem"},
+            {"name": "B.b1", "module": "B", "kind": "theorem"},
+        ])
         output = tmp_path / "out.jsonl"
 
-        asyncio.run(run_campaign([str(proj)], str(output), {}))
+        asyncio.run(run_campaign([str(proj)], str(output), {"index_db_path": idx}))
 
         import json
         lines = output.read_text().strip().split("\n")
@@ -799,9 +896,15 @@ class TestRunCampaignSummaryStatistics:
             "Theorem t1 : True. Proof. exact I. Qed.\n"
             "Theorem t2 : True. Proof. exact I. Qed.\n"
         )
+        idx = _make_index(tmp_path, [
+            {"name": "Test.t1", "module": "Test", "kind": "theorem"},
+            {"name": "Test.t2", "module": "Test", "kind": "theorem"},
+        ])
         output = tmp_path / "out.jsonl"
 
-        summary = asyncio.run(run_campaign([str(proj)], str(output), {}))
+        summary = asyncio.run(run_campaign(
+            [str(proj)], str(output), {"index_db_path": idx},
+        ))
 
         # Invariant: extracted + partial + failed + no_proof_body + skipped == theorems_found
         assert (
@@ -819,9 +922,14 @@ class TestRunCampaignSummaryStatistics:
         (proj / "Test.v").write_text(
             "Theorem t1 : True. Proof. exact I. Qed.\n"
         )
+        idx = _make_index(tmp_path, [
+            {"name": "Test.t1", "module": "Test", "kind": "theorem"},
+        ])
         output = tmp_path / "out.jsonl"
 
-        summary = asyncio.run(run_campaign([str(proj)], str(output), {}))
+        summary = asyncio.run(run_campaign(
+            [str(proj)], str(output), {"index_db_path": idx},
+        ))
 
         for ps in summary.per_project:
             assert (
@@ -838,9 +946,14 @@ class TestRunCampaignSummaryStatistics:
         (proj / "Test.v").write_text(
             "Theorem t1 : True. Proof. exact I. Qed.\n"
         )
+        idx = _make_index(tmp_path, [
+            {"name": "Test.t1", "module": "Test", "kind": "theorem"},
+        ])
         output = tmp_path / "out.jsonl"
 
-        summary = asyncio.run(run_campaign([str(proj)], str(output), {}))
+        summary = asyncio.run(run_campaign(
+            [str(proj)], str(output), {"index_db_path": idx},
+        ))
 
         for ps in summary.per_project:
             for fs in ps.per_file:
@@ -857,10 +970,11 @@ class TestRunCampaignSummaryStatistics:
         dir_b = tmp_path / "mathcomp"
         dir_a.mkdir()
         dir_b.mkdir()
+        idx = _make_index(tmp_path)
         output = tmp_path / "out.jsonl"
 
         summary = asyncio.run(run_campaign(
-            [str(dir_a), str(dir_b)], str(output), {},
+            [str(dir_a), str(dir_b)], str(output), {"index_db_path": idx},
         ))
 
         assert len(summary.per_project) == 2
@@ -880,9 +994,15 @@ class TestRunCampaignSummaryStatistics:
         (proj / "B.v").write_text(
             "Theorem b1 : True. Proof. exact I. Qed.\n"
         )
+        idx = _make_index(tmp_path, [
+            {"name": "A.a1", "module": "A", "kind": "theorem"},
+            {"name": "B.b1", "module": "B", "kind": "theorem"},
+        ])
         output = tmp_path / "out.jsonl"
 
-        summary = asyncio.run(run_campaign([str(proj)], str(output), {}))
+        summary = asyncio.run(run_campaign(
+            [str(proj)], str(output), {"index_db_path": idx},
+        ))
 
         ps = summary.per_project[0]
         file_names = [f.source_file for f in ps.per_file]
@@ -910,8 +1030,13 @@ class TestRunCampaignSummaryStatistics:
         (proj / "A.v").write_text(
             "Theorem a1 : True. Proof. exact I. Qed.\n"
         )
+        idx = _make_index(tmp_path, [
+            {"name": "A.a1", "module": "A", "kind": "theorem"},
+        ])
 
-        summary = asyncio.run(run_campaign([str(proj)], str(output), {}))
+        summary = asyncio.run(run_campaign(
+            [str(proj)], str(output), {"index_db_path": idx},
+        ))
 
         # Fundamental invariant
         assert (
@@ -935,9 +1060,12 @@ class TestCampaignStateMachine:
 
         proj = tmp_path / "proj"
         proj.mkdir()
+        idx = _make_index(tmp_path)
         output = tmp_path / "out.jsonl"
 
-        summary = asyncio.run(run_campaign([str(proj)], str(output), {}))
+        summary = asyncio.run(run_campaign(
+            [str(proj)], str(output), {"index_db_path": idx},
+        ))
 
         # Summary emission implies the campaign reached 'complete' state.
         import json
@@ -952,7 +1080,7 @@ class TestCampaignStateMachine:
 
         with pytest.raises(Exception, match="DIRECTORY_NOT_FOUND"):
             asyncio.run(run_campaign(
-                ["/nonexistent"], "/dev/null", {},
+                ["/nonexistent"], "/dev/null", {"index_db_path": "/dummy"},
             ))
 
 
@@ -971,9 +1099,12 @@ class TestEmptyProjectDirectory:
 
         proj = tmp_path / "empty_proj"
         proj.mkdir()
+        idx = _make_index(tmp_path)
         output = tmp_path / "out.jsonl"
 
-        summary = asyncio.run(run_campaign([str(proj)], str(output), {}))
+        summary = asyncio.run(run_campaign(
+            [str(proj)], str(output), {"index_db_path": idx},
+        ))
 
         ps = summary.per_project[0]
         assert ps.theorems_found == 0
@@ -993,9 +1124,12 @@ class TestVFileWithNoTheorems:
         proj = tmp_path / "proj"
         proj.mkdir()
         (proj / "Empty.v").write_text("(* no theorems here *)\n")
+        idx = _make_index(tmp_path)
         output = tmp_path / "out.jsonl"
 
-        summary = asyncio.run(run_campaign([str(proj)], str(output), {}))
+        summary = asyncio.run(run_campaign(
+            [str(proj)], str(output), {"index_db_path": idx},
+        ))
 
         ps = summary.per_project[0]
         if ps.per_file:
@@ -1015,14 +1149,14 @@ class TestEmptyProjectDirsList:
         from Poule.extraction.campaign import build_campaign_plan
 
         with pytest.raises((ValueError, Exception)):
-            build_campaign_plan([], scope_filter=None)
+            build_campaign_plan([], scope_filter=None, index_db_path="/dummy")
 
     def test_run_campaign_empty_list_raises_validation_error(self):
         """run_campaign with empty project_dirs raises input validation error."""
         from Poule.extraction.campaign import run_campaign
 
         with pytest.raises((ValueError, Exception)):
-            asyncio.run(run_campaign([], "/dev/null", {}))
+            asyncio.run(run_campaign([], "/dev/null", {"index_db_path": "/dummy"}))
 
 
 class TestSameDirectoryListedTwice:
@@ -1036,9 +1170,10 @@ class TestSameDirectoryListedTwice:
 
         proj = tmp_path / "proj"
         proj.mkdir()
+        idx = _make_index(tmp_path)
 
         plan = build_campaign_plan(
-            [str(proj), str(proj)], scope_filter=None,
+            [str(proj), str(proj)], scope_filter=None, index_db_path=idx,
         )
 
         assert len(plan.projects) == 2
@@ -1047,24 +1182,24 @@ class TestSameDirectoryListedTwice:
         assert ids[0] == "proj"
         assert ids[1] == "proj-2"
 
-    def test_duplicate_dir_extracted_twice(self, tmp_path):
-        """When the same directory is listed twice, its theorems appear
-        twice in the campaign plan (once per project_id)."""
+    def test_duplicate_dir_targets_assigned_to_first_project(self, tmp_path):
+        """When the same directory is listed twice, index-based enumeration
+        assigns all targets to the first project (index is queried once)."""
         from Poule.extraction.campaign import build_campaign_plan
 
         proj = tmp_path / "proj"
         proj.mkdir()
-        (proj / "Test.v").write_text(
-            "Theorem t1 : True. Proof. exact I. Qed.\n"
-        )
+        idx = _make_index(tmp_path, [
+            {"name": "Test.t1", "module": "Test", "kind": "theorem"},
+        ])
 
         plan = build_campaign_plan(
-            [str(proj), str(proj)], scope_filter=None,
+            [str(proj), str(proj)], scope_filter=None, index_db_path=idx,
         )
 
-        proj_ids_in_targets = [t[0] for t in plan.targets]
+        assert len(plan.targets) >= 1
+        proj_ids_in_targets = {t[0] for t in plan.targets}
         assert "proj" in proj_ids_in_targets
-        assert "proj-2" in proj_ids_in_targets
 
 
 class TestSigintHandling:
@@ -1082,12 +1217,16 @@ class TestSigintHandling:
             "Theorem t2 : True. Proof. exact I. Qed.\n"
             "Theorem t3 : True. Proof. exact I. Qed.\n"
         )
+        idx = _make_index(tmp_path, [
+            {"name": "Test.t1", "module": "Test", "kind": "theorem"},
+            {"name": "Test.t2", "module": "Test", "kind": "theorem"},
+            {"name": "Test.t3", "module": "Test", "kind": "theorem"},
+        ])
         output = tmp_path / "out.jsonl"
 
         # We patch signal handling and simulate interruption
         # by raising KeyboardInterrupt after first extraction.
         # The campaign should catch it and emit partial summary.
-        original_run = run_campaign
 
         with patch(
             "Poule.extraction.campaign.extract_single_proof",
@@ -1100,7 +1239,7 @@ class TestSigintHandling:
 
             # Campaign should handle SIGINT gracefully
             summary = asyncio.run(run_campaign(
-                [str(proj)], str(output), {},
+                [str(proj)], str(output), {"index_db_path": idx},
             ))
 
             import json
@@ -1118,6 +1257,10 @@ class TestSigintHandling:
             "Theorem t1 : True. Proof. exact I. Qed.\n"
             "Theorem t2 : True. Proof. exact I. Qed.\n"
         )
+        idx = _make_index(tmp_path, [
+            {"name": "Test.t1", "module": "Test", "kind": "theorem"},
+            {"name": "Test.t2", "module": "Test", "kind": "theorem"},
+        ])
         output = tmp_path / "out.jsonl"
 
         with patch(
@@ -1129,7 +1272,7 @@ class TestSigintHandling:
             ]
 
             summary = asyncio.run(run_campaign(
-                [str(proj)], str(output), {},
+                [str(proj)], str(output), {"index_db_path": idx},
             ))
 
             # Only t1 was completed
@@ -1162,6 +1305,11 @@ class TestDeterministicOutput:
             "Theorem t1 : True. Proof. exact I. Qed.\n"
             "Theorem t2 : True. Proof. exact I. Qed.\n"
         )
+        idx = _make_index(tmp_path, [
+            {"name": "Test.t1", "module": "Test", "kind": "theorem"},
+            {"name": "Test.t2", "module": "Test", "kind": "theorem"},
+        ])
+        kwargs = {"index_db_path": idx}
 
         out1 = tmp_path / "run1.jsonl"
         out2 = tmp_path / "run2.jsonl"
@@ -1176,13 +1324,13 @@ class TestDeterministicOutput:
             "Poule.extraction.campaign.extract_single_proof",
             side_effect=fixed_records * 2,
         ):
-            asyncio.run(run_campaign([str(proj)], str(out1), {}))
+            asyncio.run(run_campaign([str(proj)], str(out1), kwargs))
 
         with patch(
             "Poule.extraction.campaign.extract_single_proof",
             side_effect=fixed_records * 2,
         ):
-            asyncio.run(run_campaign([str(proj)], str(out2), {}))
+            asyncio.run(run_campaign([str(proj)], str(out2), kwargs))
 
         lines1 = [json.loads(l) for l in out1.read_text().strip().split("\n")]
         lines2 = [json.loads(l) for l in out2.read_text().strip().split("\n")]
@@ -1224,9 +1372,14 @@ class TestSessionIdExclusion:
         (proj / "Test.v").write_text(
             "Theorem t1 : True. Proof. exact I. Qed.\n"
         )
+        idx = _make_index(tmp_path, [
+            {"name": "Test.t1", "module": "Test", "kind": "theorem"},
+        ])
         output = tmp_path / "out.jsonl"
 
-        asyncio.run(run_campaign([str(proj)], str(output), {}))
+        asyncio.run(run_campaign(
+            [str(proj)], str(output), {"index_db_path": idx},
+        ))
 
         lines = output.read_text().strip().split("\n")
         records = [json.loads(l) for l in lines]

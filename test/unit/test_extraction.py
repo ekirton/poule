@@ -406,6 +406,73 @@ class TestPass1BatchSize:
             assert len(batch) <= 1000
 
 
+class TestProcessDeclarationMergesTreeDeps:
+    """process_declaration pre-merges tree-extracted deps into dependency_names."""
+
+    def test_process_declaration_merges_tree_deps(self):
+        """dependency_names includes tree-extracted deps after process_declaration."""
+        from Poule.extraction.pipeline import process_declaration
+
+        mock_tree = Mock()
+        backend = Mock()
+        backend.pretty_print.return_value = "forall n, n = n"
+        backend.pretty_print_type.return_value = "Prop"
+
+        with patch("Poule.normalization.normalize.coq_normalize", return_value=mock_tree), \
+             patch("Poule.normalization.cse.cse_normalize"), \
+             patch("Poule.channels.const_jaccard.extract_consts", return_value=[]), \
+             patch("Poule.channels.wl_kernel.wl_histogram", return_value={}), \
+             patch(
+                 "Poule.extraction.dependency_extraction.extract_dependencies",
+                 return_value=[("B.helper", "uses")],
+             ):
+            result = process_declaration(
+                "A.lemma1",
+                "Lemma",
+                object(),  # non-dict constr_t triggers normalization path
+                backend,
+                "A",
+                statement="forall n, n = n",
+                dependency_names=[("C.dep1", "uses")],
+            )
+
+        assert result is not None
+        dep_targets = [t for t, _rel in result.dependency_names]
+        # Tree dep "B.helper" should have been merged
+        assert "B.helper" in dep_targets
+        # Original dep should still be present
+        assert "C.dep1" in dep_targets
+
+    def test_process_declaration_tree_dep_failure_is_silent(self):
+        """If extract_dependencies raises, dependency_names is unchanged."""
+        from Poule.extraction.pipeline import process_declaration
+
+        backend = Mock()
+        backend.pretty_print.return_value = "forall n, n = n"
+        backend.pretty_print_type.return_value = "Prop"
+
+        # Use a dict constr_t with type_signature to trigger text-based path
+        # that will produce a tree, then patch extract_dependencies to fail
+        with patch(
+            "Poule.extraction.dependency_extraction.extract_dependencies",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = process_declaration(
+                "A.lemma1",
+                "Lemma",
+                {"type_signature": "nat -> nat"},
+                backend,
+                "A",
+                statement="forall n, n = n",
+                dependency_names=[("C.dep1", "uses")],
+            )
+
+        assert result is not None
+        # Original deps preserved even if tree dep extraction failed
+        dep_targets = [t for t, _rel in result.dependency_names]
+        assert "C.dep1" in dep_targets
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. Pass 2 — Dependency Resolution
 # ═══════════════════════════════════════════════════════════════════════════
@@ -598,66 +665,45 @@ class TestPass2NameResolution:
         iw.insert_dependencies.assert_not_called()
 
     def test_tree_based_extraction_supplements(self):
-        """When a result has a normalised tree, LConst edges from
-        extract_dependencies are merged with Print Assumptions edges."""
-        # Create a mock tree so the tree-based branch is entered
-        mock_tree = Mock()
+        """Tree deps are pre-merged into dependency_names by process_declaration.
+
+        resolve_and_insert_dependencies no longer reads r.tree — it just
+        processes whatever is in dependency_names.  Tree is None because
+        it was nulled after batch_insert to save memory.
+        """
+        # Tree deps already merged into dependency_names by process_declaration
         r = self._make_result(
             "A.lemma1",
-            [("B.lemma2", "uses")],  # from Print Assumptions
-            tree=mock_tree,
+            [("B.lemma2", "uses"), ("C.def1", "uses")],
+            tree=None,
         )
         name_to_id = {"A.lemma1": 1, "B.lemma2": 2, "C.def1": 3}
 
-        # Patch extract_dependencies to return an additional edge
-        with patch(
-            "Poule.extraction.pipeline.extract_dependencies",
-            create=True,
-        ) as mock_extract, patch(
-            "Poule.extraction.dependency_extraction.extract_dependencies",
-            create=True,
-        ):
-            mock_extract.return_value = [("C.def1", "uses")]
-
-            # We need to patch inside the module where it's imported
-            # The function is imported lazily inside resolve_and_insert_dependencies
-            with patch.dict(
-                "sys.modules",
-                {"Poule.extraction.dependency_extraction": Mock(
-                    extract_dependencies=Mock(return_value=[("C.def1", "uses")])
-                )},
-            ):
-                iw = self._make_writer_and_call([r], name_to_id)
+        iw = self._make_writer_and_call([r], name_to_id)
 
         iw.insert_dependencies.assert_called_once()
         edges = iw.insert_dependencies.call_args[0][0]
-        # Should have edges from both sources
+        # Should have edges from both sources (pre-merged)
         src_dst_pairs = {(e["src"], e["dst"]) for e in edges}
         assert (1, 2) in src_dst_pairs  # from Print Assumptions
         assert (1, 3) in src_dst_pairs  # from tree-based extraction
 
     def test_deduplication(self):
-        """Same edge from both sources is only inserted once."""
-        mock_tree = Mock()
-        # Both Print Assumptions and tree extraction yield the same edge
+        """Same edge appearing twice in dependency_names is only inserted once."""
+        # Both Print Assumptions and tree extraction yielded the same edge;
+        # process_declaration merged them into dependency_names.
         r = self._make_result(
             "A.lemma1",
-            [("B.lemma2", "uses")],
-            tree=mock_tree,
+            [("B.lemma2", "uses"), ("B.lemma2", "uses")],
+            tree=None,
         )
         name_to_id = {"A.lemma1": 1, "B.lemma2": 2}
 
-        with patch.dict(
-            "sys.modules",
-            {"Poule.extraction.dependency_extraction": Mock(
-                extract_dependencies=Mock(return_value=[("B.lemma2", "uses")])
-            )},
-        ):
-            iw = self._make_writer_and_call([r], name_to_id)
+        iw = self._make_writer_and_call([r], name_to_id)
 
         iw.insert_dependencies.assert_called_once()
         edges = iw.insert_dependencies.call_args[0][0]
-        # Deduplicated: only one edge despite two sources
+        # Deduplicated: only one edge despite duplicate entries
         assert len(edges) == 1
         assert edges[0] == {"src": 1, "dst": 2, "relation": "uses"}
 
@@ -1144,10 +1190,10 @@ class TestAboutResponseKindParsing:
         )
         messages = [{"text": about_text, "level": 3}]
 
-        kind = CoqLspBackend._parse_about_kind("pred", messages)
+        result = CoqLspBackend._parse_about_kind("pred", messages)
 
-        assert kind == "definition", (
-            f"Expected 'definition' (Constant preferred over Notation), got {kind!r}"
+        assert result.kind == "definition", (
+            f"Expected 'definition' (Constant preferred over Notation), got {result.kind!r}"
         )
 
     def test_notation_only_when_no_constant_present(self):
@@ -1165,10 +1211,10 @@ class TestAboutResponseKindParsing:
         )
         messages = [{"text": about_text, "level": 3}]
 
-        kind = CoqLspBackend._parse_about_kind("foo", messages)
+        result = CoqLspBackend._parse_about_kind("foo", messages)
 
-        assert kind == "notation", (
-            f"Expected 'notation' when only Notation is present, got {kind!r}"
+        assert result.kind == "notation", (
+            f"Expected 'notation' when only Notation is present, got {result.kind!r}"
         )
 
 
@@ -2168,7 +2214,7 @@ class TestFQNDerivationInListDeclarations:
     def test_short_names_get_module_path_prepended(self):
         """Given Search returns Nat.add_comm, the returned name should be
         Coq.Arith.PeanoNat.Nat.add_comm."""
-        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+        from Poule.extraction.backends.coqlsp_backend import AboutResult, CoqLspBackend
 
         backend = CoqLspBackend()
         # Patch internal methods to avoid needing a real coq-lsp process
@@ -2177,7 +2223,9 @@ class TestFQNDerivationInListDeclarations:
             [],
             [{"text": "Nat.add_comm : forall n m, n + m = m + n", "level": 3}],
         ))
-        backend._batch_get_kinds = Mock(return_value=["lemma"])
+        backend._batch_get_about_metadata = Mock(return_value=[
+            AboutResult("lemma", "opaque", "Stdlib.Numbers.NatInt.NZAdd", 59),
+        ])
 
         vo_path = Path("/opt/coq/user-contrib/Stdlib/Arith/PeanoNat.vo")
         decls = backend.list_declarations(vo_path)
@@ -2191,7 +2239,7 @@ class TestFQNDerivationInListDeclarations:
     def test_mathcomp_short_names_get_module_path_prepended(self):
         """Given Search returns negb_involutive, the returned name should be
         mathcomp.ssreflect.ssrbool.negb_involutive."""
-        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+        from Poule.extraction.backends.coqlsp_backend import AboutResult, CoqLspBackend
 
         backend = CoqLspBackend()
         backend._ensure_alive = Mock()
@@ -2199,7 +2247,9 @@ class TestFQNDerivationInListDeclarations:
             [],
             [{"text": "negb_involutive : forall b, negb (negb b) = b", "level": 3}],
         ))
-        backend._batch_get_kinds = Mock(return_value=["lemma"])
+        backend._batch_get_about_metadata = Mock(return_value=[
+            AboutResult("lemma", None, None, None),
+        ])
 
         vo_path = Path("/opt/coq/user-contrib/mathcomp/ssreflect/ssrbool.vo")
         decls = backend.list_declarations(vo_path)
@@ -2802,3 +2852,404 @@ class TestSymbolFreqUsesFQNs:
         freq_dict = writer.insert_symbol_freq.call_args[0][0]
         # The key should be a FQN, not a short name
         assert "Coq.Init.Datatypes.nat" in freq_dict
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Proof-body detection (specification/extraction.md §4.4 step 9)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDetectProofBodySignal1Opacity:
+    """Signal 1: opacity='opaque' → has_proof_body=1 (§4.4 step 9)."""
+
+    def test_opaque_returns_1_without_source_info(self):
+        """GIVEN opacity='opaque' and no declared_line/declared_library
+        WHEN detect_proof_body runs
+        THEN has_proof_body=1 (opacity signal is sufficient).
+        """
+        from Poule.extraction.pipeline import detect_proof_body
+
+        result = detect_proof_body(
+            "Coq.Arith.PeanoNat.Nat.add_comm", "definition",
+            opacity="opaque",
+        )
+        assert result == 1
+
+    def test_opaque_re_export_returns_1(self):
+        """GIVEN an opaque re-exported declaration (Include'd from another module)
+        WHEN detect_proof_body runs
+        THEN has_proof_body=1 regardless of other metadata.
+        """
+        from Poule.extraction.pipeline import detect_proof_body
+
+        result = detect_proof_body(
+            "Coq.Arith.PeanoNat.Nat.add_0_l", "definition",
+            opacity="opaque", declared_library="Stdlib.Numbers.NatInt.NZAdd",
+            declared_line=59,
+        )
+        assert result == 1
+
+    def test_opaque_instance_returns_1(self):
+        from Poule.extraction.pipeline import detect_proof_body
+
+        result = detect_proof_body(
+            "Foo.bar_instance", "instance", opacity="opaque",
+        )
+        assert result == 1
+
+
+class TestDetectProofBodySignal2Kind:
+    """Signal 2: kind ∈ {lemma, theorem} → 1 for Coq ≤8.x (§4.4 step 9)."""
+
+    def test_lemma_kind_returns_1(self):
+        """GIVEN kind='lemma' and opacity=None (Coq 8.x preserves Vernacular kind)
+        WHEN detect_proof_body runs
+        THEN has_proof_body=1 (Lemma always enters proof mode).
+        """
+        from Poule.extraction.pipeline import detect_proof_body
+
+        result = detect_proof_body("Foo.bar", "lemma", opacity=None)
+        assert result == 1
+
+    def test_theorem_kind_returns_1(self):
+        from Poule.extraction.pipeline import detect_proof_body
+
+        result = detect_proof_body("Foo.baz", "theorem", opacity=None)
+        assert result == 1
+
+    def test_lemma_kind_transparent_returns_1(self):
+        """Lemma proved with Defined. is transparent but still has proof body."""
+        from Poule.extraction.pipeline import detect_proof_body
+
+        result = detect_proof_body(
+            "Foo.bar", "lemma", opacity="transparent",
+        )
+        assert result == 1
+
+    def test_definition_kind_without_declared_line_returns_0(self):
+        """GIVEN kind='definition' and opacity=None, no declared_line
+        WHEN detect_proof_body runs
+        THEN has_proof_body=0 (definition is ambiguous, conservative default).
+        """
+        from Poule.extraction.pipeline import detect_proof_body
+
+        result = detect_proof_body("Foo.qux", "definition", opacity=None)
+        assert result == 0
+
+
+class TestDetectProofBodySignal3LineAnchored:
+    """Signal 3: line-anchored .v source check (§4.4 step 9)."""
+
+    def _make_source(self, tmp_path, lib_name, content):
+        """Helper: create a .v file at user-contrib/<lib_name>/<leaf>.v."""
+        parts = lib_name.split(".")
+        source_dir = tmp_path / "user-contrib" / "/".join(parts[:-1])
+        source_dir.mkdir(parents=True, exist_ok=True)
+        v_file = source_dir / f"{parts[-1]}.v"
+        v_file.write_text(content)
+        return tmp_path / "user-contrib"
+
+    def test_lemma_keyword_at_declared_line(self, tmp_path):
+        """GIVEN declared_line points to a line starting with 'Lemma'
+        WHEN detect_proof_body runs
+        THEN has_proof_body=1 (Lemma is proof-requiring).
+        """
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Test.Test", (
+            "(* preamble *)\n"
+            "Lemma foo : 1 + 1 = 2.\n"
+            "Proof. reflexivity. Qed.\n"
+        ))
+        result = detect_proof_body(
+            "Test.foo", "definition",
+            opacity="transparent", declared_line=2,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result == 1
+
+    def test_theorem_keyword_at_declared_line(self, tmp_path):
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Test.Test",
+            "Theorem bar : True.\nProof. exact I. Qed.\n")
+        result = detect_proof_body(
+            "Test.bar", "definition",
+            opacity="transparent", declared_line=1,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result == 1
+
+    def test_proposition_keyword_at_declared_line(self, tmp_path):
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Test.Test",
+            "Proposition p : True.\nProof. exact I. Qed.\n")
+        result = detect_proof_body(
+            "Test.p", "definition",
+            opacity="transparent", declared_line=1,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result == 1
+
+    def test_corollary_keyword_at_declared_line(self, tmp_path):
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Test.Test",
+            "Corollary c : True.\nProof. exact I. Qed.\n")
+        result = detect_proof_body(
+            "Test.c", "definition",
+            opacity="transparent", declared_line=1,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result == 1
+
+    def test_fact_keyword_at_declared_line(self, tmp_path):
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Test.Test",
+            "Fact f : True.\nProof. exact I. Qed.\n")
+        result = detect_proof_body(
+            "Test.f", "definition",
+            opacity="transparent", declared_line=1,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result == 1
+
+    def test_remark_keyword_at_declared_line(self, tmp_path):
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Test.Test",
+            "Remark r : True.\nProof. exact I. Qed.\n")
+        result = detect_proof_body(
+            "Test.r", "definition",
+            opacity="transparent", declared_line=1,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result == 1
+
+    def test_definition_with_proof_keyword(self, tmp_path):
+        """GIVEN transparent Definition with 'Proof.' after declared_line
+        WHEN detect_proof_body runs
+        THEN has_proof_body=1 (Proof keyword found scanning forward).
+        """
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Test.Test",
+            "Definition bar : nat.\nProof. exact 0. Defined.\n")
+        result = detect_proof_body(
+            "Test.bar", "definition",
+            opacity="transparent", declared_line=1,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result == 1
+
+    def test_definition_with_proof_using(self, tmp_path):
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Test.Test",
+            "Definition foo : nat.\nProof using. exact 0. Defined.\n")
+        result = detect_proof_body(
+            "Test.foo", "definition",
+            opacity="transparent", declared_line=1,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result == 1
+
+    def test_definition_with_proof_with(self, tmp_path):
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Test.Test",
+            "Definition foo : nat.\nProof with auto. auto. Defined.\n")
+        result = detect_proof_body(
+            "Test.foo", "definition",
+            opacity="transparent", declared_line=1,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result == 1
+
+    def test_definition_with_assign_returns_0(self, tmp_path):
+        """GIVEN transparent definition with := at declared_line
+        WHEN detect_proof_body runs
+        THEN has_proof_body=0 (no Proof keyword found).
+        """
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Test.Test",
+            "Definition eq := @eq nat.\n")
+        result = detect_proof_body(
+            "Test.eq", "definition",
+            opacity="transparent", declared_line=1,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result == 0
+
+    def test_no_declared_line_returns_0(self):
+        """GIVEN transparent declaration without declared_line
+        WHEN detect_proof_body runs
+        THEN has_proof_body=0 (conservative default).
+        """
+        from Poule.extraction.pipeline import detect_proof_body
+
+        result = detect_proof_body(
+            "Foo.bar", "definition",
+            opacity="transparent", declared_line=None,
+        )
+        assert result == 0
+
+    def test_missing_v_file_returns_0(self):
+        """GIVEN declared_line but .v file does not exist
+        WHEN detect_proof_body runs
+        THEN has_proof_body=0 (conservative default).
+        """
+        from Poule.extraction.pipeline import detect_proof_body
+
+        result = detect_proof_body(
+            "Foo.bar", "definition",
+            opacity="transparent", declared_line=5,
+            declared_library="Stdlib.Missing.Module",
+            lib_root=None,
+        )
+        assert result == 0
+
+    def test_nested_module_same_short_name(self, tmp_path):
+        """GIVEN two declarations with same short name in nested modules
+        WHEN detect_proof_body runs with correct declared_line for each
+        THEN each gets the correct has_proof_body value.
+
+        This is the key regression test: the old regex approach had a
+        short-name collision bug. The line-anchored approach fixes it.
+        """
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Test.Test", (
+            "Module A.\n"
+            "  Definition bar := 42.\n"
+            "End A.\n"
+            "\n"
+            "Module B.\n"
+            "  Lemma bar : 1 + 1 = 2.\n"
+            "  Proof. reflexivity. Qed.\n"
+            "End B.\n"
+        ))
+        # A.bar: := definition on line 2 → 0
+        result_a = detect_proof_body(
+            "Test.A.bar", "definition",
+            opacity="transparent", declared_line=2,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result_a == 0
+
+        # B.bar: Lemma on line 6 → 1
+        result_b = detect_proof_body(
+            "Test.B.bar", "definition",
+            opacity="transparent", declared_line=6,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result_b == 1
+
+    def test_instance_with_proof(self, tmp_path):
+        """GIVEN transparent Instance with Proof block
+        WHEN detect_proof_body runs
+        THEN has_proof_body=1.
+        """
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Test.Test",
+            "Instance foo : SomeClass nat.\nProof. constructor. Defined.\n")
+        result = detect_proof_body(
+            "Test.foo", "instance",
+            opacity="transparent", declared_line=1,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result == 1
+
+    def test_instance_with_assign_returns_0(self, tmp_path):
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Test.Test",
+            "Instance foo : SomeClass nat := { method := fun x => x }.\n")
+        result = detect_proof_body(
+            "Test.foo", "instance",
+            opacity="transparent", declared_line=1,
+            declared_library="Stdlib.Test.Test",
+            lib_root=lib_root,
+        )
+        assert result == 0
+
+    def test_declared_library_resolves_correct_file(self, tmp_path):
+        """GIVEN declared_library pointing to a different module than the discovery path
+        WHEN detect_proof_body runs
+        THEN it reads the .v file for declared_library.
+        """
+        from Poule.extraction.pipeline import detect_proof_body
+
+        lib_root = self._make_source(tmp_path, "Stdlib.Source.Source",
+            "Definition foo : nat.\nProof. exact 0. Defined.\n")
+        result = detect_proof_body(
+            "Source.foo", "definition",
+            opacity="transparent", declared_line=1,
+            declared_library="Stdlib.Source.Source",
+            lib_root=lib_root,
+        )
+        assert result == 1
+
+    def test_declared_library_prefix_stripping(self, tmp_path):
+        """declared_library with first component stripped (e.g., Stdlib → lib_root)."""
+        from Poule.extraction.pipeline import detect_proof_body
+
+        # Create file at lib_root/Source/Source.v (stripping "Stdlib" prefix)
+        source_dir = tmp_path / "user-contrib" / "Source"
+        source_dir.mkdir(parents=True)
+        v_file = source_dir / "Source.v"
+        v_file.write_text("Lemma foo : True.\nProof. exact I. Qed.\n")
+
+        result = detect_proof_body(
+            "Source.foo", "definition",
+            opacity="transparent", declared_line=1,
+            declared_library="Stdlib.Source.Source",
+            lib_root=tmp_path / "user-contrib",
+        )
+        assert result == 1
+
+
+class TestDetectProofBodyKindFilter:
+    """Kind filter: excluded kinds get has_proof_body=0 (§4.4 step 9)."""
+
+    def test_inductive_returns_0_even_if_opaque(self):
+        from Poule.extraction.pipeline import detect_proof_body
+
+        result = detect_proof_body(
+            "Coq.Init.Datatypes.nat", "inductive", opacity="opaque",
+        )
+        assert result == 0
+
+    def test_constructor_returns_0(self):
+        from Poule.extraction.pipeline import detect_proof_body
+
+        result = detect_proof_body(
+            "Coq.Init.Datatypes.O", "constructor", opacity="opaque",
+        )
+        assert result == 0
+
+    def test_axiom_returns_0(self):
+        from Poule.extraction.pipeline import detect_proof_body
+
+        result = detect_proof_body(
+            "Coq.Init.Logic.functional_extensionality", "axiom",
+            opacity=None,
+        )
+        assert result == 0

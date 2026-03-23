@@ -688,7 +688,7 @@ class TestDoExtractionUsesProofName:
 
 
 class TestRegexEnumerationRemoved:
-    """_THEOREM_RE and _enumerate_theorems no longer exist in campaign module."""
+    """Regex-based enumeration functions no longer exist in campaign module."""
 
     def test_theorem_re_removed(self):
         import Poule.extraction.campaign as mod
@@ -703,6 +703,23 @@ class TestRegexEnumerationRemoved:
         assert not hasattr(mod, "_enumerate_theorems"), (
             "_enumerate_theorems should be deleted — enumeration is now index-based"
         )
+
+    def test_build_plan_from_regex_removed(self):
+        import Poule.extraction.campaign as mod
+
+        assert not hasattr(mod, "_build_plan_from_regex"), (
+            "_build_plan_from_regex should be deleted — enumeration is now index-based"
+        )
+
+    def test_index_db_path_required(self, tmp_path):
+        """build_campaign_plan raises ValueError when index_db_path is None."""
+        from Poule.extraction.campaign import build_campaign_plan
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+
+        with pytest.raises(ValueError, match="index_db_path"):
+            build_campaign_plan([str(proj)], scope_filter=None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

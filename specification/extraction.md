@@ -64,6 +64,26 @@ The `About` response format is version-dependent:
 
 **Fallback:** When `About` returns `"<name> not a defined object."` or no parseable kind information, the backend shall default to `"definition"`.
 
+**About metadata extraction (coq-lsp):** In addition to kind, the backend shall extract three additional fields from each `About` response during the same batch:
+
+- **Opacity**: Parse `"<name> is opaque"` → `"opaque"`, `"<name> is transparent"` → `"transparent"`, absent → `None`. In Rocq 9.x, opaque declarations were proved with `Qed` (tactic proof body); transparent declarations were defined with `:=` or proved with `Defined`.
+- **Declared library**: Parse `"Declared in library <lib>, line <n>, characters <range>"` → `<lib>` (e.g., `"Stdlib.Numbers.NatInt.NZAdd"`), absent → `None`. For re-exported declarations (via `Include` or functor application), this differs from the `.vo` file where the declaration was discovered.
+- **Declared line**: Parse the line number `<n>` from `"Declared in library <lib>, line <n>"` → integer, absent → `None`. This is the 1-based line number in the `.v` source file where the declaration begins. Used by proof-body detection to anchor its Vernacular keyword check to the exact declaration.
+
+The backend shall return `(kind, opacity, declared_library, declared_line)` tuples from kind detection. Callers that only need kind may ignore the additional fields.
+
+> **Given** a declaration `Nat.add_comm` in Rocq 9.x where `About` includes `"Nat.add_comm is opaque"` and `"Declared in library Stdlib.Numbers.NatInt.NZAdd, line 59, characters 8-16"`,
+> **When** the backend parses the About response,
+> **Then** it returns kind=`"definition"`, opacity=`"opaque"`, declared_library=`"Stdlib.Numbers.NatInt.NZAdd"`, declared_line=`59`.
+
+> **Given** a declaration `Nat.add` in Rocq 9.x where `About` includes `"Nat.add is transparent"` and `"Declared in library Corelib.Init.Nat, line 20, characters 0-40"`,
+> **When** the backend parses the About response,
+> **Then** it returns kind=`"definition"`, opacity=`"transparent"`, declared_library=`"Corelib.Init.Nat"`, declared_line=`20`.
+
+> **Given** a declaration in Coq 8.x where `About` does not include opacity or declared-library lines,
+> **When** the backend parses the About response,
+> **Then** it returns opacity=`None`, declared_library=`None`, declared_line=`None`.
+
 > **Given** a declaration `Nat.add` in Rocq 9.x where `About` returns `Expands to: Constant Corelib.Init.Nat.add`,
 > **When** `list_declarations` processes this declaration,
 > **Then** the kind value is `"definition"` (Constant maps to definition via §4.2).
@@ -204,23 +224,41 @@ For each declaration extracted from a `.vo` file:
 7. `pretty_print(name)` → statement
 8. Type expression: derived from the Search output `type_signature` field in `constr_t` when available; falls back to `pretty_print_type(name)` otherwise (nullable)
 
-9. Proof-body detection: For each declaration whose kind ∈ {`lemma`, `theorem`, `definition`, `instance`}, derive the `.v` source path from the `.vo` path (`vo_path.with_suffix('.v')`). If the `.v` file exists, regex-scan for the declaration's short name preceded by a declaration keyword (`Lemma|Theorem|Proposition|Corollary|Fact|Definition|Fixpoint|Instance|...`) AND followed by a `Proof.` keyword before the next declaration keyword. Set `has_proof_body = 1` if both conditions are met, `0` otherwise. If the `.v` file does not exist, set `has_proof_body = 0`. Each `.v` file's text shall be read at most once (cached across all declarations from the same `.vo` file).
+9. Proof-body detection: For each declaration whose kind ∈ {`lemma`, `theorem`, `definition`, `instance`}, determine `has_proof_body` using three signals evaluated in order:
 
-> **Given** a declaration `Nat.add_comm` of kind `lemma` with `.vo` at `PeanoNat.vo` and `.v` at `PeanoNat.v` containing `Lemma add_comm ... Proof. ... Qed.`
-> **When** proof-body detection runs
-> **Then** `has_proof_body = 1`
+   **Signal 1 — opacity (About metadata, §4.1.1):** If opacity is `"opaque"`, set `has_proof_body = 1` (done). Opaque declarations were proved with `Qed`, which requires a tactic proof body.
 
-> **Given** a declaration `Nat.eq` of kind `definition` with `.v` containing `Definition eq := @eq nat.`
-> **When** proof-body detection runs
-> **Then** `has_proof_body = 0` (no `Proof.` block)
+   **Signal 2 — Vernacular kind (Coq ≤8.x):** If kind ∈ {`lemma`, `theorem`}, set `has_proof_body = 1` (done). These Vernacular keywords always enter proof mode. In Rocq 9.x this signal is inert because all constants report kind `"definition"` via the `Expands to: Constant` path.
 
-> **Given** a declaration `Nat.add_0_l` of kind `lemma` brought in via `Include NAddProp`, where `PeanoNat.v` does not contain a `Lemma add_0_l` block
-> **When** proof-body detection runs
-> **Then** `has_proof_body = 0` (declaration name not found in the `.v` file)
+   **Signal 3 — line-anchored .v source check (transparent/unknown declarations):** If `declared_line` (from About metadata, §4.1.1) is available, resolve the `.v` source file from `declared_library` using the same prefix-mapping as module path derivation. Read the source line at `declared_line` (1-based). If the line starts with a proof-requiring Vernacular keyword that always enters proof mode (`Lemma`, `Theorem`, `Proposition`, `Corollary`, `Fact`, `Remark`): set `has_proof_body = 1` (done). For ambiguous keywords at the declared line (`Definition`, `Instance`, `Fixpoint`): scan forward from that line for a `Proof` keyword (`Proof.`, `Proof using ...`, `Proof with ...`) before the next declaration keyword; set `has_proof_body = 1` if found. If `declared_line` is unavailable, or the `.v` file does not exist: set `has_proof_body = 0` (conservative default). Each `.v` file's text shall be read at most once (cached by source path across all declarations).
 
-> **Given** a declaration with `.vo` at a path where no corresponding `.v` file exists
+> **Given** a declaration `Nat.add_comm` with opacity=`"opaque"` (from About)
 > **When** proof-body detection runs
-> **Then** `has_proof_body = 0`
+> **Then** `has_proof_body = 1` (signal 1: opaque)
+
+> **Given** a declaration `Nat.add_0_l` brought in via `Include NAddProp` with opacity=`"opaque"` (from About) and declared_library=`"Stdlib.Numbers.NatInt.NZAdd"`
+> **When** proof-body detection runs
+> **Then** `has_proof_body = 1` (signal 1: opaque; re-export is irrelevant)
+
+> **Given** a declaration `foo` of kind `"lemma"` (Coq 8.x) with opacity=`None`
+> **When** proof-body detection runs
+> **Then** `has_proof_body = 1` (signal 2: Vernacular kind is lemma)
+
+> **Given** a declaration `Nat.eq` of kind `"definition"` with opacity=`"transparent"`, declared_line=`5`, and source line 5 is `Definition eq := @eq nat.`
+> **When** proof-body detection runs
+> **Then** `has_proof_body = 0` (signal 3: line starts with `Definition`, no `Proof` keyword follows before next declaration)
+
+> **Given** a transparent declaration `foo` with declared_line=`10`, declared_library=`"Stdlib.Arith.PeanoNat"`, and source line 10 is `Lemma foo : 1 + 1 = 2.`
+> **When** proof-body detection runs
+> **Then** `has_proof_body = 1` (signal 3: line starts with `Lemma`, a proof-requiring keyword)
+
+> **Given** a transparent declaration `bar` with declared_line=`20`, and source line 20 is `Definition bar : nat.` followed by `Proof. exact 0. Defined.`
+> **When** proof-body detection runs
+> **Then** `has_proof_body = 1` (signal 3: `Definition` is ambiguous, but `Proof` keyword found scanning forward)
+
+> **Given** a declaration with opacity=`None`, declared_line=`None`, and no corresponding `.v` file
+> **When** proof-body detection runs
+> **Then** `has_proof_body = 0` (conservative default)
 
 The declaration row (including `has_proof_body`), WL vector, and declaration data are co-inserted in the same batch transaction (batch size: 1000 declarations).
 

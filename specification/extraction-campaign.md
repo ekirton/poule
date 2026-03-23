@@ -84,9 +84,9 @@ The system shall enumerate provable declarations by querying the SQLite search i
 > **When** declarations are enumerated
 > **Then** it is excluded from the campaign plan
 
-> **Given** an index containing `Coq.Arith.PeanoNat.Nat.add_0_l` (lemma, has_proof_body=0) — an Include'd re-export
+> **Given** an index containing `Coq.Arith.PeanoNat.Nat.add_0_l` (definition, has_proof_body=1) — an Include'd re-export detected via opacity signal
 > **When** declarations are enumerated
-> **Then** it is excluded from the campaign plan
+> **Then** it is included in the campaign plan (the opacity signal correctly identifies re-exported proofs)
 
 > **Given** an index containing an `Instance` declaration `Coq.Classes.Morphisms.eq_Reflexive` (has_proof_body=1)
 > **When** declarations are enumerated
@@ -131,7 +131,7 @@ When a scope filter is provided, the system shall apply it after theorem enumera
 
 - REQUIRES: `source_file` is a relative path (relative to project root) to a .v file. `project_path` is the absolute path to the project root directory. `theorem_name` is a fully qualified proof name. The orchestrator resolves `project_path / source_file` to an absolute path before passing it to `create_session`.
 - ENSURES: Creates a proof session using the resolved absolute file path, replays the full proof, extracts the proof trace and premise annotations, assembles an ExtractionRecord (storing the relative `source_file`), closes the session, and returns the record. The session is closed in a finally block regardless of success or failure.
-- On session creation failure with `PROOF_NOT_FOUND`: returns ExtractionError with `error_kind` = `no_proof_body`. With `has_proof_body` pre-filtering, this should be rare (only false positives from the regex-based source scan). Without pre-filtering (backward compatibility), this is expected for definitions without proof bodies.
+- On session creation failure with `PROOF_NOT_FOUND`: returns ExtractionError with `error_kind` = `no_proof_body`. With `has_proof_body` pre-filtering (opacity-based detection), this should be rare (only transparent declarations where `.v` scanning produced a false positive). Without pre-filtering (backward compatibility), this is expected for definitions without proof bodies.
 - On session creation failure (other): returns ExtractionError with `error_kind` = `load_failure` or `tactic_failure`.
 - On tactic failure during replay at step k > 1: `extract_trace` returns a partial ProofTrace. The orchestrator assembles a PartialExtractionRecord from the completed steps (0..k-1). This is counted as `partial` in the summary, not `failed`.
 - On tactic failure at step 1 (no completed tactic steps): returns ExtractionError with `error_kind` = `tactic_failure`. A partial trace with only the initial state produces zero training pairs and is not worth recording as a partial extraction.
@@ -321,12 +321,12 @@ Per-proof errors (tactic failure, backend crash, backend unresponsive, load fail
 plan = build_campaign_plan(["/path/to/stdlib"], "/data/index.db", null)
 # plan.projects = [ProjectMetadata(project_id="stdlib", coq_version="9.1.1", ...)]
 # plan.targets = [("stdlib", "Init/Logic.v", "Coq.Init.Logic.eq_refl", "lemma"), ...]
-# With has_proof_body filtering: ~5000 targets (vs ~31000 without)
+# With has_proof_body filtering (opacity-based): ~15000 targets (vs ~31000 without)
 
 summary = run_campaign(["/path/to/stdlib"], "/output/stdlib.jsonl", {index_db_path: "/data/index.db"})
-# summary.total_extracted = 4500
+# summary.total_extracted = 14000
 # summary.total_failed = 50
-# summary.total_no_proof_body = 200  (false positives from regex scan; was ~26000 without filtering)
+# summary.total_no_proof_body = 50  (rare false positives from .v scan fallback)
 # Output file: CampaignMetadata + 4500 ExtractionRecords + 250 ExtractionErrors + ExtractionSummary
 ```
 

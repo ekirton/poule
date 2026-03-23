@@ -144,7 +144,7 @@ RUN mkdir -p /opt/venv && chown -R ${HOST_UID}:${HOST_GID} /opt/venv /poule
 
 # Create venv as the app user so it's writable when source is installed later
 USER ${HOST_USER}
-RUN uv sync --frozen --group dev
+RUN uv sync --frozen --group dev --group tune
 USER root
 
 ENV PATH="/opt/venv/bin:${PATH}"

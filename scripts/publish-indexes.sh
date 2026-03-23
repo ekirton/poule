@@ -79,9 +79,55 @@ for lib in $LIBRARIES; do
 done
 
 INDEX_DB="${INPUT_DIR}/index.db"
+
+# --- Merge per-library indexes into index.db (if needed) ---
+
+NEED_MERGE=false
+LIB_LIST="$LIBRARIES"
+
 if [[ ! -f "$INDEX_DB" ]]; then
-    echo "Error: ${INDEX_DB} does not exist." >&2
-    exit 1
+    NEED_MERGE=true
+else
+    # Compare library_versions in index.db against per-library index versions
+    merged_versions=$(sqlite3 "$INDEX_DB" "SELECT value FROM index_meta WHERE key = 'library_versions'" 2>/dev/null || true)
+    if [[ -z "$merged_versions" ]]; then
+        NEED_MERGE=true
+    else
+        for lib in $LIBRARIES; do
+            per_lib_ver=""
+            per_lib_db="${INPUT_DIR}/index-${lib}.db"
+            if [[ -f "$per_lib_db" ]]; then
+                per_lib_ver=$(sqlite3 "$per_lib_db" "SELECT value FROM index_meta WHERE key = 'library_version'" 2>/dev/null || true)
+            fi
+            merged_lib_ver=$(python -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get(sys.argv[2],''))" "$merged_versions" "$lib")
+            if [[ "$per_lib_ver" != "$merged_lib_ver" ]]; then
+                echo "index.db out of date: ${lib} ${merged_lib_ver} -> ${per_lib_ver}" >&2
+                NEED_MERGE=true
+            fi
+        done
+    fi
+fi
+
+if [[ "$NEED_MERGE" == true ]]; then
+    echo "Merging per-library indexes into ${INDEX_DB}..."
+    python -c "
+from pathlib import Path
+from Poule.storage.merge import merge_indexes
+
+sources = []
+for lib in '${LIB_LIST}'.split():
+    sources.append((lib, Path('${INPUT_DIR}') / f'index-{lib}.db'))
+
+result = merge_indexes(sources, Path('${INDEX_DB}'))
+
+print(f'  Declarations: {result[\"total_declarations\"]}')
+print(f'  Dependencies: {result[\"total_dependencies\"]}')
+print(f'  Dropped deps: {result[\"dropped_dependencies\"]}')
+print(f'  Libraries:    {\", \".join(result[\"libraries\"])}')
+"
+    echo
+else
+    echo "index.db is up to date."
 fi
 
 if [[ -n "$MODEL_PATH" && ! -f "$MODEL_PATH" ]]; then
