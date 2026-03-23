@@ -116,6 +116,30 @@ def rrf_fuse(
     return sorted(scores.items(), key=lambda item: item[1], reverse=True)
 
 
+def weighted_rrf_fuse(
+    ranked_lists: Sequence[Sequence],
+    weights: Sequence[float],
+    k: int = 60,
+) -> list[tuple]:
+    """Weighted Reciprocal Rank Fusion over multiple ranked lists.
+
+    Like ``rrf_fuse`` but each channel *c* is scaled by ``weights[c]``:
+
+        score(d) = Σ_c  w_c / (k + rank_c(d))
+
+    A weight of 0.0 silences a channel entirely.  Returns
+    ``[(decl_id, weighted_rrf_score), ...]`` sorted descending.
+    """
+    scores: defaultdict = defaultdict(float)
+    for ranked, weight in zip(ranked_lists, weights):
+        if weight == 0.0:
+            continue
+        for rank_0, item in enumerate(ranked):
+            decl_id = item[0] if isinstance(item, tuple) else item
+            scores[decl_id] += weight / (k + rank_0 + 1)
+    return sorted(scores.items(), key=lambda item: item[1], reverse=True)
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

@@ -45,7 +45,7 @@ Bi-encoder (dual-encoder) with shared weights. The same encoder produces embeddi
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Architecture | Encoder-only transformer | Bi-encoders dominate premise selection; encoder-only is simpler and faster than decoder-as-encoder |
-| Parameter count | ~100M | LeanHammer (82M) outperforms ReProver (299M); 100M-class is the efficiency sweet spot |
+| Parameter count | ~98M (CodeBERT 125M base, reduced by closed-vocabulary embedding layer) | LeanHammer (82M) outperforms ReProver (299M); 100M-class is the efficiency sweet spot |
 | Embedding dimension | 768 | Standard for 100M-class encoders; sufficient for 50K-200K item indexes |
 | Base model | CodeBERT or equivalent code-pretrained encoder | Code-pretrained tokenizers handle formal syntax; RocqStar validated CodeBERT for Coq |
 | Pooling | Mean pooling over final hidden states | Standard for bi-encoder retrieval; matches ReProver, CFR approaches |
@@ -140,9 +140,10 @@ The neural channel is registered alongside existing channels in the retrieval pi
 
 On pipeline initialization, the neural channel checks:
 
-1. Does the `embeddings` table exist in the database?
-2. Does the `embedding_matrix` have rows?
-3. Is the encoder model loadable?
+1. Does the model checkpoint exist at the well-known model path?
+2. Does the vocabulary file exist at the well-known vocabulary path?
+3. Does the `embeddings` table in the database contain rows?
+4. Does the `neural_model_hash` in `index_meta` match the current model's hash?
 
 If any check fails, the neural channel marks itself as unavailable. The pipeline proceeds with the remaining channels. No error is raised — this is the expected state for installations without a model checkpoint.
 

@@ -110,24 +110,29 @@ The neural channel integrates into the pipeline as a retrieval function with the
 
 ### 4.4 Neural Channel Availability
 
-The neural channel is available when all three conditions hold:
+The neural channel is available when all four conditions hold:
 
 1. A model checkpoint exists at the well-known model path
-2. The `embeddings` table in the index database contains rows
-3. The `neural_model_hash` in `index_meta` matches the current model's hash
+2. A vocabulary file exists at the well-known vocabulary path
+3. The `embeddings` table in the index database contains rows
+4. The `neural_model_hash` in `index_meta` matches the current model's hash
 
 When any condition fails, the neural channel marks itself as unavailable. The pipeline proceeds with existing channels. No error is raised.
 
-#### check_availability(db_path, model_path)
+#### check_availability(db_path, model_path, vocabulary_path)
 
-- REQUIRES: `db_path` points to a valid index database. `model_path` is the well-known model checkpoint path.
-- ENSURES: Returns `true` if all three conditions above are met. Returns `false` otherwise.
+- REQUIRES: `db_path` points to a valid index database. `model_path` is the well-known model checkpoint path. `vocabulary_path` is the well-known vocabulary file path.
+- ENSURES: Returns `true` if all four conditions above are met. Returns `false` otherwise.
 
 > **Given** no model checkpoint exists at the well-known path
 > **When** `check_availability` is called
 > **Then** returns `false` — search operates with existing channels only
 
-> **Given** model checkpoint exists but `neural_model_hash` in index_meta differs
+> **Given** model checkpoint exists but vocabulary file does not
+> **When** `check_availability` is called
+> **Then** returns `false` — encoder requires the closed vocabulary for compatible tokenization
+
+> **Given** model checkpoint and vocabulary exist but `neural_model_hash` in index_meta differs
 > **When** `check_availability` is called
 > **Then** returns `false` — embeddings are stale from a different model version
 
@@ -265,8 +270,9 @@ reader = IndexReader.open("/path/to/index.db")
 
 # Neural channel startup
 model_path = "<data_dir>/models/neural-premise-selector.onnx"
-if file_exists(model_path):
-    encoder = NeuralEncoder.load(model_path)
+vocabulary_path = "<data_dir>/models/coq-vocabulary.json"
+if file_exists(model_path) and file_exists(vocabulary_path):
+    encoder = NeuralEncoder.load(model_path, vocabulary_path)
     stored_hash = reader.get_meta("neural_model_hash")
     if stored_hash == encoder.model_hash():
         matrix, id_map = load_embeddings(reader)

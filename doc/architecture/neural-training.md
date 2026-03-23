@@ -73,8 +73,8 @@ In addition to corpus-extracted tokens, the vocabulary includes fixed token sets
 | Punctuation / delimiters | `(`, `)`, `{`, `}`, `[`, `]`, `:`, `;`, `,`, `.`, `\|`, `@`, `!`, `?`, `_`, `'`, `#`, `=`, `+`, `-`, `*`, `/`, `<`, `>`, `~` | ~25 |
 | SSReflect tacticals | `/=`, `//`, `//=`, `=>`, `->`, `<-` | 6 |
 | Scope delimiters | `%N`, `%Z`, `%R`, `%Q`, `%positive`, `%type` | 6 |
-| Unicode math symbols | `∀`, `∃`, `→`, `←`, `↔`, `⊢`, `≤`, `≥`, `≠`, `≡`, `∧`, `∨`, `¬`, `⊆`, etc. | ~30 |
-| Greek letters | `α`–`ω`, `Γ`–`Ω` | ~33 |
+| Unicode math symbols | `∀`, `∃`, `→`, `←`, `↔`, `⊢`, `≤`, `≥`, `≠`, `≡`, `∧`, `∨`, `¬`, `⊆`, etc. | 31 |
+| Greek letters | `α`–`ω`, `Γ`–`Ω` | 33 |
 | Digits | `0`–`9` | 10 |
 
 ### Construction Procedure
@@ -107,7 +107,7 @@ In addition to corpus-extracted tokens, the vocabulary includes fixed token sets
 
 ### Expected Size
 
-~15,500 tokens: ~15,000 library identifiers, ~200 variable names, ~200 syntax/keyword/tactic tokens, ~80 Unicode/Greek symbols, 5 special tokens.
+~15,500 tokens: ~15,000 library identifiers, ~200 variable names, ~200 syntax/keyword/tactic tokens, 64 Unicode/Greek symbols, 5 special tokens.
 
 ### Tokenization at Inference
 
@@ -147,9 +147,9 @@ This replaces `AutoTokenizer.from_pretrained("microsoft/codebert-base")` through
 
 ### Input Format
 
-The training pipeline consumes JSON Lines files produced by the Training Data Extraction pipeline. Each line is an ExtractionRecord containing per-step proof states and premise annotations.
+The training pipeline consumes JSON Lines files produced by the Training Data Extraction pipeline. Each line has a `record_type` field — one of `campaign_metadata`, `proof_trace`, `extraction_error`, or `extraction_summary`. The data loader filters to `proof_trace` records, each of which is an ExtractionRecord containing per-step proof states and premise annotations. Non-`proof_trace` records are skipped.
 
-The data loader extracts `(proof_state, premises_used)` pairs from the ExtractionRecord's step sequence. Each ExtractionStep contains the proof state (goals and hypotheses) *after* the step's tactic was applied, plus the premises used by that tactic. Step 0 is the initial state with no tactic. The training pair for a tactic at step k uses the proof state from step k-1 (the state *before* the tactic) and the premises from step k:
+The data loader extracts `(proof_state, premises_used)` pairs from each ExtractionRecord's step sequence. Each ExtractionStep contains the proof state (goals and hypotheses) *after* the step's tactic was applied, plus the premises used by that tactic. Step 0 is the initial state with no tactic. The training pair for a tactic at step k uses the proof state from step k-1 (the state *before* the tactic) and the premises from step k:
 
 ```
 For each ExtractionRecord:
@@ -248,13 +248,97 @@ N_i = sample(hard_negative_pool, k=3)
 
 ### Training Hardware
 
-| Corpus size | GPU requirement | Estimated wall time | Estimated cost |
-|-------------|----------------|---------------------|----------------|
+| Corpus size | Hardware | Estimated wall time | Estimated cost |
+|-------------|----------|---------------------|----------------|
 | 10K pairs (stdlib only) | Any 16GB+ GPU | ~2 hours | <$10 |
+| 10K pairs (stdlib only) | M2 Pro, 32GB (MPS) | ~7 hours | $0 (local) |
 | 50K pairs (stdlib + MathComp) | 24GB GPU (A6000/4090) | ~8 hours | $50–100 |
+| 50K pairs (stdlib + MathComp) | M2 Pro, 32GB (MPS) | ~30 hours | $0 (local) |
 | 100K+ pairs (multi-project) | 24GB GPU (A6000/4090) | ~16 hours | $100–200 |
 
-Training uses mixed precision (FP16) with gradient accumulation to fit within 24GB VRAM at batch size 256.
+Training uses mixed precision (FP16) with gradient accumulation to fit within 24GB VRAM at batch size 256. On Apple Silicon (MPS), training runs in FP32 without AMP — the unified memory architecture eliminates the CPU↔GPU transfer bottleneck, partially compensating for the lack of mixed-precision speedup.
+
+### Device Detection
+
+The training pipeline selects compute devices in priority order: CUDA GPU → Apple MPS → CPU. Mixed precision (AMP with GradScaler) is used only on CUDA; MPS and CPU use FP32. This is a shared utility used by both training and evaluation.
+
+## Hyperparameter Optimization
+
+```
+poule tune --db <index.db> --output-dir <hpo-output/> --n-trials 20 <traces.jsonl>
+```
+
+Automated search over training hyperparameters to maximize validation Recall@32.
+
+### Framework
+
+Optuna with TPE (Tree-structured Parzen Estimator) sampler. Optuna was chosen over Ray Tune for single-machine training:
+
+- **Lightweight**: ~10 MB, pure Python, no background processes or object store. Ray's worker/scheduler architecture and 2–4 GB object store are designed for distributed multi-GPU setups and provide no benefit on a single machine.
+- **Sample-efficient**: TPE adapts the search space based on observed results, converging faster than random search for the ~20-trial budgets realistic on sequential single-machine execution.
+- **Pruning**: Built-in `MedianPruner` observes per-epoch validation Recall@32 and kills trials performing below the median of completed trials. A bad trial that would otherwise run 20 epochs can be pruned after 3–5, saving 75–85% of wasted compute.
+- **Crash recovery**: SQLite storage backend persists every completed trial. If the process is interrupted, the study resumes seamlessly.
+- **Apple Silicon native**: No CUDA dependency. Works with MPS and CPU backends.
+
+### Search Space
+
+| Parameter | Type | Range | Fixed default | Rationale |
+|-----------|------|-------|---------------|-----------|
+| Learning rate | Log-uniform | [1e-6, 1e-4] | 2e-5 | Highest-impact hyperparameter for BERT fine-tuning |
+| Temperature τ | Log-uniform | [0.01, 0.2] | 0.05 | LeanHammer value; Coq's identifier structure may warrant different sharpness |
+| Batch size | Categorical | {64, 128, 256} | 256 | Affects effective learning rate and memory pressure; discrete due to gradient accumulation |
+| Weight decay | Log-uniform | [1e-4, 1e-1] | 1e-2 | Standard AdamW regularization range |
+| Hard negatives per state | Integer | [1, 5] | 3 | LeanHammer uses 3; fewer reduces batch complexity, more provides richer signal |
+
+**Fixed (not tunable):** `max_seq_length` (512, architectural), `embedding_dim` (768, CodeBERT architecture), `max_epochs` (20, early stopping handles actual duration), `early_stopping_patience` (3, interacts poorly with pruning if also tuned — two competing stopping mechanisms).
+
+### Pruning Strategy
+
+`MedianPruner(n_startup_trials=3, n_warmup_steps=3)`:
+
+- **n_startup_trials=3**: The first 3 trials run to completion without pruning, establishing a baseline distribution for the pruner. Without this, the pruner has no reference data and cannot make meaningful comparisons.
+- **n_warmup_steps=3**: Within each trial, the first 3 epochs are immune to pruning. Early epochs produce noisy validation metrics as the model is still warming up; pruning on epoch-1 metrics would kill promising configurations that start slowly.
+
+Interaction with early stopping: The trainer's `EarlyStoppingTracker` (patience=3) and Optuna's `MedianPruner` operate independently. The pruner kills trials that are bad relative to *other trials*; early stopping kills epochs within a trial that have stopped improving. A trial can be pruned by Optuna even if early stopping has not triggered (the trial is improving, but too slowly relative to others).
+
+### Integration with Training Loop
+
+The tuner reuses the existing `BiEncoderTrainer` without modifying the training loop. Integration is through an **epoch callback**:
+
+1. `_train_impl()` accepts an optional `epoch_callback(epoch, val_recall)` parameter.
+2. After each epoch's validation, the callback is invoked (if provided).
+3. The Optuna objective passes a callback that calls `trial.report(val_recall, epoch)` and then `trial.should_prune()`.
+4. If pruning is triggered, the callback raises `optuna.TrialPruned`, which propagates up through the training loop (only `RuntimeError` for OOM is caught in the inner loop).
+5. Optuna catches `TrialPruned` in the study runner and records the trial as pruned.
+
+This design adds 3 lines to `_train_impl()` and leaves all existing callers (`train()`, `fine_tune()`, CLI commands) unchanged.
+
+### Study Persistence
+
+Trials persist in a SQLite database at `<output_dir>/hpo-study.db`. Each trial's checkpoint is saved to `<output_dir>/trial-<N>.pt`. On study completion, the best trial's checkpoint is copied to `<output_dir>/best-model.pt`.
+
+The `--resume` flag reloads an existing study and continues from the last completed trial. This is critical for long-running sequential HPO on development machines where interruptions (laptop sleep, crash) are expected.
+
+### Memory Management
+
+On a 32GB unified memory machine, each trial consumes ~3–4 GB (model + optimizer + gradients + data). Between trials:
+
+1. The trainer, model, optimizer, and all tensors go out of scope when the objective function returns.
+2. `gc.collect()` forces Python garbage collection.
+3. `torch.mps.empty_cache()` releases the MPS device allocator's cache (Apple Silicon equivalent of `torch.cuda.empty_cache()`).
+
+Sequential execution (one trial at a time) is the only safe mode — parallel trials would exceed available memory.
+
+### Hardware Estimates
+
+| Corpus size | Hardware | Est. time per trial | 20 trials (with pruning) |
+|-------------|----------|---------------------|--------------------------|
+| 10K pairs (stdlib) | M2 Pro, 32GB | ~20 min | ~4–5 hours |
+| 10K pairs (stdlib) | 24GB GPU (A6000/4090) | ~6 min | ~1–2 hours |
+| 50K pairs (stdlib + MathComp) | M2 Pro, 32GB | ~90 min | ~18–24 hours |
+| 50K pairs (stdlib + MathComp) | 24GB GPU (A6000/4090) | ~25 min | ~5–6 hours |
+
+Pruning typically eliminates ~40% of trial compute, reducing wall time by that factor from the naive n_trials × time_per_trial estimate.
 
 ## Fine-Tuning
 
@@ -346,7 +430,7 @@ Checks extracted data before committing to a training run:
 | Empty premise lists | > 10% of total pairs |
 | Malformed fields (missing state, missing premises) | Any occurrence |
 | Degenerate premise distribution (single premise accounts for > 5% of all occurrences) | Any occurrence |
-| Total pair count | < 5,000 pairs |
+| Total pair count | < 10,000 pairs |
 | Unique premise count | < 1,000 unique premises |
 
 Validation is instant (single pass over the JSONL file) and catches the most common data quality issues before GPU time is committed.
@@ -372,3 +456,11 @@ ONNX Runtime provides hardware-agnostic INT8 inference with consistent performan
 ### Why dynamic quantization rather than static
 
 Dynamic INT8 quantization calibrates activation ranges at inference time, avoiding the need for a calibration dataset. Static quantization produces slightly faster inference but requires a representative calibration set and additional tooling. For a 100M model where single-item inference is already <10ms with dynamic quantization, the complexity of static quantization is not justified.
+
+### Why Optuna rather than Ray Tune
+
+Ray Tune (with ASHA or BOHB schedulers) is designed for distributed multi-GPU clusters. On a single machine running one sequential trial at a time, Ray's worker/scheduler architecture, 2–4 GB object store reservation, and heavy dependency footprint (grpc, protobuf, aiohttp) provide no benefit. Optuna is 10 MB, pure Python, uses TPE for sample-efficient Bayesian search, and persists trials in SQLite for crash recovery — the right tool for single-machine HPO on consumer hardware.
+
+### Why MedianPruner rather than SuccessiveHalving
+
+Optuna's `MedianPruner` compares each trial's intermediate value (epoch-level validation R@32) against the median of completed trials at the same step. `SuccessiveHalvingPruner` pre-allocates a fixed bracket structure and requires knowing the total trial count upfront. MedianPruner adapts dynamically as trials complete, which is better suited to sequential execution where the user may interrupt and resume the study. The warmup period (3 epochs) avoids premature pruning on noisy early-training metrics.

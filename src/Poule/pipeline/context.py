@@ -20,6 +20,8 @@ class PipelineContext:
     declaration_node_counts: dict[int, int]
     suffix_index: dict[str, list[str]] = field(default_factory=dict)
     parser: Any = None
+    rrf_k: int = 60
+    rrf_weights: Optional[dict[str, float]] = None
 
 
 def _build_suffix_index(

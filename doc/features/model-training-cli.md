@@ -153,6 +153,18 @@ Fine-tuning from a pre-trained checkpoint on 1K–10K project-specific proofs is
 - GIVEN a fine-tuned model WHEN evaluated on a held-out test set from the user's project THEN it achieves equal or higher Recall@32 compared to the base pre-trained model on the same test set
 - GIVEN a user project with at least 1,000 extracted proofs WHEN fine-tuning is run on a consumer GPU (≤ 24GB VRAM) THEN fine-tuning completes in under 4 hours
 
+### Tune Hyperparameters Automatically
+
+**Priority:** P1
+**Stability:** Draft
+**Traces to:** R5-P1-8
+
+- GIVEN extracted proof trace data and a search index WHEN the tune command is run THEN it performs automated hyperparameter optimization over learning rate, temperature, batch size, weight decay, and hard negatives per state, maximizing validation Recall@32
+- GIVEN a completed tuning study WHEN results are reported THEN the output includes the best hyperparameters, best validation Recall@32, total number of trials, and number of trials pruned early
+- GIVEN a tuning study WHEN a trial's intermediate validation Recall@32 falls below the median of previous trials at the same epoch THEN the trial is pruned early to save compute
+- GIVEN an interrupted tuning session WHEN the tune command is run again with the resume flag THEN the study continues from where it left off, preserving all previously completed trials
+- GIVEN a completed tuning study WHEN the best model is saved THEN the checkpoint is written to a predictable path within the output directory alongside the study database
+
 ### Initialize from Lean Pre-trained Weights
 
 **Priority:** P2

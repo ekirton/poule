@@ -328,7 +328,7 @@ Apply **NFC (Canonical Decomposition + Canonical Composition)** Unicode normaliz
 | Library identifiers (6 libraries) | ~15,000 |
 | Hypothesis variable names | ~200 |
 | Syntax / keywords / tactics | ~200 |
-| Unicode symbols + Greek letters | ~80 |
+| Unicode symbols + Greek letters | 64 |
 | Special tokens | 5 |
 | **Total** | **~15,500** |
 

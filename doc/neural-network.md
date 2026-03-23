@@ -171,7 +171,7 @@ We employ a bi-encoder with shared weights: a single encoder processes both proo
 
 CodeBERT's generic tokenizer over-segments Coq syntax: `Nat.add_comm` becomes 5 tokens (`Nat`, `.`, `add`, `_`, `comm`), `mathcomp.algebra.ssralg` becomes 9 tokens, and Unicode symbols (`∀`, `→`, `⊢`) may map to unknown tokens or multi-byte fallback sequences. This over-segmentation wastes the 512-token context window and fragments semantically meaningful identifiers.
 
-Unlike natural language, Coq's vocabulary is closed: every identifier in a proof state comes from the indexed declaration corpus (~15,000 identifiers across 6 libraries), a small set of variable names, ~200 syntax tokens, and ~80 Unicode symbols — approximately 15,500 tokens total. This makes subword tokenization (WordPiece, BPE) unnecessary. The closed-vocabulary tokenizer performs a simple whitespace split followed by O(1) dictionary lookup per token, achieving perfect fertility (1 token per identifier, always) with no regex pre-tokenizer complexity. NFC Unicode normalization is applied before tokenization. Unknown tokens map to `[UNK]`.
+Unlike natural language, Coq's vocabulary is closed: every identifier in a proof state comes from the indexed declaration corpus (~15,000 identifiers across 6 libraries), a small set of variable names, ~200 syntax tokens, and 64 Unicode symbols — approximately 15,500 tokens total. This makes subword tokenization (WordPiece, BPE) unnecessary. The closed-vocabulary tokenizer performs a simple whitespace split followed by O(1) dictionary lookup per token, achieving perfect fertility (1 token per identifier, always) with no regex pre-tokenizer complexity. NFC Unicode normalization is applied before tokenization. Unknown tokens map to `[UNK]`.
 
 The full tokenizer design — including the closed-vocabulary rationale, subword alternatives considered, vocabulary construction, and evaluation methodology — is described in `coq-vocabulary.md`.
 
@@ -248,7 +248,83 @@ The quantized model runs at <10ms per encoding on CPU, enabling sub-second retri
 
 ### 3.8 Integration with Hybrid Retrieval
 
-The neural retrieval channel is one of several in the search pipeline. At query time, a proof state is encoded and compared against precomputed premise embeddings via cosine similarity. The neural rankings are fused with symbolic channel rankings (WL kernel, MePo symbol overlap, FTS5) using reciprocal rank fusion (RRF). The fused ranking is returned to an LLM reasoning layer via MCP, which serves as an implicit reranking and reasoning stage — performing a function analogous to the cross-encoder reranking stage in systems like Magnushammer, but with the additional capability of incorporating contextual reasoning about the proof state.
+The neural retrieval channel is one of several in the search pipeline. At query time, a proof state is encoded and compared against precomputed premise embeddings via cosine similarity. The neural rankings are fused with symbolic channel rankings (WL kernel, MePo symbol overlap, FTS5) using weighted reciprocal rank fusion (WRRF):
+
+$$\text{WRRF}(d) = \sum_{c \in \text{channels}} \frac{w_c}{k + \text{rank}_c(d)}$$
+
+The smoothing constant *k* and per-channel weights *w_c* are optimized via Optuna in a three-phase pipeline: (1) optimize *k* and weights for the three symbolic channels alone, (2) train the neural model with HPO, (3) optimize *k* and weights for all four channels jointly. Phases 1 and 2 are independent; phase 3 requires the trained model from phase 2. The optimization uses the validation split and pre-computes all channel ranked lists once — each Optuna trial only re-fuses, making it sub-second. See `doc/reciprocal-rank-fusion.md` §5 for the full protocol.
+
+The fused ranking is returned to an LLM reasoning layer via MCP, which serves as an implicit reranking and reasoning stage — performing a function analogous to the cross-encoder reranking stage in systems like Magnushammer, but with the additional capability of incorporating contextual reasoning about the proof state.
+
+## 4. Evaluation
+
+The central claim of this work is that adding a neural retrieval channel to the existing symbolic pipeline improves premise selection quality. This section describes the experimental protocol for testing that claim.
+
+### 4.1 Experimental Setup
+
+**Test corpus.** Evaluation uses the held-out test split (10% of source files, selected by position mod 10 = 9 as described in §3.2). All (proof_state, premises_used) pairs from test-split files are evaluation queries. The premise corpus is the full set of declarations from the six target libraries (~34,000 declarations across Stdlib, MathComp, stdpp, Flocq, Coquelicot, and Interval).
+
+**Hardware.** All retrieval latency measurements use CPU-only inference with the INT8 quantized model (§3.7). No GPU is used at evaluation time, matching the deployment target.
+
+### 4.2 Baseline: Symbolic Pipeline
+
+The baseline is the existing symbolic retrieval pipeline operating without the neural channel. It comprises four channels fused via weighted RRF with empirically optimized *k* and per-channel weights (see §3.8):
+
+| Channel | Algorithm | Signal |
+|---------|-----------|--------|
+| Structural | Weisfeiler-Lehman kernel hashing | Term structure similarity |
+| Fine Structural | Tree Edit Distance | Fine-grained structural comparison |
+| Symbol Overlap | Meng-Paulson (MePo) | Iterative breadth-first symbol overlap |
+| Lexical | FTS5 with BM25 | Full-text lexical matching |
+
+This symbolic pipeline, with optimized fusion parameters, is the base model against which the neural channel must demonstrate improvement. It represents the strongest retrieval configuration achievable without learned embeddings or training data.
+
+### 4.3 Retrieval Configurations
+
+We evaluate three retrieval configurations to isolate the neural channel's contribution, corresponding to the three-phase optimization pipeline described in `doc/reciprocal-rank-fusion.md` §5.3:
+
+1. **Symbolic-only.** The four symbolic channels (§4.2) fused via weighted RRF with optimized *k* and weights from phase 1. This is the baseline.
+2. **Neural-only.** Bi-encoder cosine similarity retrieval using the trained model (§3.4). No symbolic channels. Evaluated after phase 2 (neural training with HPO).
+3. **Hybrid.** All five channels (four symbolic + neural) fused via weighted RRF with separately optimized *k* and weights from phase 3. This is the target deployment configuration.
+
+The *k* values for symbolic-only and hybrid configurations may differ, since the neural channel's rank distribution changes the fusion dynamics.
+
+### 4.4 Metrics
+
+**Primary metric.** Recall@32 — the fraction of evaluation queries for which the correct premise appears within the top 32 retrieved candidates. This cutoff follows LeanHammer's convention and represents a practical budget for downstream consumption by a tactic generator or LLM reasoning layer.
+
+**Secondary metrics.** Recall@1, Recall@10, and Mean Reciprocal Rank (MRR) provide additional resolution across the ranking.
+
+**Relative improvement.** The key measure of the neural channel's value is:
+
+$$\Delta = \frac{\text{Recall@32}_{\text{hybrid}} - \text{Recall@32}_{\text{symbolic}}}{\text{Recall@32}_{\text{symbolic}}}$$
+
+### 4.5 Complementarity Analysis
+
+Following LeanHammer's union analysis methodology, we partition the set of correctly retrieved premises into three categories:
+
+- **Symbolic-only hits:** premises retrieved by the symbolic pipeline but missed by the neural channel
+- **Neural-only hits:** premises retrieved by the neural channel but missed by the symbolic pipeline
+- **Shared hits:** premises retrieved by both
+
+The neural channel justifies its inclusion if the neural-only hit fraction is substantial — indicating that it captures premises invisible to symbolic matching. A channel that only duplicates symbolic hits adds fusion overhead without retrieval benefit.
+
+### 4.6 Latency Evaluation
+
+| Measurement | Target | Method |
+|-------------|--------|--------|
+| Neural encoding latency | < 100ms per query | Median over all test queries on CPU with INT8 model |
+| End-to-end hybrid retrieval | < 1 second | Wall-clock time from query input to ranked result list, including all channels and fusion |
+| Index rebuild | < 10 minutes for 50K declarations | Wall-clock time to encode all premises and build the retrieval index |
+
+### 4.7 Success Criteria
+
+The neural channel is considered successful if both conditions are met on the held-out test set:
+
+1. **Neural retrieval quality.** Neural-only Recall@32 ≥ 50%.
+2. **Hybrid improvement.** Hybrid Recall@32 achieves ≥ 15% relative improvement over symbolic-only Recall@32.
+
+These thresholds are advisory deployment gates, not hard constraints. A model that narrowly misses one threshold but demonstrates strong complementarity (§4.5) may still warrant deployment. Conversely, a model meeting both thresholds but showing negligible neural-only hits would suggest the improvement comes from fusion noise rather than genuine complementary signal.
 
 ## References
 

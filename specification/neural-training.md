@@ -12,7 +12,7 @@ Define the training pipeline that produces neural encoder model checkpoints from
 
 ## 2. Scope
 
-**In scope**: `VocabularyBuilder` (closed-vocabulary construction from search index and training data), `CoqTokenizer` (whitespace-split tokenization using closed vocabulary), `TrainingDataLoader` (JSONL parsing, pair extraction, train/val/test split, hard negative sampling), `BiEncoderTrainer` (training loop, masked contrastive loss, checkpointing), `RetrievalEvaluator` (recall@k, MRR, neural vs. symbolic comparison), `ModelQuantizer` (PyTorch → INT8 ONNX conversion, validation), `TrainingDataValidator` (pre-training data quality checks).
+**In scope**: `VocabularyBuilder` (closed-vocabulary construction from search index and training data), `CoqTokenizer` (whitespace-split tokenization using closed vocabulary), `TrainingDataLoader` (JSONL parsing, pair extraction, train/val/test split, hard negative sampling), `BiEncoderTrainer` (training loop, masked contrastive loss, checkpointing), `RetrievalEvaluator` (recall@k, MRR, neural vs. symbolic comparison), `ModelQuantizer` (PyTorch → INT8 ONNX conversion, validation), `TrainingDataValidator` (pre-training data quality checks), `HyperparameterTuner` (automated hyperparameter optimization using Optuna).
 
 **Out of scope**: Neural encoder inference at query time (owned by neural-retrieval), embedding index construction (owned by neural-retrieval), retrieval pipeline integration (owned by pipeline), storage schema (owned by storage).
 
@@ -27,6 +27,9 @@ Define the training pipeline that produces neural encoder model checkpoints from
 | Hard negative | A premise that is accessible to the theorem but not used in the proof step |
 | Accessible premise | A premise whose source file is in the transitive file-dependency closure of the theorem's file |
 | Masked contrastive loss | InfoNCE variant where shared positives (premises positive for other states in the batch) are excluded from the negative set |
+| Epoch callback | An optional function `(epoch, val_recall) -> None` invoked after each epoch's validation, used by the tuner to report intermediate values and trigger pruning |
+| Trial | A single hyperparameter optimization run with a sampled configuration |
+| Pruning | Early termination of a trial whose intermediate validation metric falls below the median of previously completed trials at the same epoch |
 
 ## 4. Behavioral Requirements
 
@@ -268,10 +271,10 @@ accessible_premises(theorem) = all premises defined in accessible_files(theorem)
 
 ### 4.3 BiEncoderTrainer
 
-#### train(dataset, output_path, vocabulary_path, hyperparams)
+#### train(dataset, output_path, vocabulary_path, hyperparams, epoch_callback)
 
-- REQUIRES: `dataset` is a `TrainingDataset` with at least 1,000 training pairs. `output_path` is a writable path. `vocabulary_path` points to a valid vocabulary JSON file (as produced by `VocabularyBuilder.build`). `hyperparams` has defaults as specified below.
-- ENSURES: Constructs a `CoqTokenizer` from `vocabulary_path`. Creates a `BiEncoder` model with an embedding layer sized to the vocabulary. Copies overlapping pretrained embeddings from CodeBERT for tokens that appear in both vocabularies (digits, punctuation, common words). Initializes remaining embeddings randomly (σ=0.02). Trains using masked contrastive loss. Saves the best checkpoint (by validation Recall@32) to `output_path`. The checkpoint includes the vocabulary path for reproducibility. Prints training metrics (loss, validation Recall@32) after each epoch.
+- REQUIRES: `dataset` is a `TrainingDataset` with at least 1,000 training pairs. `output_path` is a writable path. `vocabulary_path` points to a valid vocabulary JSON file (as produced by `VocabularyBuilder.build`). `hyperparams` has defaults as specified below. `epoch_callback` is `None` or a callable `(epoch: int, val_recall: float) -> None`.
+- ENSURES: Constructs a `CoqTokenizer` from `vocabulary_path`. Creates a `BiEncoder` model with an embedding layer sized to the vocabulary. Copies overlapping pretrained embeddings from CodeBERT for tokens that appear in both vocabularies (digits, punctuation, common words). Initializes remaining embeddings randomly (σ=0.02). Trains using masked contrastive loss. Saves the best checkpoint (by validation Recall@32) to `output_path`. The checkpoint includes the vocabulary path for reproducibility. Prints training metrics (loss, validation Recall@32) after each epoch. When `epoch_callback` is not `None`, invokes it after each epoch's validation with the epoch number and validation Recall@32; if the callback raises an exception, the training loop terminates and the exception propagates to the caller.
 - On training completion: saves final checkpoint alongside best checkpoint.
 - On GPU OOM: raises `TrainingResourceError` with message suggesting batch size reduction.
 - When `vocabulary_path` is `None`: falls back to CodeBERT's default tokenizer and embedding layer (backward compatibility).
@@ -331,10 +334,10 @@ The checkpoint shall include:
 
 ### 4.4 Fine-Tuning
 
-#### fine_tune(checkpoint_path, dataset, output_path, hyperparams)
+#### fine_tune(checkpoint_path, dataset, output_path, hyperparams, epoch_callback)
 
-- REQUIRES: `checkpoint_path` points to a valid training checkpoint. `dataset` contains project-specific training pairs. `output_path` is writable.
-- ENSURES: Loads the pre-trained checkpoint, including the vocabulary path from the checkpoint. Resumes training with adjusted hyperparameters and the same tokenizer. Saves best fine-tuned checkpoint by validation Recall@32.
+- REQUIRES: `checkpoint_path` points to a valid training checkpoint. `dataset` contains project-specific training pairs. `output_path` is writable. `epoch_callback` is `None` or a callable `(epoch: int, val_recall: float) -> None`.
+- ENSURES: Loads the pre-trained checkpoint, including the vocabulary path from the checkpoint. Resumes training with adjusted hyperparameters and the same tokenizer. Saves best fine-tuned checkpoint by validation Recall@32. When `epoch_callback` is not `None`, invokes it after each epoch's validation; if the callback raises an exception, the training loop terminates and the exception propagates.
 
 **Fine-tuning hyperparameter overrides:**
 
@@ -447,6 +450,80 @@ When `relative_improvement < 0.15`, the report shall include a warning: `"Neural
 > **When** `validate` runs
 > **Then** returns report with total_pairs=35,000, empty_premise_pairs=15,000, no warnings (30% empty is common)
 
+### 4.8 HyperparameterTuner
+
+Automated hyperparameter optimization using Optuna to maximize validation Recall@32.
+
+#### Tunable hyperparameters
+
+| Parameter | Sampling type | Range | Default |
+|-----------|--------------|-------|---------|
+| `learning_rate` | Log-uniform | [1e-6, 1e-4] | 2e-5 |
+| `temperature` | Log-uniform | [0.01, 0.2] | 0.05 |
+| `batch_size` | Categorical | {64, 128, 256} | 256 |
+| `weight_decay` | Log-uniform | [1e-4, 1e-1] | 1e-2 |
+| `hard_negatives_per_state` | Integer | [1, 5] | 3 |
+
+All other hyperparameters (`max_seq_length`, `embedding_dim`, `max_epochs`, `early_stopping_patience`) are fixed at their default values and not tunable.
+
+#### tune(dataset, output_dir, vocabulary_path, n_trials, study_name, resume)
+
+- REQUIRES: `dataset` is a `TrainingDataset` with at least 1,000 training pairs. `output_dir` is a writable directory path. `vocabulary_path` is `None` or points to a valid vocabulary JSON file. `n_trials` is a positive integer (default: 20). `study_name` is a non-empty string (default: `"poule-hpo"`). `resume` is a boolean (default: `False`).
+- ENSURES: Creates an Optuna study with `TPESampler(seed=42)` and `MedianPruner(n_startup_trials=3, n_warmup_steps=3)`. Uses SQLite storage at `<output_dir>/hpo-study.db`. Runs `n_trials` trials sequentially. Each trial samples hyperparameters from the search space, creates a `BiEncoderTrainer`, and trains using the sampled configuration. Each trial's checkpoint is saved to `<output_dir>/trial-<N>.pt`. On study completion, copies the best trial's checkpoint to `<output_dir>/best-model.pt`. Returns a `TuningResult`.
+- When `resume` is `True`: loads the existing study from `<output_dir>/hpo-study.db` and continues from the last completed trial.
+- When a trial raises `TrainingResourceError` (OOM): logs the error and continues to the next trial.
+- When all trials fail (zero complete successfully): raises `TuningError`.
+- Between trials: calls `gc.collect()` and `torch.mps.empty_cache()` (when MPS is available) to release memory.
+
+**Pruner configuration:**
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| `n_startup_trials` | 3 | First 3 trials run to completion to establish a baseline distribution |
+| `n_warmup_steps` | 3 | Epochs 1–3 are immune to pruning within each trial (early metrics are noisy) |
+
+**Pruning integration with training loop:**
+
+1. The objective function defines an `epoch_callback` that calls `trial.report(val_recall, epoch)` and then checks `trial.should_prune()`.
+2. If `should_prune()` returns `True`, the callback raises `optuna.TrialPruned`.
+3. `TrialPruned` propagates through `_train_impl()` (only `RuntimeError` for OOM is caught in the inner loop).
+4. Optuna's study runner catches `TrialPruned` and records the trial as pruned.
+
+> **Given** a study with n_trials=20 and a dataset of 10,000 pairs
+> **When** `tune` completes
+> **Then** the best checkpoint is at `<output_dir>/best-model.pt`, the study database is at `<output_dir>/hpo-study.db`, and `TuningResult` contains the best hyperparameters, best R@32, trial count, and prune count
+
+> **Given** a previously interrupted study with 8 completed trials at `<output_dir>/hpo-study.db`
+> **When** `tune` is called with `resume=True` and `n_trials=20`
+> **Then** 12 additional trials are run (20 total)
+
+> **Given** a study where all 5 trials raise `TrainingResourceError`
+> **When** `tune` completes
+> **Then** `TuningError` is raised with a message indicating zero trials completed
+
+#### TuningResult
+
+| Field | Type | Definition |
+|-------|------|-----------|
+| `best_hyperparams` | dict | Hyperparameter values from the best trial |
+| `best_value` | float | Best validation Recall@32 across all completed trials |
+| `n_trials` | integer | Total number of trials (completed + pruned + failed) |
+| `n_pruned` | integer | Number of trials pruned by the MedianPruner |
+| `study_path` | string | Path to the SQLite study database |
+| `all_trials` | list of dict | Per-trial summary: `{"number": int, "value": float or None, "state": str, "hyperparams": dict}` |
+
+> **Given** a study with 20 trials where 12 completed, 5 were pruned, and 3 failed
+> **When** `TuningResult` is constructed
+> **Then** `n_trials=20`, `n_pruned=5`, `best_value` is the max R@32 among the 12 completed trials, and `all_trials` has 20 entries
+
+### 4.9 Device Detection
+
+#### get_device()
+
+- REQUIRES: Nothing.
+- ENSURES: Returns a `torch.device` in priority order: CUDA (if `torch.cuda.is_available()`), MPS (if `torch.backends.mps.is_available()`), CPU (fallback).
+- This is a module-level utility function used by `BiEncoderTrainer._train_impl()`, `RetrievalEvaluator`, and `HyperparameterTuner`.
+
 ## 5. Error Specification
 
 | Condition | Error type | Outcome |
@@ -462,6 +539,7 @@ When `relative_improvement < 0.15`, the report shall include a warning: `"Neural
 | Validation split is empty | `InsufficientDataError` | Propagated (split has 0 files in validation position) |
 | Vocabulary JSON not found | `FileNotFoundError` | Propagated to CLI |
 | Vocabulary JSON malformed | `DataFormatError` | Propagated with message: `"Invalid vocabulary file"` |
+| All HPO trials fail (zero complete) | `TuningError` | Propagated with message: `"Hyperparameter optimization failed: 0 of {n} trials completed successfully"` |
 
 Error hierarchy:
 - `NeuralTrainingError` — base class for all training pipeline errors
@@ -470,6 +548,7 @@ Error hierarchy:
   - `TrainingResourceError` — GPU OOM or insufficient compute
   - `QuantizationError` — INT8 conversion quality check failed
   - `InsufficientDataError` — not enough training data
+  - `TuningError` — hyperparameter optimization study failed (zero trials completed)
 
 ## 6. Non-Functional Requirements
 
@@ -483,6 +562,9 @@ Error hierarchy:
 | Data validation (single pass, 100K steps) | < 30 seconds |
 | Quantization (export + validate) | < 5 minutes |
 | Peak GPU memory (batch_size=256, seq_len=512) | ≤ 24GB |
+| Training time (10K pairs, M2 Pro MPS) | < 7 hours |
+| HPO (20 trials, 10K pairs, M2 Pro MPS) | < 5 hours (with pruning) |
+| HPO (20 trials, 10K pairs, 24GB GPU) | < 2 hours (with pruning) |
 
 ## 7. Examples
 
@@ -526,6 +608,29 @@ quantize("model.pt", "neural-premise-selector.onnx")
 # 7. Deploy: copy .onnx to well-known model path, re-index
 ```
 
+### Hyperparameter optimization workflow
+
+```
+# 1. Load data (same as training)
+dataset = load(["stdlib.jsonl", "mathcomp.jsonl"], "index.db")
+
+# 2. Run HPO
+result = tune(dataset, "hpo-output/", vocabulary_path="coq-vocabulary.json", n_trials=20)
+# Trial 0: lr=3.2e-5, τ=0.042, batch=128, wd=5.1e-3, neg=3 → R@32=0.51
+# Trial 1: lr=8.7e-6, τ=0.11, batch=256, wd=2.3e-2, neg=2 → R@32=0.44
+# Trial 2: lr=1.2e-4, τ=0.015, batch=64, wd=8.9e-4, neg=4 → pruned at epoch 5
+# ...
+# Trial 19: lr=2.8e-5, τ=0.038, batch=128, wd=7.2e-3, neg=3 → R@32=0.56
+#
+# result.best_value = 0.56, result.n_pruned = 7
+# Best checkpoint: hpo-output/best-model.pt
+
+# 3. Resume an interrupted study
+result = tune(dataset, "hpo-output/", vocabulary_path="coq-vocabulary.json",
+              n_trials=30, resume=True)
+# Continues from trial 20 (10 more trials)
+```
+
 ### Fine-tuning workflow
 
 ```
@@ -545,4 +650,5 @@ fine_tune("model.pt", dataset, "fine-tuned.pt", hyperparams={lr: 5e-6, epochs: 1
 - Use `torch.utils.data.DataLoader` with a custom `Dataset` for batching and shuffling.
 - Use `onnx` and `onnxruntime.quantization` for ONNX export and dynamic INT8 quantization.
 - Checkpoint format: `torch.save({"model_state_dict": ..., "optimizer_state_dict": ..., "epoch": ..., "best_recall_32": ..., "hyperparams": ...})`.
+- Use `optuna` for hyperparameter optimization. Import lazily — only required when `tune()` is called.
 - Package location: `src/poule/neural/training/`.

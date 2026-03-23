@@ -120,6 +120,8 @@ def _mock_context_corelib(parser=None):
     }
     ctx.suffix_index = _build_suffix_index(ctx.inverted_index)
     ctx.parser = parser
+    ctx.rrf_k = 60
+    ctx.rrf_weights = None
     return ctx
 
 
@@ -159,6 +161,8 @@ def _mock_context_mixed_symbols(parser=None):
             ctx.declaration_symbols.setdefault(did, set()).add(sym)
     ctx.suffix_index = _build_suffix_index(ctx.inverted_index)
     ctx.parser = parser
+    ctx.rrf_k = 60
+    ctx.rrf_weights = None
     return ctx
 
 
@@ -180,6 +184,8 @@ def _mock_context(parser=None):
     }
     ctx.suffix_index = _build_suffix_index(ctx.inverted_index)
     ctx.parser = parser
+    ctx.rrf_k = 60
+    ctx.rrf_weights = None
     return ctx
 
 

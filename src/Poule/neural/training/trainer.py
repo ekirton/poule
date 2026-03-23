@@ -59,6 +59,25 @@ class EarlyStoppingTracker:
 
 
 # ---------------------------------------------------------------------------
+# Device detection
+# ---------------------------------------------------------------------------
+
+
+def _get_device():
+    """Select compute device: CUDA > MPS > CPU.
+
+    spec §4.9: Returns a torch.device in priority order.
+    """
+    import torch
+
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+# ---------------------------------------------------------------------------
 # Loss and encoding helpers (require torch — imported lazily)
 # ---------------------------------------------------------------------------
 
@@ -257,12 +276,15 @@ class BiEncoderTrainer:
         output_path: Path,
         vocabulary_path: Path | None = None,
         hyperparams: dict | None = None,
+        epoch_callback=None,
     ):
         """Train a bi-encoder from scratch.
 
         spec §4.3: Requires at least 1,000 training pairs.
         When vocabulary_path is provided, uses the closed vocabulary
         tokenizer and reinitializes the embedding layer.
+        epoch_callback: optional (epoch, val_recall) -> None, invoked
+        after each epoch's validation. If it raises, training terminates.
         """
         if len(dataset.train) < 1000:
             raise InsufficientDataError(
@@ -274,7 +296,8 @@ class BiEncoderTrainer:
             hp.update(hyperparams)
 
         self._train_impl(
-            dataset, Path(output_path), hp, vocabulary_path=vocabulary_path
+            dataset, Path(output_path), hp, vocabulary_path=vocabulary_path,
+            epoch_callback=epoch_callback,
         )
 
     def fine_tune(
@@ -283,11 +306,14 @@ class BiEncoderTrainer:
         dataset,
         output_path: Path,
         hyperparams: dict | None = None,
+        epoch_callback=None,
     ):
         """Fine-tune from a pre-trained checkpoint.
 
         spec §4.4: Uses lower learning rate (5e-6) and fewer epochs (10).
         Inherits the vocabulary_path from the checkpoint.
+        epoch_callback: optional (epoch, val_recall) -> None, invoked
+        after each epoch's validation. If it raises, training terminates.
         """
         checkpoint_path = Path(checkpoint_path)
         if not checkpoint_path.exists():
@@ -305,6 +331,7 @@ class BiEncoderTrainer:
             hp,
             initial_state_dict=checkpoint.get("model_state_dict"),
             vocabulary_path=vocab_path,
+            epoch_callback=epoch_callback,
         )
 
     # -----------------------------------------------------------------------
@@ -313,7 +340,7 @@ class BiEncoderTrainer:
 
     def _train_impl(
         self, dataset, output_path, hp, initial_state_dict=None,
-        vocabulary_path=None,
+        vocabulary_path=None, epoch_callback=None,
     ):
         """Shared training loop for train() and fine_tune()."""
         import torch
@@ -322,7 +349,7 @@ class BiEncoderTrainer:
         from Poule.neural.training.model import BiEncoder
 
         output_path = Path(output_path)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = _get_device()
 
         # Tokenizer: closed vocabulary or CodeBERT default
         if vocabulary_path is not None:
@@ -488,6 +515,10 @@ class BiEncoderTrainer:
                 )
 
             print(f"Epoch {epoch}: loss={avg_loss:.4f}, val_R@32={val_recall:.4f}")
+
+            # Epoch callback (used by HPO tuner for pruning)
+            if epoch_callback is not None:
+                epoch_callback(epoch, val_recall)
 
             # Save best checkpoint
             if val_recall > best_recall:

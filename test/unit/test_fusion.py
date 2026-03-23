@@ -20,6 +20,7 @@ from Poule.fusion.fusion import (
     collapse_match,
     structural_score,
     rrf_fuse,
+    weighted_rrf_fuse,
 )
 from Poule.models.labels import (
     LAbs,
@@ -689,3 +690,115 @@ class TestCollapseMatchSortLeafBinderWildcard:
         # Both Prod levels trigger wildcard, bodies match.
         # Should score well above the without-wildcard baseline.
         assert result > 0.7
+
+
+# ===========================================================================
+# 19-24. weighted_rrf_fuse
+# ===========================================================================
+
+
+class TestWeightedRrfFuseBasic:
+    """Test 19: weighted_rrf_fuse applies per-channel weights.
+
+    Formula: score(d) = sum_c w_c / (k + rank_c(d))
+    """
+
+    def test_uniform_weights_match_rrf_fuse(self):
+        """With all weights = 1.0, weighted_rrf_fuse matches rrf_fuse."""
+        list_a = [("d1", 0.9), ("d2", 0.8)]
+        list_b = [("d2", 0.95), ("d3", 0.85)]
+        weights = [1.0, 1.0]
+
+        weighted = weighted_rrf_fuse([list_a, list_b], weights, k=60)
+        unweighted = rrf_fuse([list_a, list_b], k=60)
+
+        w_scores = {r[0]: r[1] for r in weighted}
+        u_scores = {r[0]: r[1] for r in unweighted}
+        for key in u_scores:
+            assert w_scores[key] == pytest.approx(u_scores[key], abs=1e-9)
+
+    def test_zero_weight_silences_channel(self):
+        """A channel with weight 0.0 contributes nothing."""
+        list_a = [("d1", 0.9), ("d2", 0.8)]
+        list_b = [("d3", 0.95)]
+        weights = [1.0, 0.0]
+
+        results = weighted_rrf_fuse([list_a, list_b], weights, k=60)
+        result_ids = [r[0] for r in results]
+        # d3 comes only from the silenced channel
+        assert "d3" not in result_ids
+        assert "d1" in result_ids
+        assert "d2" in result_ids
+
+    def test_double_weight_doubles_contribution(self):
+        """Weight 2.0 doubles the channel's RRF contribution."""
+        list_a = [("d1", 0.9)]
+        weights = [2.0]
+
+        results = weighted_rrf_fuse([list_a], weights, k=60)
+        scores = {r[0]: r[1] for r in results}
+        assert scores["d1"] == pytest.approx(2.0 / 61, abs=1e-9)
+
+
+class TestWeightedRrfFuseRanking:
+    """Test 20: Weights change the final ranking."""
+
+    def test_heavy_channel_b_promotes_its_items(self):
+        """When channel B has weight 3.0, its rank-1 item beats
+        channel A's rank-1 item (weight 1.0)."""
+        list_a = [("d1", 0.9)]
+        list_b = [("d2", 0.95)]
+        weights = [1.0, 3.0]
+
+        results = weighted_rrf_fuse([list_a, list_b], weights, k=60)
+        scores = {r[0]: r[1] for r in results}
+        # d1 gets 1.0/61, d2 gets 3.0/61
+        assert scores["d2"] > scores["d1"]
+        assert scores["d1"] == pytest.approx(1.0 / 61, abs=1e-9)
+        assert scores["d2"] == pytest.approx(3.0 / 61, abs=1e-9)
+
+
+class TestWeightedRrfFuseSpecExample:
+    """Test 21: Worked example with 3 channels and distinct weights."""
+
+    def test_three_channel_weighted_fusion(self):
+        """
+        Channel A (w=1.0): [d1, d2]
+        Channel B (w=2.0): [d2, d3]
+        Channel C (w=0.5): [d3, d1]
+
+        d1: 1.0/(61) + 0.5/(62) = 0.016393 + 0.008065 = 0.024458
+        d2: 1.0/(62) + 2.0/(61) = 0.016129 + 0.032787 = 0.048916
+        d3: 2.0/(62) + 0.5/(61) = 0.032258 + 0.008197 = 0.040455
+
+        Order: [d2, d3, d1]
+        """
+        list_a = ["d1", "d2"]
+        list_b = ["d2", "d3"]
+        list_c = ["d3", "d1"]
+        weights = [1.0, 2.0, 0.5]
+
+        results = weighted_rrf_fuse([list_a, list_b, list_c], weights, k=60)
+        result_ids = [r[0] for r in results]
+        assert result_ids == ["d2", "d3", "d1"]
+
+        scores = {r[0]: r[1] for r in results}
+        assert scores["d1"] == pytest.approx(1.0 / 61 + 0.5 / 62, abs=1e-6)
+        assert scores["d2"] == pytest.approx(1.0 / 62 + 2.0 / 61, abs=1e-6)
+        assert scores["d3"] == pytest.approx(2.0 / 62 + 0.5 / 61, abs=1e-6)
+
+
+class TestWeightedRrfFuseEdgeCases:
+    """Test 22: Edge cases for weighted_rrf_fuse."""
+
+    def test_empty_lists(self):
+        assert weighted_rrf_fuse([], [], k=60) == []
+
+    def test_all_empty_lists(self):
+        assert weighted_rrf_fuse([[], []], [1.0, 1.0], k=60) == []
+
+    def test_single_item_single_channel(self):
+        results = weighted_rrf_fuse([["a"]], [1.5], k=60)
+        assert len(results) == 1
+        assert results[0][0] == "a"
+        assert results[0][1] == pytest.approx(1.5 / 61, abs=1e-9)

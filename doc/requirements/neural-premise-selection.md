@@ -95,6 +95,7 @@ Cross-references:
 | R5-P1-5 | Provide a training data validation step that checks extracted `(proof_state, premises_used)` pairs for completeness and consistency before training |
 | R5-P1-6 | Support configurable retrieval budget (top-k) per query, defaulting to 32 |
 | R5-P1-7 | Report training metrics (loss curves, validation recall@k) during and after training |
+| R5-P1-8 | Provide automated hyperparameter optimization that searches over training hyperparameters (learning rate, temperature, batch size, weight decay, hard negatives per state) to maximize validation Recall@32, with early pruning of underperforming configurations to reduce total compute |
 
 ### P2 — Nice to Have
 

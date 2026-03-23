@@ -32,3 +32,7 @@ class QuantizationError(NeuralTrainingError):
 
 class InsufficientDataError(NeuralTrainingError):
     """Not enough training data to proceed."""
+
+
+class TuningError(NeuralTrainingError):
+    """Hyperparameter optimization study failed."""
