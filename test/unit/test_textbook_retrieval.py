@@ -600,7 +600,7 @@ class TestHandleEducationContext:
             ),
             score=0.85,
             location="LF > Basics > Induction",
-            browser_path="~/software-foundations/lf/Basics.html#lab15",
+            browser_path="~/poule-home/software-foundations/lf/Basics.html#lab15",
         )
         ctx = Mock()
         ctx.education_rag = Mock(spec=EducationRAG)

@@ -75,7 +75,7 @@ class EducationRAG:
             vol_upper = chunk.metadata.volume.upper()
             location = f"{vol_upper} > {chunk.metadata.chapter} > {chunk.metadata.section_title}"
 
-            browser_path = f"~/software-foundations/{chunk.metadata.volume}/{chunk.metadata.chapter_file}"
+            browser_path = f"~/poule-home/software-foundations/{chunk.metadata.volume}/{chunk.metadata.chapter_file}"
             if chunk.metadata.anchor_id:
                 browser_path += f"#{chunk.metadata.anchor_id}"
 
