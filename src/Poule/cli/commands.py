@@ -31,7 +31,7 @@ from Poule.storage.errors import IndexNotFoundError, IndexVersionError
 from Poule.cli.download import download_index
 from Poule.extraction.campaign import run_campaign
 from Poule.extraction.dependency_graph import extract_dependency_graph
-from Poule.extraction.reporting import generate_quality_report
+from Poule.extraction.reporting import analyze_errors, generate_quality_report
 from Poule.neural.training.errors import (
     CheckpointNotFoundError,
     InsufficientDataError,
@@ -418,21 +418,25 @@ def _handle_session_error(exc: SessionError) -> None:
 @cli.command("extract")
 @click.argument("project_dirs", nargs=-1, required=True)
 @click.option("--output", required=True, type=click.Path(), help="Path for JSON Lines output file.")
+@click.option("--index-db", required=True, type=click.Path(exists=True), help="Path to SQLite search index for declaration enumeration.")
+@click.option("--module-prefix", default=None, help="Module prefix for mapping modules to files (e.g. 'Coq.'). Auto-detected if omitted.")
 @click.option("--name-pattern", default=None, help="Only extract proofs matching this name pattern (P1).")
 @click.option("--modules", default=None, help="Comma-separated module prefixes (P1).")
 @click.option("--incremental", is_flag=True, default=False, help="Re-extract only changed files (P1).")
 @click.option("--resume", "resume_flag", is_flag=True, default=False, help="Resume interrupted extraction (P1).")
 @click.option("--include-diffs", is_flag=True, default=False, help="Include proof state diffs (P1).")
-@click.option("--timeout", default=60, type=int, help="Per-proof timeout in seconds.")
+@click.option("--watchdog-timeout", default=600, type=int, help="Inactivity threshold (seconds) before declaring backend dead. 0 to disable.")
 def cmd_extract(
     project_dirs: tuple[str, ...],
     output: str,
+    index_db: str,
+    module_prefix: str | None,
     name_pattern: str | None,
     modules: str | None,
     incremental: bool,
     resume_flag: bool,
     include_diffs: bool,
-    timeout: int,
+    watchdog_timeout: int,
 ):
     """Batch extract proof traces from Coq project directories."""
     if incremental and resume_flag:
@@ -451,10 +455,13 @@ def cmd_extract(
         module_list = [m.strip() for m in modules.split(",")] if modules else None
         scope_filter = ScopeFilter(name_pattern=name_pattern, module_prefixes=module_list)
 
+    wt = watchdog_timeout if watchdog_timeout > 0 else None
     kwargs = {
-        "session_manager": SessionManager(),
-        "timeout_seconds": timeout,
+        "session_manager": SessionManager(watchdog_timeout=wt),
+        "index_db_path": index_db,
     }
+    if module_prefix is not None:
+        kwargs["module_prefix"] = module_prefix
     if scope_filter is not None:
         kwargs["scope_filter"] = scope_filter
     if include_diffs:
@@ -468,6 +475,7 @@ def cmd_extract(
     click.echo(f"  Theorems found:    {summary.total_theorems_found}", err=True)
     click.echo(f"  Extracted:         {summary.total_extracted}", err=True)
     click.echo(f"  Failed:            {summary.total_failed}", err=True)
+    click.echo(f"  No proof body:     {summary.total_no_proof_body}", err=True)
     click.echo(f"  Skipped:           {summary.total_skipped}", err=True)
     click.echo(f"  Output: {output}", err=True)
 
@@ -593,6 +601,176 @@ def _format_quality_report_human(report) -> str:
                 f"{p.premise_coverage * 100:.1f}% premise coverage)"
             )
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# analyze-errors
+# ---------------------------------------------------------------------------
+
+
+@cli.command("analyze-errors")
+@click.argument("files", nargs=-1, required=True)
+@click.option("--timeout", default=60, type=int, help="Timeout threshold in seconds for near-timeout detection.")
+@click.option("--json", "json_mode", is_flag=True, default=False, help="Output as JSON.")
+@click.option("--top-files", default=15, type=int, help="Number of top error-producing files to display.")
+@click.option("--output", default=None, type=click.Path(), help="Write report to file.")
+def cmd_analyze_errors(
+    files: tuple[str, ...],
+    timeout: int,
+    json_mode: bool,
+    top_files: int,
+    output: str | None,
+):
+    """Analyze extraction errors from JSONL output files."""
+    paths = _validate_input_files(files)
+
+    try:
+        report = analyze_errors(paths, timeout_threshold=timeout)
+    except ValueError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    if json_mode:
+        report_text = _format_error_analysis_json(report)
+    else:
+        report_text = _format_error_analysis_human(report, top_files=top_files)
+
+    if output:
+        Path(output).write_text(report_text + "\n", encoding="utf-8")
+    else:
+        click.echo(report_text)
+
+
+def _format_error_analysis_json(report) -> str:
+    """Format ErrorAnalysisReport as JSON."""
+    obj = {
+        "files_analyzed": report.files_analyzed,
+        "total_theorems": report.total_theorems,
+        "total_extracted": report.total_extracted,
+        "total_failed": report.total_failed,
+        "by_error_kind": report.by_error_kind,
+        "by_file": [
+            {
+                "source_file": f.source_file,
+                "error_count": f.error_count,
+                "by_kind": f.by_kind,
+            }
+            for f in report.by_file
+        ],
+        "near_timeout": [
+            {
+                "theorem_name": e.theorem_name,
+                "source_file": e.source_file,
+                "total_duration_s": e.total_duration_s,
+            }
+            for e in report.near_timeout
+        ],
+        "slowest_successful": [
+            {
+                "theorem_name": e.theorem_name,
+                "source_file": e.source_file,
+                "total_duration_s": e.total_duration_s,
+            }
+            for e in report.slowest_successful
+        ],
+        "timeout_threshold": report.timeout_threshold,
+    }
+    return json.dumps(obj, indent=2)
+
+
+def _format_error_analysis_human(report, *, top_files: int = 15) -> str:
+    """Format ErrorAnalysisReport as human-readable text."""
+    lines = [
+        "Extraction Error Analysis",
+        "=========================",
+        "",
+        f"Files analyzed: {report.files_analyzed}",
+        f"Total theorems: {report.total_theorems:,}",
+    ]
+
+    if report.total_theorems > 0:
+        ext_pct = report.total_extracted / report.total_theorems * 100
+        fail_pct = report.total_failed / report.total_theorems * 100
+        lines.append(f"  Extracted: {report.total_extracted:>8,} ({ext_pct:.1f}%)")
+        lines.append(f"  Failed:    {report.total_failed:>8,} ({fail_pct:.1f}%)")
+    else:
+        lines.append(f"  Extracted: {report.total_extracted:>8,}")
+        lines.append(f"  Failed:    {report.total_failed:>8,}")
+
+    if report.by_error_kind:
+        lines.append("")
+        lines.append("By error_kind:")
+        for kind, count in sorted(
+            report.by_error_kind.items(), key=lambda kv: -kv[1]
+        ):
+            pct = count / report.total_failed * 100 if report.total_failed else 0
+            lines.append(f"  {kind:<20s} {count:>5}  ({pct:5.1f}%)")
+
+    if report.by_file:
+        lines.append("")
+        lines.append(f"By module (top {top_files} by error count):")
+        for f in report.by_file[:top_files]:
+            kind_detail = ", ".join(
+                f"{count} {kind}"
+                for kind, count in sorted(f.by_kind.items(), key=lambda kv: -kv[1])
+            )
+            lines.append(f"  {f.source_file:<40s} {f.error_count:>5}  ({kind_detail})")
+
+    if report.slowest_successful:
+        lines.append("")
+        lines.append("Slowest successful extractions (top 20):")
+        for e in report.slowest_successful:
+            lines.append(
+                f"  {e.source_file} :: {e.theorem_name}  {e.total_duration_s:.1f}s"
+            )
+
+    if report.near_timeout:
+        lines.append("")
+        lines.append(f"Timeout analysis (threshold: {report.timeout_threshold}s):")
+        lines.append(
+            f"  Proofs within 10% of timeout (>{report.timeout_threshold * 0.9:.0f}s): "
+            f"{len(report.near_timeout)}"
+        )
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# build-vocabulary
+# ---------------------------------------------------------------------------
+
+
+@cli.command("build-vocabulary")
+@_db_option
+@click.argument("data", nargs=-1, required=True)
+@click.option("--output", required=True, type=click.Path(), help="Path for vocabulary JSON output.")
+def cmd_build_vocabulary(db: str, data: tuple[str, ...], output: str):
+    """Build a closed vocabulary from the search index and training data."""
+    from Poule.neural.training.vocabulary import VocabularyBuilder
+
+    jsonl_paths = _validate_input_files(data)
+    db_path = Path(db)
+
+    if not db_path.is_file():
+        click.echo(f"Index database not found: {db}", err=True)
+        sys.exit(1)
+
+    try:
+        report = VocabularyBuilder.build(db_path, jsonl_paths, Path(output))
+    except InsufficientDataError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+    except NeuralTrainingError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    click.echo("Vocabulary built.", err=True)
+    click.echo(f"  Total tokens:       {report.total_tokens:,}", err=True)
+    click.echo(f"  Special tokens:     {report.special_tokens:>5}", err=True)
+    click.echo(f"  Fixed tokens:       {report.fixed_tokens:>5}", err=True)
+    click.echo(f"  Index declarations: {report.index_tokens:,}", err=True)
+    click.echo(f"  Training data:      {report.training_data_tokens:>5}", err=True)
+    click.echo(f"  Output: {output}", err=True)
 
 
 # ---------------------------------------------------------------------------

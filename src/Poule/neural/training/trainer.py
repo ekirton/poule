@@ -115,6 +115,34 @@ def masked_contrastive_loss(state_embs, premise_embs, positive_indices, temperat
     return total_loss / count
 
 
+def _tokenize_batch(tokenizer, texts, max_seq_length):
+    """Tokenize a batch of texts using either CoqTokenizer or HuggingFace tokenizer."""
+    from Poule.neural.training.vocabulary import CoqTokenizer
+
+    if isinstance(tokenizer, CoqTokenizer):
+        result = tokenizer.encode_batch(texts, max_length=max_seq_length)
+        import torch
+
+        return {
+            "input_ids": torch.tensor(result["input_ids"], dtype=torch.long)
+            if not isinstance(result["input_ids"], torch.Tensor)
+            else result["input_ids"],
+            "attention_mask": torch.tensor(
+                result["attention_mask"], dtype=torch.long
+            )
+            if not isinstance(result["attention_mask"], torch.Tensor)
+            else result["attention_mask"],
+        }
+    else:
+        return tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            max_length=max_seq_length,
+            return_tensors="pt",
+        )
+
+
 def _encode_texts_batched(model, tokenizer, texts, max_seq_length, device, batch_size=64):
     """Encode texts through the model in batches. Returns a CPU tensor."""
     import torch
@@ -125,13 +153,7 @@ def _encode_texts_batched(model, tokenizer, texts, max_seq_length, device, batch
     all_embs = []
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
-        tokens = tokenizer(
-            batch,
-            padding=True,
-            truncation=True,
-            max_length=max_seq_length,
-            return_tensors="pt",
-        )
+        tokens = _tokenize_batch(tokenizer, batch, max_seq_length)
         embs = model(
             tokens["input_ids"].to(device),
             tokens["attention_mask"].to(device),
@@ -204,20 +226,8 @@ def _prepare_batch(items, tokenizer, premise_corpus, max_seq_length):
     premise_names = list(unique_premises.keys())
     premise_texts = [premise_corpus[n] for n in premise_names]
 
-    state_tokens = tokenizer(
-        state_texts,
-        padding=True,
-        truncation=True,
-        max_length=max_seq_length,
-        return_tensors="pt",
-    )
-    premise_tokens = tokenizer(
-        premise_texts,
-        padding=True,
-        truncation=True,
-        max_length=max_seq_length,
-        return_tensors="pt",
-    )
+    state_tokens = _tokenize_batch(tokenizer, state_texts, max_seq_length)
+    premise_tokens = _tokenize_batch(tokenizer, premise_texts, max_seq_length)
 
     return {
         "state_input_ids": state_tokens["input_ids"],
@@ -241,10 +251,18 @@ class BiEncoderTrainer:
         if hyperparams:
             self.hyperparams.update(hyperparams)
 
-    def train(self, dataset, output_path: Path, hyperparams: dict | None = None):
+    def train(
+        self,
+        dataset,
+        output_path: Path,
+        vocabulary_path: Path | None = None,
+        hyperparams: dict | None = None,
+    ):
         """Train a bi-encoder from scratch.
 
         spec §4.3: Requires at least 1,000 training pairs.
+        When vocabulary_path is provided, uses the closed vocabulary
+        tokenizer and reinitializes the embedding layer.
         """
         if len(dataset.train) < 1000:
             raise InsufficientDataError(
@@ -255,7 +273,9 @@ class BiEncoderTrainer:
         if hyperparams:
             hp.update(hyperparams)
 
-        self._train_impl(dataset, Path(output_path), hp)
+        self._train_impl(
+            dataset, Path(output_path), hp, vocabulary_path=vocabulary_path
+        )
 
     def fine_tune(
         self,
@@ -267,6 +287,7 @@ class BiEncoderTrainer:
         """Fine-tune from a pre-trained checkpoint.
 
         spec §4.4: Uses lower learning rate (5e-6) and fewer epochs (10).
+        Inherits the vocabulary_path from the checkpoint.
         """
         checkpoint_path = Path(checkpoint_path)
         if not checkpoint_path.exists():
@@ -275,18 +296,25 @@ class BiEncoderTrainer:
         hp = get_fine_tune_hyperparams(hyperparams)
         checkpoint = load_checkpoint(checkpoint_path)
 
+        vocab_path_str = checkpoint.get("vocabulary_path")
+        vocab_path = Path(vocab_path_str) if vocab_path_str else None
+
         self._train_impl(
             dataset,
             Path(output_path),
             hp,
             initial_state_dict=checkpoint.get("model_state_dict"),
+            vocabulary_path=vocab_path,
         )
 
     # -----------------------------------------------------------------------
     # Core training loop
     # -----------------------------------------------------------------------
 
-    def _train_impl(self, dataset, output_path, hp, initial_state_dict=None):
+    def _train_impl(
+        self, dataset, output_path, hp, initial_state_dict=None,
+        vocabulary_path=None,
+    ):
         """Shared training loop for train() and fine_tune()."""
         import torch
         from transformers import AutoTokenizer
@@ -296,13 +324,19 @@ class BiEncoderTrainer:
         output_path = Path(output_path)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Model
-        model = BiEncoder()
+        # Tokenizer: closed vocabulary or CodeBERT default
+        if vocabulary_path is not None:
+            from Poule.neural.training.vocabulary import CoqTokenizer
+
+            tokenizer = CoqTokenizer(Path(vocabulary_path))
+            model = BiEncoder(vocab_size=tokenizer.vocab_size)
+        else:
+            tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
+            model = BiEncoder()
+
         if initial_state_dict is not None:
             model.load_state_dict(initial_state_dict)
         model = model.to(device)
-
-        tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
 
         # Optimizer
         optimizer = torch.optim.AdamW(
@@ -467,6 +501,7 @@ class BiEncoderTrainer:
                         "epoch": epoch,
                         "best_recall_32": val_recall,
                         "hyperparams": hp,
+                        "vocabulary_path": str(vocabulary_path) if vocabulary_path else None,
                     },
                     output_path,
                 )
@@ -487,6 +522,7 @@ class BiEncoderTrainer:
                 "epoch": final_epoch,
                 "best_recall_32": best_recall,
                 "hyperparams": hp,
+                "vocabulary_path": str(vocabulary_path) if vocabulary_path else None,
             },
             final_path,
         )

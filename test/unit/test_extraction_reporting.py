@@ -27,6 +27,7 @@ def _make_extraction_record(
     theorem_name: str = "Test.theorem",
     project_id: str = "test-project",
     module_path: str = "Test.Module",
+    source_file: str = "Test/Module.v",
     total_steps: int = 3,
     steps: list[dict] | None = None,
 ) -> dict:
@@ -53,7 +54,67 @@ def _make_extraction_record(
         "theorem_name": theorem_name,
         "project_id": project_id,
         "module_path": module_path,
+        "source_file": source_file,
         "total_steps": total_steps,
+        "steps": steps,
+    }
+
+
+def _make_extraction_error(
+    *,
+    theorem_name: str = "Test.failed_theorem",
+    source_file: str = "Test/Module.v",
+    project_id: str = "test-project",
+    error_kind: str = "timeout",
+    error_message: str = "Proof extraction exceeded 60s time limit",
+) -> dict:
+    """Build a minimal ExtractionError dict for test fixtures."""
+    return {
+        "schema_version": 1,
+        "record_type": "extraction_error",
+        "theorem_name": theorem_name,
+        "source_file": source_file,
+        "project_id": project_id,
+        "error_kind": error_kind,
+        "error_message": error_message,
+    }
+
+
+def _make_timed_extraction_record(
+    *,
+    theorem_name: str = "Test.timed_theorem",
+    source_file: str = "Test/Module.v",
+    project_id: str = "test-project",
+    step_durations_ms: list[int] | None = None,
+) -> dict:
+    """Build an ExtractionRecord with duration_ms fields in steps."""
+    if step_durations_ms is None:
+        step_durations_ms = [1000, 2000, 3000]
+    steps = [
+        {
+            "step_index": 0,
+            "tactic": "",
+            "goals": [{"type": "T"}],
+            "premises": [],
+            "duration_ms": 0,
+        },
+    ]
+    for i, dur in enumerate(step_durations_ms, start=1):
+        steps.append(
+            {
+                "step_index": i,
+                "tactic": "auto.",
+                "goals": [{"type": f"g{i}"}],
+                "premises": [],
+                "duration_ms": dur,
+            }
+        )
+    return {
+        "record_type": "proof_trace",
+        "theorem_name": theorem_name,
+        "project_id": project_id,
+        "source_file": source_file,
+        "total_steps": len(step_durations_ms),
         "steps": steps,
     }
 
@@ -868,3 +929,363 @@ class TestErrorMissingDatasetsLibrary:
 
         with pytest.raises(ImportError, match=r"[Ii]nstall"):
             export_to_huggingface(input_path, output_dir)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 4.7 Extraction Error Analysis
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestAnalyzeErrorsBasicCounts:
+    """analyze_errors returns correct total_theorems, total_extracted, total_failed."""
+
+    def test_counts_traces_and_errors(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [
+            _make_extraction_record(theorem_name="A.ok1"),
+            _make_extraction_record(theorem_name="A.ok2"),
+            _make_extraction_error(theorem_name="A.fail1", error_kind="timeout"),
+        ]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert report.total_extracted == 2
+        assert report.total_failed == 1
+        assert report.total_theorems == 3
+
+    def test_skips_non_trace_non_error_records(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [
+            {"record_type": "campaign_metadata", "schema_version": 1},
+            _make_extraction_record(),
+            _make_extraction_error(),
+            {"record_type": "extraction_summary", "schema_version": 1},
+        ]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert report.total_theorems == 2  # only trace + error
+        assert report.total_extracted == 1
+        assert report.total_failed == 1
+
+    def test_multi_file_aggregation(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records_a = [
+            _make_extraction_record(theorem_name="A.ok"),
+            _make_extraction_error(theorem_name="A.fail", error_kind="timeout"),
+        ]
+        records_b = [
+            _make_extraction_record(theorem_name="B.ok"),
+            _make_extraction_error(theorem_name="B.fail", error_kind="tactic_failure"),
+        ]
+        path_a = _write_jsonl(tmp_path / "a.jsonl", records_a)
+        path_b = _write_jsonl(tmp_path / "b.jsonl", records_b)
+
+        report = analyze_errors([path_a, path_b])
+
+        assert report.files_analyzed == 2
+        assert report.total_theorems == 4
+        assert report.total_extracted == 2
+        assert report.total_failed == 2
+
+    def test_files_analyzed_equals_path_count(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        for name in ["x.jsonl", "y.jsonl", "z.jsonl"]:
+            _write_jsonl(tmp_path / name, [_make_extraction_record()])
+
+        paths = [tmp_path / name for name in ["x.jsonl", "y.jsonl", "z.jsonl"]]
+        report = analyze_errors(paths)
+
+        assert report.files_analyzed == 3
+
+
+class TestAnalyzeErrorsByKind:
+    """Errors aggregated by error_kind with correct counts."""
+
+    def test_aggregates_distinct_error_kinds(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [
+            _make_extraction_error(error_kind="timeout"),
+            _make_extraction_error(error_kind="timeout"),
+            _make_extraction_error(error_kind="timeout"),
+            _make_extraction_error(error_kind="tactic_failure"),
+            _make_extraction_error(error_kind="tactic_failure"),
+            _make_extraction_error(error_kind="load_failure"),
+        ]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert report.by_error_kind == {
+            "timeout": 3,
+            "tactic_failure": 2,
+            "load_failure": 1,
+        }
+
+    def test_sum_equals_total_failed(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [
+            _make_extraction_error(error_kind="timeout"),
+            _make_extraction_error(error_kind="backend_crash"),
+            _make_extraction_error(error_kind="unknown"),
+        ]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert sum(report.by_error_kind.values()) == report.total_failed
+
+    def test_no_errors_returns_empty_dict(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [_make_extraction_record()]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert report.by_error_kind == {}
+        assert report.total_failed == 0
+
+
+class TestAnalyzeErrorsByFile:
+    """Errors aggregated by source_file, sorted by error_count descending."""
+
+    def test_sorted_by_error_count_descending(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [
+            _make_extraction_error(source_file="A.v", error_kind="timeout"),
+            _make_extraction_error(source_file="B.v", error_kind="timeout"),
+            _make_extraction_error(source_file="B.v", error_kind="tactic_failure"),
+            _make_extraction_error(source_file="B.v", error_kind="timeout"),
+        ]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert len(report.by_file) == 2
+        assert report.by_file[0].source_file == "B.v"
+        assert report.by_file[0].error_count == 3
+        assert report.by_file[1].source_file == "A.v"
+        assert report.by_file[1].error_count == 1
+
+    def test_per_file_by_kind_breakdown(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [
+            _make_extraction_error(source_file="Reals/R.v", error_kind="timeout"),
+            _make_extraction_error(source_file="Reals/R.v", error_kind="timeout"),
+            _make_extraction_error(source_file="Reals/R.v", error_kind="tactic_failure"),
+        ]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert report.by_file[0].by_kind == {"timeout": 2, "tactic_failure": 1}
+
+    def test_ties_broken_by_filename_ascending(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [
+            _make_extraction_error(source_file="Z.v", error_kind="timeout"),
+            _make_extraction_error(source_file="A.v", error_kind="timeout"),
+        ]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        # Both have 1 error, tie broken by filename ascending
+        assert report.by_file[0].source_file == "A.v"
+        assert report.by_file[1].source_file == "Z.v"
+
+    def test_no_errors_returns_empty_list(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [_make_extraction_record()]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert report.by_file == []
+
+
+class TestAnalyzeErrorsNearTimeout:
+    """Near-timeout: successful proofs within 10% of timeout threshold."""
+
+    def test_proof_above_threshold_is_near_timeout(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        # timeout=60, threshold=54.0s; total duration = 55.0s
+        records = [
+            _make_timed_extraction_record(
+                theorem_name="Near.proof",
+                step_durations_ms=[20000, 15000, 20000],  # total 55s
+            ),
+        ]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path], timeout_threshold=60)
+
+        assert len(report.near_timeout) == 1
+        assert report.near_timeout[0].theorem_name == "Near.proof"
+        assert report.near_timeout[0].total_duration_s == pytest.approx(55.0)
+
+    def test_proof_below_threshold_not_near_timeout(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        # timeout=60, threshold=54.0s; total duration = 53.0s
+        records = [
+            _make_timed_extraction_record(
+                theorem_name="Fast.proof",
+                step_durations_ms=[20000, 13000, 20000],  # total 53s
+            ),
+        ]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path], timeout_threshold=60)
+
+        assert len(report.near_timeout) == 0
+
+    def test_near_timeout_sorted_by_duration_descending(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [
+            _make_timed_extraction_record(
+                theorem_name="Slow",
+                step_durations_ms=[30000, 28000],  # 58s
+            ),
+            _make_timed_extraction_record(
+                theorem_name="Medium",
+                step_durations_ms=[27000, 28000],  # 55s
+            ),
+        ]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path], timeout_threshold=60)
+
+        assert len(report.near_timeout) == 2
+        assert report.near_timeout[0].theorem_name == "Slow"
+        assert report.near_timeout[1].theorem_name == "Medium"
+
+    def test_no_timing_data_returns_empty_list(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        # Records without duration_ms fields
+        records = [_make_extraction_record()]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert report.near_timeout == []
+
+    def test_default_timeout_threshold_is_60(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [_make_extraction_record()]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert report.timeout_threshold == 60
+
+
+class TestAnalyzeErrorsSlowestSuccessful:
+    """Top-20 slowest successful extractions by total duration."""
+
+    def test_returns_top_20_slowest(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = []
+        for i in range(25):
+            records.append(
+                _make_timed_extraction_record(
+                    theorem_name=f"T.t{i}",
+                    step_durations_ms=[i * 1000],  # 0s, 1s, ..., 24s
+                )
+            )
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert len(report.slowest_successful) == 20
+        # Fastest excluded should be 0..4s (5 records)
+        assert report.slowest_successful[0].total_duration_s == pytest.approx(24.0)
+        assert report.slowest_successful[-1].total_duration_s == pytest.approx(5.0)
+
+    def test_fewer_than_20_returns_all(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [
+            _make_timed_extraction_record(
+                theorem_name="Only.one",
+                step_durations_ms=[5000],
+            ),
+        ]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert len(report.slowest_successful) == 1
+
+    def test_sorted_by_duration_descending(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [
+            _make_timed_extraction_record(theorem_name="Fast", step_durations_ms=[1000]),
+            _make_timed_extraction_record(theorem_name="Slow", step_durations_ms=[10000]),
+            _make_timed_extraction_record(theorem_name="Mid", step_durations_ms=[5000]),
+        ]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        names = [e.theorem_name for e in report.slowest_successful]
+        assert names == ["Slow", "Mid", "Fast"]
+
+
+class TestAnalyzeErrorsEdgeCases:
+    """Edge cases: zero errors, all errors, single file."""
+
+    def test_all_successful_no_errors(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [_make_extraction_record() for _ in range(5)]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert report.total_failed == 0
+        assert report.by_error_kind == {}
+        assert report.by_file == []
+
+    def test_all_errors_no_successes(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        records = [_make_extraction_error() for _ in range(5)]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert report.total_extracted == 0
+        assert report.total_failed == 5
+        assert report.near_timeout == []
+        assert report.slowest_successful == []
+
+    def test_empty_file(self, tmp_path):
+        from Poule.extraction.reporting import analyze_errors
+
+        path = _write_jsonl(tmp_path / "empty.jsonl", [])
+
+        report = analyze_errors([path])
+
+        assert report.total_theorems == 0
+        assert report.total_extracted == 0
+        assert report.total_failed == 0

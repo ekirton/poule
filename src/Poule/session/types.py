@@ -49,6 +49,9 @@ class ProofTrace:
     file_path: str
     total_steps: int
     steps: list[TraceStep] = field(default_factory=list)
+    partial: bool = False
+    failure_step: Optional[int] = None
+    failure_message: str = ""
 
 
 @dataclass

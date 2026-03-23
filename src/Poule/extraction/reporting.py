@@ -11,9 +11,13 @@ from typing import Any
 
 from Poule.extraction.types import (
     DistributionStats,
+    ErrorAnalysisReport,
+    FileErrorSummary,
+    NearTimeoutEntry,
     ProjectQualityReport,
     QualityReport,
     TacticFrequency,
+    TimingEntry,
 )
 
 
@@ -229,6 +233,96 @@ def generate_quality_report(path: Path) -> QualityReport:
         proof_length_distribution=proof_length_distribution,
         tactic_vocabulary=tactic_vocabulary,
         per_project=per_project,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Error analysis
+# ---------------------------------------------------------------------------
+
+
+def analyze_errors(
+    paths: list[Path], timeout_threshold: int = 60
+) -> ErrorAnalysisReport:
+    """Analyze extraction errors from one or more JSONL output files."""
+    total_extracted = 0
+    total_failed = 0
+    error_kind_counts: Counter[str] = Counter()
+    file_error_details: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    timing_entries: list[TimingEntry] = []
+
+    for path in paths:
+        records = _read_jsonl(path)
+        for rec in records:
+            record_type = rec.get("record_type")
+            if record_type == "proof_trace":
+                total_extracted += 1
+                # Collect timing data if available
+                total_ms = 0
+                has_timing = False
+                for step in rec.get("steps", []):
+                    dur = step.get("duration_ms")
+                    if dur is not None:
+                        total_ms += dur
+                        has_timing = True
+                if has_timing:
+                    total_s = total_ms / 1000.0
+                    timing_entries.append(
+                        TimingEntry(
+                            theorem_name=rec.get("theorem_name", ""),
+                            source_file=rec.get("source_file", ""),
+                            total_duration_s=total_s,
+                        )
+                    )
+            elif record_type == "extraction_error":
+                total_failed += 1
+                kind = rec.get("error_kind", "unknown")
+                error_kind_counts[kind] += 1
+                source_file = rec.get("source_file", "")
+                file_error_details[source_file][kind] += 1
+
+    # Build by_file sorted by error_count desc, ties by filename asc
+    by_file = sorted(
+        [
+            FileErrorSummary(
+                source_file=sf,
+                error_count=sum(kinds.values()),
+                by_kind=dict(kinds),
+            )
+            for sf, kinds in file_error_details.items()
+        ],
+        key=lambda f: (-f.error_count, f.source_file),
+    )
+
+    # Near-timeout: proofs within 10% of threshold
+    near_threshold_s = timeout_threshold * 0.9
+    near_timeout = sorted(
+        [e for e in timing_entries if e.total_duration_s >= near_threshold_s],
+        key=lambda e: -e.total_duration_s,
+    )
+    # Convert to NearTimeoutEntry
+    near_timeout_entries = [
+        NearTimeoutEntry(
+            theorem_name=e.theorem_name,
+            source_file=e.source_file,
+            total_duration_s=e.total_duration_s,
+        )
+        for e in near_timeout
+    ]
+
+    # Slowest successful: top 20
+    slowest = sorted(timing_entries, key=lambda e: -e.total_duration_s)[:20]
+
+    return ErrorAnalysisReport(
+        files_analyzed=len(paths),
+        total_theorems=total_extracted + total_failed,
+        total_extracted=total_extracted,
+        total_failed=total_failed,
+        by_error_kind=dict(error_kind_counts),
+        by_file=by_file,
+        near_timeout=near_timeout_entries,
+        slowest_successful=slowest,
+        timeout_threshold=timeout_threshold,
     )
 
 

@@ -405,24 +405,6 @@ class TestExtractSingleProofFailureModes:
     """extract_single_proof returns ExtractionError with correct error_kind
     for various failure modes (§4.2)."""
 
-    def test_timeout_returns_timeout_error(self):
-        """When extraction times out, returns ExtractionError with error_kind='timeout'."""
-        from Poule.extraction.campaign import extract_single_proof
-        from Poule.extraction.types import ExtractionError
-
-        # Mock SessionManager — contract test: test_proof_session.py
-        sm = _make_mock_session_manager(
-            trace_results=asyncio.TimeoutError(),
-        )
-
-        result = asyncio.run(extract_single_proof(
-            sm, "proj", "file.v", "slow_thm",
-            project_path="/path/to/proj", timeout_seconds=1,
-        ))
-
-        assert isinstance(result, ExtractionError)
-        assert result.error_kind == "timeout"
-
     def test_backend_crash_returns_backend_crash_error(self):
         """When the Coq backend crashes, returns ExtractionError
         with error_kind='backend_crash'."""
@@ -508,6 +490,120 @@ class TestExtractSingleProofFailureModes:
         assert result.error_kind == "unknown"
 
 
+class TestExtractSingleProofPartialRecovery:
+    """When extract_trace returns a partial trace, extract_single_proof
+    should produce a PartialExtractionRecord instead of an ExtractionError (§4.2)."""
+
+    def test_partial_trace_produces_partial_record(self):
+        """When extract_trace returns a partial ProofTrace (failure at step 5 of 12),
+        extract_single_proof returns a PartialExtractionRecord with steps 0-4."""
+        from Poule.extraction.campaign import extract_single_proof
+        from Poule.extraction.types import PartialExtractionRecord
+        from Poule.session.types import ProofTrace, TraceStep, ProofState, Goal
+
+        # Build a partial ProofTrace (as the session manager would return)
+        steps = []
+        for i in range(5):
+            steps.append(TraceStep(
+                step_index=i,
+                tactic=None if i == 0 else f"tactic_{i}.",
+                state=ProofState(
+                    schema_version=1, session_id="s1", step_index=i,
+                    is_complete=False, focused_goal_index=0,
+                    goals=[Goal(index=0, type="goal", hypotheses=[])],
+                ),
+                duration_ms=None if i == 0 else 1.0,
+            ))
+        partial_trace = ProofTrace(
+            schema_version=1, session_id="s1", proof_name="thm",
+            file_path="/path/file.v", total_steps=12, steps=steps,
+            partial=True, failure_step=5,
+            failure_message="Tactic apply failed",
+        )
+
+        sm = _make_mock_session_manager()
+        sm.extract_trace = AsyncMock(return_value=partial_trace)
+        sm.get_premises = AsyncMock(return_value=[])
+
+        result = asyncio.run(extract_single_proof(
+            sm, "proj", "file.v", "thm", project_path="/path/to/proj",
+        ))
+
+        assert isinstance(result, PartialExtractionRecord)
+        assert result.record_type == "partial_proof_trace"
+        assert result.total_steps == 12
+        assert result.completed_steps == 4
+        assert result.failure_at_step == 5
+        assert result.failure_kind == "tactic_failure"
+        assert len(result.steps) == 5  # steps 0-4
+
+    def test_partial_trace_failure_at_step1_returns_error(self):
+        """When the trace fails at step 1 (only initial state), return an
+        ExtractionError — not a partial record (no useful training data)."""
+        from Poule.extraction.campaign import extract_single_proof
+        from Poule.extraction.types import ExtractionError
+        from Poule.session.types import ProofTrace, TraceStep, ProofState, Goal
+
+        steps = [TraceStep(
+            step_index=0, tactic=None,
+            state=ProofState(
+                schema_version=1, session_id="s1", step_index=0,
+                is_complete=False, focused_goal_index=0,
+                goals=[Goal(index=0, type="goal", hypotheses=[])],
+            ),
+            duration_ms=None,
+        )]
+        partial_trace = ProofTrace(
+            schema_version=1, session_id="s1", proof_name="thm",
+            file_path="/path/file.v", total_steps=5, steps=steps,
+            partial=True, failure_step=1,
+            failure_message="First tactic failed",
+        )
+
+        sm = _make_mock_session_manager()
+        sm.extract_trace = AsyncMock(return_value=partial_trace)
+
+        result = asyncio.run(extract_single_proof(
+            sm, "proj", "file.v", "thm", project_path="/path/to/proj",
+        ))
+
+        assert isinstance(result, ExtractionError)
+        assert result.error_kind == "tactic_failure"
+
+    def test_session_closed_on_partial_trace(self):
+        """Session is always closed even when a partial trace is returned."""
+        from Poule.extraction.campaign import extract_single_proof
+        from Poule.session.types import ProofTrace, TraceStep, ProofState, Goal
+
+        steps = []
+        for i in range(3):
+            steps.append(TraceStep(
+                step_index=i, tactic=None if i == 0 else f"t{i}.",
+                state=ProofState(
+                    schema_version=1, session_id="s1", step_index=i,
+                    is_complete=False, focused_goal_index=0,
+                    goals=[Goal(index=0, type="g", hypotheses=[])],
+                ),
+                duration_ms=None if i == 0 else 1.0,
+            ))
+        partial_trace = ProofTrace(
+            schema_version=1, session_id="s1", proof_name="thm",
+            file_path="/f.v", total_steps=10, steps=steps,
+            partial=True, failure_step=3,
+            failure_message="fail",
+        )
+
+        sm = _make_mock_session_manager()
+        sm.extract_trace = AsyncMock(return_value=partial_trace)
+        sm.get_premises = AsyncMock(return_value=[])
+
+        asyncio.run(extract_single_proof(
+            sm, "proj", "file.v", "thm", project_path="/path/to/proj",
+        ))
+
+        sm.close_session.assert_called_once()
+
+
 class TestExtractSingleProofSessionCleanup:
     """Session is always closed in finally block, regardless of outcome (§4.2)."""
 
@@ -540,45 +636,21 @@ class TestExtractSingleProofSessionCleanup:
 
         sm.close_session.assert_called_once()
 
-    def test_session_closed_on_timeout(self):
-        """Session is closed when extraction times out."""
+    def test_session_closed_on_connection_error(self):
+        """Session is closed when backend connection fails (e.g., watchdog kill)."""
         from Poule.extraction.campaign import extract_single_proof
 
-        # Mock SessionManager — contract test: test_proof_session.py
-        sm = _make_mock_session_manager(
-            trace_results=asyncio.TimeoutError(),
+        sm = _make_mock_session_manager()
+        sm.extract_trace = AsyncMock(
+            side_effect=ConnectionError("coq-lsp unresponsive"),
         )
 
         asyncio.run(extract_single_proof(
             sm, "proj", "file.v", "thm",
-            project_path="/path/to/proj", timeout_seconds=1,
+            project_path="/path/to/proj",
         ))
 
         sm.close_session.assert_called_once()
-
-
-class TestExtractSingleProofTimeout:
-    """Per-proof timeout enforcement via asyncio.wait_for (§4.2)."""
-
-    def test_timeout_enforced_with_wait_for(self):
-        """Extraction uses asyncio.wait_for with the configured timeout."""
-        from Poule.extraction.campaign import extract_single_proof
-        from Poule.extraction.types import ExtractionError
-
-        # Mock SessionManager — contract test: test_proof_session.py
-        async def slow_trace(*args, **kwargs):
-            await asyncio.sleep(10)
-
-        sm = _make_mock_session_manager()
-        sm.extract_trace = AsyncMock(side_effect=slow_trace)
-
-        result = asyncio.run(extract_single_proof(
-            sm, "proj", "file.v", "thm",
-            project_path="/path/to/proj", timeout_seconds=0.1,
-        ))
-
-        assert isinstance(result, ExtractionError)
-        assert result.error_kind == "timeout"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -691,14 +763,15 @@ class TestRunCampaignSummaryStatistics:
 
         summary = asyncio.run(run_campaign([str(proj)], str(output), {}))
 
-        # Invariant: extracted + failed + skipped == theorems_found
+        # Invariant: extracted + partial + failed + no_proof_body + skipped == theorems_found
         assert (
-            summary.total_extracted + summary.total_failed + summary.total_skipped
+            summary.total_extracted + summary.total_partial + summary.total_failed
+            + summary.total_no_proof_body + summary.total_skipped
             == summary.total_theorems_found
         )
 
     def test_project_level_invariant(self, tmp_path):
-        """extracted + failed + skipped == theorems_found at project level."""
+        """extracted + partial + failed + no_proof_body + skipped == theorems_found at project level."""
         from Poule.extraction.campaign import run_campaign
 
         proj = tmp_path / "proj"
@@ -712,11 +785,12 @@ class TestRunCampaignSummaryStatistics:
 
         for ps in summary.per_project:
             assert (
-                ps.extracted + ps.failed + ps.skipped == ps.theorems_found
+                ps.extracted + ps.partial + ps.failed + ps.no_proof_body + ps.skipped
+                == ps.theorems_found
             ), f"Invariant violated for project {ps.project_id}"
 
     def test_file_level_invariant(self, tmp_path):
-        """extracted + failed + skipped == theorems_found at file level."""
+        """extracted + partial + failed + no_proof_body + skipped == theorems_found at file level."""
         from Poule.extraction.campaign import run_campaign
 
         proj = tmp_path / "proj"
@@ -731,7 +805,8 @@ class TestRunCampaignSummaryStatistics:
         for ps in summary.per_project:
             for fs in ps.per_file:
                 assert (
-                    fs.extracted + fs.failed + fs.skipped == fs.theorems_found
+                    fs.extracted + fs.partial + fs.failed + fs.no_proof_body + fs.skipped
+                    == fs.theorems_found
                 ), f"Invariant violated for file {fs.source_file}"
 
     def test_per_project_breakdown_present(self, tmp_path):

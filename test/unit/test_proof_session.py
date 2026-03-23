@@ -635,6 +635,71 @@ class TestExtractTrace:
             assert isinstance(step.duration_ms, float)
             assert step.duration_ms >= 0.0
 
+    async def test_trace_partial_on_tactic_failure(self):
+        """Spec §4.2: When tactic replay fails at step k, extract_trace
+        returns a partial ProofTrace with steps 0..k-1."""
+        SessionManager = _import_manager()
+        *_, TACTIC_ERROR, SessionError = _import_errors()
+
+        state1 = _make_stepped_state(1)
+        state2 = _make_stepped_state(2)
+        # Step 3 will fail
+        backend = _make_mock_backend(
+            tactic_results=[state1, state2, RuntimeError("Tactic apply failed")],
+            original_script=["intro n.", "simpl.", "ring.", "reflexivity."],
+        )
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, _ = await mgr.create_session("/file.v", "proof1")
+        trace = await mgr.extract_trace(sid)
+
+        assert trace.partial is True
+        assert trace.failure_step == 3
+        assert trace.failure_message != ""
+        assert len(trace.steps) == 3  # steps 0, 1, 2
+        assert trace.total_steps == 4  # original proof length
+
+    async def test_trace_partial_preserves_completed_steps(self):
+        """Spec §4.2: Partial trace contains valid steps with correct structure."""
+        SessionManager = _import_manager()
+
+        state1 = _make_stepped_state(1)
+        state2 = _make_stepped_state(2)
+        state3 = _make_stepped_state(3)
+        backend = _make_mock_backend(
+            tactic_results=[state1, state2, state3, RuntimeError("fail at 4")],
+            original_script=["t1.", "t2.", "t3.", "t4.", "t5."],
+        )
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, _ = await mgr.create_session("/file.v", "proof1")
+        trace = await mgr.extract_trace(sid)
+
+        assert trace.partial is True
+        assert len(trace.steps) == 4  # steps 0-3
+        assert trace.steps[0].tactic is None
+        for i in range(1, 4):
+            assert trace.steps[i].tactic is not None
+            assert trace.steps[i].step_index == i
+
+    async def test_trace_complete_has_partial_false(self):
+        """Spec §4.2: A complete trace has partial=False and failure_step=None."""
+        SessionManager = _import_manager()
+        states = [_make_stepped_state(i) for i in range(1, 4)]
+        states[-1] = _make_proof_state(step_index=3, is_complete=True)
+        backend = _make_mock_backend(
+            tactic_results=states,
+            original_script=["intro n.", "simpl.", "reflexivity."],
+        )
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, _ = await mgr.create_session("/file.v", "proof1")
+        trace = await mgr.extract_trace(sid)
+
+        assert trace.partial is False
+        assert trace.failure_step is None
+        assert trace.failure_message == ""
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # §4.3 Tactic Dispatch — submit_tactic

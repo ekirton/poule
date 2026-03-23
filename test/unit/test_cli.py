@@ -724,12 +724,19 @@ class TestDbOptionDefault:
 class TestExtractSubcommand:
     """extract: batch proof trace extraction from Coq project directories."""
 
+    def _make_index_db(self, tmp_path):
+        """Create a dummy index.db file for CLI tests (Click exists=True check)."""
+        db = tmp_path / "index.db"
+        db.touch()
+        return str(db)
+
     def test_successful_extraction_exits_0(self, runner, tmp_path):
         """Given valid project dirs, extract succeeds with exit code 0."""
         cli = _import_cli()
         project_dir = tmp_path / "stdlib"
         project_dir.mkdir()
         output_path = tmp_path / "output.jsonl"
+        index_db = self._make_index_db(tmp_path)
         # Contract test: real ExtractionCampaignOrchestrator tested in test_extraction_campaign.py
         with patch(
             "Poule.cli.commands.run_campaign",
@@ -742,14 +749,17 @@ class TestExtractSubcommand:
             )
             result = runner.invoke(cli, [
                 "extract", str(project_dir), "--output", str(output_path),
+                "--index-db", index_db,
             ])
         assert result.exit_code == 0
 
     def test_missing_project_dir_exits_1(self, runner, tmp_path):
         """Given a nonexistent project directory, exit code is 1."""
         cli = _import_cli()
+        index_db = self._make_index_db(tmp_path)
         result = runner.invoke(cli, [
             "extract", "/nonexistent/path", "--output", str(tmp_path / "out.jsonl"),
+            "--index-db", index_db,
         ])
         assert result.exit_code == 1
         assert "not found" in result.output.lower() or "not found" in (result.stderr or "").lower()
@@ -767,9 +777,11 @@ class TestExtractSubcommand:
         cli = _import_cli()
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
+        index_db = self._make_index_db(tmp_path)
         result = runner.invoke(cli, [
             "extract", str(project_dir),
             "--output", str(tmp_path / "out.jsonl"),
+            "--index-db", index_db,
             "--incremental", "--resume",
         ])
         assert result.exit_code == 2
@@ -779,6 +791,7 @@ class TestExtractSubcommand:
         cli = _import_cli()
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
+        index_db = self._make_index_db(tmp_path)
         # Contract test: real orchestrator tested in test_extraction_campaign.py
         with patch(
             "Poule.cli.commands.run_campaign",
@@ -791,6 +804,7 @@ class TestExtractSubcommand:
             )
             result = runner.invoke(cli, [
                 "extract", str(project_dir), "--output", str(tmp_path / "out.jsonl"),
+                "--index-db", index_db,
             ])
         assert result.exit_code == 1
 
@@ -799,6 +813,7 @@ class TestExtractSubcommand:
         cli = _import_cli()
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
+        index_db = self._make_index_db(tmp_path)
         # Contract test: real orchestrator tested in test_extraction_campaign.py
         with patch(
             "Poule.cli.commands.run_campaign",
@@ -811,6 +826,7 @@ class TestExtractSubcommand:
             )
             result = runner.invoke(cli, [
                 "extract", str(project_dir), "--output", str(tmp_path / "out.jsonl"),
+                "--index-db", index_db,
             ])
         assert result.exit_code == 0
 
@@ -821,6 +837,7 @@ class TestExtractSubcommand:
         dir2 = tmp_path / "mathcomp"
         dir1.mkdir()
         dir2.mkdir()
+        index_db = self._make_index_db(tmp_path)
         # Contract test: real orchestrator tested in test_extraction_campaign.py
         with patch(
             "Poule.cli.commands.run_campaign",
@@ -834,17 +851,19 @@ class TestExtractSubcommand:
             result = runner.invoke(cli, [
                 "extract", str(dir1), str(dir2),
                 "--output", str(tmp_path / "out.jsonl"),
+                "--index-db", index_db,
             ])
         assert result.exit_code == 0
         # Verify both dirs were passed to run_campaign
         call_args = mock_run.call_args
         assert str(dir1) in str(call_args) and str(dir2) in str(call_args)
 
-    def test_timeout_option(self, runner, tmp_path):
-        """--timeout sets per-proof timeout."""
+    def test_watchdog_timeout_option(self, runner, tmp_path):
+        """--watchdog-timeout sets backend inactivity threshold."""
         cli = _import_cli()
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
+        index_db = self._make_index_db(tmp_path)
         # Contract test: real orchestrator tested in test_extraction_campaign.py
         with patch(
             "Poule.cli.commands.run_campaign",
@@ -858,7 +877,8 @@ class TestExtractSubcommand:
             result = runner.invoke(cli, [
                 "extract", str(project_dir),
                 "--output", str(tmp_path / "out.jsonl"),
-                "--timeout", "120",
+                "--index-db", index_db,
+                "--watchdog-timeout", "600",
             ])
         assert result.exit_code == 0
 
@@ -867,6 +887,7 @@ class TestExtractSubcommand:
         cli = _import_cli()
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
+        index_db = self._make_index_db(tmp_path)
         with patch(
             "Poule.cli.commands.run_campaign",
         ) as mock_run:
@@ -879,6 +900,7 @@ class TestExtractSubcommand:
             runner.invoke(cli, [
                 "extract", str(project_dir),
                 "--output", str(tmp_path / "out.jsonl"),
+                "--index-db", index_db,
             ])
         # run_campaign(project_dirs, output, kwargs) — kwargs is arg index 2
         call_args = mock_run.call_args
@@ -898,6 +920,7 @@ class TestExtractSubcommand:
         cli = _import_cli()
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
+        index_db = self._make_index_db(tmp_path)
         with patch(
             "Poule.cli.commands.run_campaign",
         ) as mock_run:
@@ -910,21 +933,20 @@ class TestExtractSubcommand:
             runner.invoke(cli, [
                 "extract", str(project_dir),
                 "--output", str(tmp_path / "out.jsonl"),
-                # No --timeout flag: uses default of 60
+                "--index-db", index_db,
+                # No --watchdog-timeout flag: uses default of 600
             ])
         call_args = mock_run.call_args
         kwargs_dict = call_args[0][2]
-        assert "timeout_seconds" in kwargs_dict, (
-            "Default timeout must be passed to run_campaign; "
-            "omitting it means timeout_seconds=None (no timeout)"
-        )
-        assert kwargs_dict["timeout_seconds"] == 60
+        sm = kwargs_dict["session_manager"]
+        assert sm._watchdog_timeout == 600
 
-    def test_custom_timeout_passed_to_run_campaign(self, runner, tmp_path):
-        """--timeout 120 must be forwarded as timeout_seconds=120."""
+    def test_watchdog_timeout_zero_disables(self, runner, tmp_path):
+        """--watchdog-timeout 0 disables the watchdog (passes None)."""
         cli = _import_cli()
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
+        index_db = self._make_index_db(tmp_path)
         with patch(
             "Poule.cli.commands.run_campaign",
         ) as mock_run:
@@ -937,11 +959,13 @@ class TestExtractSubcommand:
             runner.invoke(cli, [
                 "extract", str(project_dir),
                 "--output", str(tmp_path / "out.jsonl"),
-                "--timeout", "120",
+                "--index-db", index_db,
+                "--watchdog-timeout", "0",
             ])
         call_args = mock_run.call_args
         kwargs_dict = call_args[0][2]
-        assert kwargs_dict.get("timeout_seconds") == 120
+        sm = kwargs_dict["session_manager"]
+        assert sm._watchdog_timeout is None
 
 
 # ===========================================================================

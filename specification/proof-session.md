@@ -138,8 +138,10 @@ MAINTAINS: Every operation that targets a session by ID shall call `lookup_sessi
 #### extract_trace(session_id)
 
 - REQUIRES: Session exists and is active. The session has an original script (`total_steps` is not null).
-- ENSURES: If step_history length < `total_steps + 1`, replays the original script from the last cached step to the end, caching all states and recording wall-clock time (monotonic) for each tactic execution. Assembles and returns a ProofTrace containing all `total_steps + 1` TraceSteps (step 0 with `tactic = null` and `duration_ms = null`, steps 1..N with the original tactic strings and `duration_ms` set to the wall-clock milliseconds measured during replay, or `null` if the step was already cached before this call).
+- ENSURES: If step_history length < `total_steps + 1`, replays the original script from the last cached step to the end, caching all states and recording wall-clock time (monotonic) for each tactic execution. When the backend has pre-computed state tokens from the initial replay (via `original_states`), the session manager shall use those tokens to query `petanque/goals` directly rather than re-executing tactics, avoiding redundant replay. Assembles and returns a ProofTrace containing all `total_steps + 1` TraceSteps (step 0 with `tactic = null` and `duration_ms = null`, steps 1..N with the original tactic strings and `duration_ms` set to the wall-clock milliseconds measured during replay, or `null` if the step was already cached before this call).
+- **Partial trace recovery**: When tactic replay fails at step k (due to `TACTIC_ERROR` or `BACKEND_CRASHED`), the session manager shall not discard the successfully replayed steps. Instead, it shall assemble a ProofTrace from steps 0..k-1 with `partial = True`, `failure_step = k`, and `failure_message` set to the error description. This enables downstream consumers to recover training data from the completed prefix of failing proofs.
 - On session with no original script: returns `STEP_OUT_OF_RANGE` error (no complete proof to trace).
+- On failure at step 1 (before any tactic succeeds): returns a partial ProofTrace with 1 step (the initial state only). This is valid but produces zero training pairs.
 
 > **Given** a session with total_steps = 3 and step_history cached through step 1
 > **When** `extract_trace(session_id)` is called
@@ -148,6 +150,14 @@ MAINTAINS: Every operation that targets a session by ID shall call `lookup_sessi
 > **Given** a session opened on an incomplete proof (no original script)
 > **When** `extract_trace(session_id)` is called
 > **Then** a `STEP_OUT_OF_RANGE` error is returned
+
+> **Given** a session with total_steps = 10 where tactic 5 fails during replay
+> **When** `extract_trace(session_id)` is called
+> **Then** the returned ProofTrace has `partial = True`, `failure_step = 5`, contains 5 TraceSteps (steps 0-4), and `total_steps` reflects the original proof length (10)
+
+> **Given** a session where the backend has pre-computed `original_states` with 6 state tokens
+> **When** `extract_trace(session_id)` is called
+> **Then** the session manager uses the pre-computed state tokens to query goals, without re-executing tactics via `execute_tactic`
 
 ### 4.3 Tactic Dispatch
 

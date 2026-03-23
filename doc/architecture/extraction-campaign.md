@@ -12,13 +12,13 @@ The batch component that processes one or more Coq project directories, extracts
 ```
 CLI (extract subcommand)
   │
-  │ project directories, options
+  │ project directories, index_db_path, options
   ▼
 ┌───────────────────────────────────────────────────────┐
 │         Extraction Campaign Orchestrator               │
 │                                                        │
 │  Campaign Planner                                      │
-│    enumerate projects → enumerate files → list proofs  │
+│    query index DB → map modules to files → list proofs │
 │                                                        │
 │  Per-proof Extraction Loop                             │
 │    ┌─────────────────────────────────────┐             │
@@ -48,18 +48,19 @@ CLI (extract subcommand)
 ## Campaign Pipeline
 
 ```
-extract(project_dirs[], options)
+extract(project_dirs[], index_db_path, options)
   │
   ├─ Validate all project directories exist
+  ├─ Validate index_db_path exists and is a valid index
   │
   ├─ Build campaign plan:
+  │    Enumerate provable declarations from index DB
+  │      (kind IN lemma, theorem, instance, definition)
+  │    Map module paths to source files in project directories
   │    For each project_dir:
   │      Detect Coq version (coqc --version)
   │      Detect git commit hash (git rev-parse HEAD, or null)
-  │      Enumerate .v files in deterministic order (sorted by path)
-  │      For each .v file:
-  │        List provable theorems (via Coq backend query)
-  │        Apply scope filter if configured (name pattern, module filter)
+  │    Apply scope filter if configured (name pattern, module filter)
   │
   ├─ Emit CampaignMetadata record (first line of output)
   │
@@ -112,18 +113,53 @@ Failure kinds:
 | `tactic_failure` | A tactic in the original proof fails during replay | Skip this proof |
 | `backend_crash` | Coq backend process exits unexpectedly | Skip this proof |
 | `timeout` | Per-proof time limit exceeded | Skip this proof |
+| `no_proof_body` | Declaration has no proof body (e.g., `Definition foo := 42.`) | Expected; not counted as failure |
 | `unknown` | Any other unexpected error | Skip this proof |
 
 When a file fails to load, all theorems in that file are skipped with `load_failure` errors rather than attempting each one independently.
 
+Declarations classified as `no_proof_body` are reported separately from failures in the extraction summary. The summary invariant becomes: `extracted + partial + failed + no_proof_body + skipped == found`.
+
 ## Theorem Enumeration
 
-The campaign planner enumerates theorems by querying the Coq backend for each .v file. The enumeration mechanism is backend-dependent:
+The campaign planner enumerates provable declarations by querying the SQLite search index (`index.db`). The `declarations` table contains every declaration's fully qualified name, kind, and module. The campaign planner queries for declaration kinds that may have proof bodies: `lemma`, `theorem`, `instance`, `definition`.
 
-- **coq-lsp**: Process the file and list all completed proof blocks
-- **SerAPI**: Load the file and query for all proof-bearing vernacular commands
+```
+_enumerate_from_index(index_db_path, project_dirs)
+  │
+  ├─ Open IndexReader on index_db_path
+  ├─ Query: SELECT name, module, kind FROM declarations
+  │         WHERE kind IN ('lemma', 'theorem', 'instance', 'definition')
+  │         ORDER BY module, name
+  ├─ For each declaration:
+  │    Map module to source file via module_to_source_file()
+  │    Match source file to project directory
+  │    Yield (project_id, source_file, fqn, decl_kind)
+  └─ Close IndexReader
+```
 
-The enumeration returns theorems in declaration order within each file. This ordering, combined with sorted file paths and ordered project directories, produces a deterministic total order over all theorems in the campaign.
+The index is a required input. The extraction pipeline already requires a built index (the training data loader reads the premise corpus from it), so this adds no new prerequisite.
+
+### Module-to-File Mapping
+
+The index stores `module` as a dot-separated path (e.g., `Coq.Reals.Ranalysis1`). The campaign plan needs source file paths relative to the project root.
+
+Each library has a known prefix that is stripped to produce the relative path:
+
+| Library | Module prefix | Example |
+|---------|--------------|---------|
+| stdlib | `Coq.` | `Coq.Reals.Ranalysis1` → `Reals/Ranalysis1.v` |
+| MathComp | `mathcomp.` | `mathcomp.algebra.ring` → `algebra/ring.v` |
+| stdpp | `stdpp.` | `stdpp.fin_maps` → `fin_maps.v` |
+| Flocq | `Flocq.` | `Flocq.Core.Raux` → `Core/Raux.v` |
+| Coquelicot | `Coquelicot.` | `Coquelicot.Derive` → `Derive.v` |
+| Interval | `Interval.` | `Interval.Tactic` → `Tactic.v` |
+
+The prefix is detected from the project path basename or provided explicitly. Stdlib under Rocq 9.x may use `Corelib.` prefix instead of `Coq.`; the module_to_source_file utility handles both.
+
+### Handling Definitions Without Proof Bodies
+
+Not all `definition` entries have proof bodies. The index does not distinguish `Definition foo := 42.` from `Definition foo : T. Proof. ... Qed.`. The campaign attempts extraction for all definitions. When `create_session` raises `PROOF_NOT_FOUND`, this is classified as `no_proof_body` — an expected outcome, not a failure.
 
 ### Scope Filtering (P1)
 

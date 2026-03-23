@@ -3,7 +3,7 @@
 How dataset quality reports are generated from extraction output, how extraction scope is configured, and how benchmark subsets and ML exports are produced.
 
 **Feature**: [Extraction Quality Reports](../features/extraction-quality-reports.md), [Extraction Benchmarks and Export](../features/extraction-benchmarks-export.md)
-**Data models**: [extraction-types.md](data-models/extraction-types.md) (QualityReport, DistributionStats, TacticFrequency)
+**Data models**: [extraction-types.md](data-models/extraction-types.md) (QualityReport, DistributionStats, TacticFrequency, ErrorAnalysisReport, FileErrorSummary, NearTimeoutEntry, TimingEntry)
 
 ---
 
@@ -40,6 +40,38 @@ generate_quality_report(extraction_output_path)
 Tactic text is free-form (e.g., `rewrite Nat.add_comm.`, `apply (f_equal S).`, `simpl; reflexivity.`). The tactic keyword is the first whitespace-delimited token, lowercased, with trailing punctuation stripped. Compound tactics (`;`-separated) are split and each sub-tactic is counted independently.
 
 This is a heuristic — it does not fully parse the Ltac grammar. The purpose is to provide a rough vocabulary distribution for dataset assessment, not a precise tactic categorization.
+
+## Error Analysis Pipeline (P1)
+
+```
+analyze_errors(paths, timeout_threshold)
+  │
+  ├─ Read each JSON Lines file via _read_jsonl()
+  │
+  ├─ Classify records by record_type:
+  │    "proof_trace"       → count as extracted; collect timing data
+  │    "extraction_error"  → count as failed; aggregate by error_kind and source_file
+  │    other               → skip (campaign_metadata, extraction_summary)
+  │
+  ├─ Aggregate error records:
+  │    ├─ By error_kind: count occurrences of each error_kind value
+  │    └─ By source_file: for each file, count total errors and per-kind breakdown
+  │
+  ├─ Compute timing analysis for successful traces:
+  │    ├─ Sum per-step duration_ms fields to get total proof duration
+  │    ├─ Near-timeout: proofs where total_duration > timeout_threshold * 0.9
+  │    └─ Slowest: top-20 successful proofs by total duration
+  │
+  └─ Emit ErrorAnalysisReport
+```
+
+### Timing Data Availability
+
+Timing analysis depends on `duration_ms` fields in ExtractionStep records. When timing data is not present (older extraction outputs or extraction runs without timing instrumentation), the `near_timeout` and `slowest_successful` lists will be empty. The error aggregation (by_error_kind, by_file) works regardless of timing data availability.
+
+### Multi-File Analysis
+
+When multiple JSONL paths are provided, all files are read and their records are merged into a single analysis. This supports analyzing an entire extraction campaign that produced per-library output files (e.g., stdlib.jsonl + mathcomp.jsonl).
 
 ## Scope Configuration
 

@@ -35,6 +35,7 @@ from Poule.neural.training.trainer import BiEncoderTrainer
 from Poule.neural.training.evaluator import RetrievalEvaluator, EvaluationReport, ComparisonReport
 from Poule.neural.training.quantizer import ModelQuantizer
 from Poule.neural.training.validator import TrainingDataValidator, ValidationReport
+from Poule.neural.training.vocabulary import VocabularyBuilder, VocabularyReport, CoqTokenizer
 from Poule.neural.training.errors import (
     NeuralTrainingError,
     DataFormatError,
@@ -1074,3 +1075,704 @@ class TestInsufficientDataGuard:
         trainer = BiEncoderTrainer()
         with pytest.raises(InsufficientDataError):
             trainer.train(dataset, tmp_path / "model.pt")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 16. VocabularyBuilder — Closed Vocabulary Construction
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestVocabularyBuilderSpecialTokens:
+    """spec §4.0: Special tokens [PAD], [UNK], [CLS], [SEP], [MASK] at IDs 0–4."""
+
+    def test_special_tokens_at_fixed_ids(self, tmp_path):
+        """spec §4.0: Special tokens are always at IDs 0–4."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "Nat.add", "stmt", "Coq.Init.Nat")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        assert vocab["[PAD]"] == 0
+        assert vocab["[UNK]"] == 1
+        assert vocab["[CLS]"] == 2
+        assert vocab["[SEP]"] == 3
+        assert vocab["[MASK]"] == 4
+
+    def test_special_tokens_always_present(self, tmp_path):
+        """spec §4.0: Special tokens are always present regardless of input data."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "X.y", "stmt", "X")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        for token in ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]:
+            assert token in vocab
+
+
+class TestVocabularyBuilderFixedTokens:
+    """spec §4.0: Fixed token sets (punctuation, Unicode, Greek, etc.)."""
+
+    def test_punctuation_tokens_present(self, tmp_path):
+        """spec §4.0: Punctuation and delimiters are always included."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "A.b", "stmt", "A")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        for token in ["(", ")", "{", "}", "[", "]", ":", ";", ",", ".", "|",
+                       "@", "!", "?", "_", "'", "#", "=", "+", "-", "*", "/",
+                       "<", ">", "~"]:
+            assert token in vocab, f"Missing punctuation token: {token}"
+
+    def test_unicode_math_symbols_present(self, tmp_path):
+        """spec §4.0: Unicode mathematical symbols are always included."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "A.b", "stmt", "A")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        for token in ["∀", "∃", "→", "←", "↔", "⊢", "≤", "≥", "≠", "≡",
+                       "∧", "∨", "¬", "⊆", "ℕ", "ℤ"]:
+            assert token in vocab, f"Missing Unicode symbol: {token}"
+
+    def test_greek_letters_present(self, tmp_path):
+        """spec §4.0: Greek letters are always included."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "A.b", "stmt", "A")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        for token in ["α", "β", "γ", "δ", "ε", "λ", "π", "σ", "ω",
+                       "Γ", "Δ", "Σ", "Ω"]:
+            assert token in vocab, f"Missing Greek letter: {token}"
+
+    def test_ssreflect_tacticals_present(self, tmp_path):
+        """spec §4.0: SSReflect tacticals are always included."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "A.b", "stmt", "A")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        for token in ["/=", "//", "//=", "=>", "->", "<-"]:
+            assert token in vocab, f"Missing SSReflect tactical: {token}"
+
+    def test_scope_delimiters_present(self, tmp_path):
+        """spec §4.0: Scope delimiters are always included."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "A.b", "stmt", "A")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        for token in ["%N", "%Z", "%R", "%Q", "%positive", "%type"]:
+            assert token in vocab, f"Missing scope delimiter: {token}"
+
+    def test_digits_present(self, tmp_path):
+        """spec §4.0: Individual digits 0–9 are always included."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "A.b", "stmt", "A")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        for digit in "0123456789":
+            assert digit in vocab, f"Missing digit: {digit}"
+
+    def test_fixed_tokens_after_special_tokens(self, tmp_path):
+        """spec §4.0: Fixed token IDs start after special tokens (ID >= 5)."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "A.b", "stmt", "A")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        # All fixed tokens (non-special) should have IDs >= 5
+        for token, token_id in vocab.items():
+            if token.startswith("[") and token.endswith("]"):
+                continue  # skip special tokens
+            assert token_id >= 5, f"Fixed token {token} has ID {token_id} < 5"
+
+
+class TestVocabularyBuilderIndexExtraction:
+    """spec §4.0: Token extraction from the search index declarations."""
+
+    def test_all_declaration_names_in_vocabulary(self, tmp_path):
+        """spec §4.0: Every declaration name in the index appears in the vocabulary."""
+        declarations = [
+            (1, "Nat.add_comm", "stmt1", "Coq.Init.Nat"),
+            (2, "List.forall2_cons", "stmt2", "Coq.Lists.List"),
+            (3, "ssralg.GRing.mul", "stmt3", "mathcomp.algebra.ssralg"),
+        ]
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, declarations)
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        for _, name, _, _ in declarations:
+            assert name in vocab, f"Declaration {name} missing from vocabulary"
+
+    def test_declaration_ids_after_fixed_tokens(self, tmp_path):
+        """spec §4.0: Declaration names get IDs after all fixed token sets."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "Nat.add", "stmt", "Coq.Init.Nat")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        # Fixed tokens include special (5) + punctuation (~25) + tacticals (6) +
+        # scope delimiters (6) + unicode (~30) + greek (~33) + digits (10) = ~115
+        # Declaration IDs should be after all fixed tokens
+        fixed_count = sum(1 for _, v in vocab.items()
+                          if v < vocab["Nat.add"])
+        assert fixed_count >= 5 + 25  # at least special + punctuation
+
+    def test_declarations_sorted_lexicographically(self, tmp_path):
+        """spec §4.0: Declaration names are sorted lexicographically."""
+        declarations = [
+            (1, "Z.add", "stmt1", "Coq.ZArith"),
+            (2, "A.foo", "stmt2", "Coq.Init"),
+            (3, "M.bar", "stmt3", "Coq.Lists"),
+        ]
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, declarations)
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        assert vocab["A.foo"] < vocab["M.bar"] < vocab["Z.add"]
+
+
+class TestVocabularyBuilderTrainingDataExtraction:
+    """spec §4.0: Token extraction from serialized proof states in training data."""
+
+    def test_hypothesis_variable_names_added(self, tmp_path):
+        """spec §4.0: Hypothesis variable names from proof states are included."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "Nat.add", "stmt", "Coq.Init.Nat")])
+
+        record = _make_simple_proof(
+            "Coq.Init.Nat",
+            "forall n : nat, n + 0 = n",
+            [
+                ("intros n.", "n + 0 = n", [("Nat.add", "lemma")]),
+            ],
+        )
+        # Add hypotheses to step 0
+        record["steps"][0]["goals"][0]["hypotheses"] = [
+            _make_hypothesis("myvar", "nat"),
+            _make_hypothesis("H_special", "myvar > 0"),
+        ]
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [record])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        assert "myvar" in vocab
+        assert "H_special" in vocab
+
+    def test_training_data_tokens_no_duplicates(self, tmp_path):
+        """spec §4.0: Tokens from training data already in vocab are not duplicated."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "nat", "stmt", "Coq.Init")])
+
+        # "nat" appears both in the index and in proof state text
+        record = _make_simple_proof(
+            "Coq.Init.Nat",
+            "forall n : nat, n = n",
+            [
+                ("reflexivity.", "", [("nat", "definition")]),
+            ],
+        )
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [record])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        # "nat" should appear exactly once
+        nat_occurrences = [k for k in vocab if k == "nat"]
+        assert len(nat_occurrences) == 1
+
+    def test_training_data_tokens_sorted_lexicographically(self, tmp_path):
+        """spec §4.0: Tokens from training data are sorted lexicographically."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "X.y", "stmt", "X")])
+
+        record = _make_simple_proof(
+            "X",
+            "forall zebra : animal, True",
+            [
+                ("auto.", "", [("X.y", "lemma")]),
+            ],
+        )
+        # Modify goals to include specific hypothesis names
+        record["steps"][0]["goals"][0]["hypotheses"] = [
+            _make_hypothesis("zebra", "animal"),
+            _make_hypothesis("alpha_var", "nat"),
+        ]
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [record])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        # Tokens from training data (not already in index/fixed) should be sorted
+        # "alpha_var" < "zebra" lexicographically
+        if "alpha_var" in vocab and "zebra" in vocab:
+            assert vocab["alpha_var"] < vocab["zebra"]
+
+    def test_skips_non_proof_trace_records(self, tmp_path):
+        """spec §4.0: Non-proof records (metadata, summary) are skipped."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "X.y", "stmt", "X")])
+
+        records = [
+            {"record_type": "campaign_metadata", "coq_version": "8.18"},
+            _make_simple_proof(
+                "X",
+                "True",
+                [("auto.", "", [("X.y", "lemma")])],
+            ),
+            {"record_type": "extraction_summary", "found": 1, "extracted": 1},
+        ]
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, records)
+        output_path = tmp_path / "vocab.json"
+
+        report = VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+        # Should not crash and should still produce a valid vocabulary
+        vocab = json.loads(output_path.read_text())
+        assert "[PAD]" in vocab
+
+
+class TestVocabularyBuilderUnicodeNormalization:
+    """spec §4.0: NFC Unicode normalization applied before insertion."""
+
+    def test_nfc_normalization_applied(self, tmp_path):
+        """spec §4.0: All keys in the output JSON are NFC-normalized."""
+        import unicodedata
+
+        db_path = tmp_path / "index.db"
+        # Use a declaration name that might have non-NFC form
+        _make_minimal_index_db(db_path, [(1, "A.b", "stmt", "A")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        for token in vocab:
+            assert token == unicodedata.normalize("NFC", token), \
+                f"Token {token!r} is not NFC-normalized"
+
+
+class TestVocabularyBuilderContiguousIDs:
+    """spec §4.0: IDs are contiguous with no gaps; bijective mapping."""
+
+    def test_ids_contiguous(self, tmp_path):
+        """spec §4.0: IDs are contiguous (no gaps)."""
+        declarations = [
+            (1, "A.x", "s1", "A"),
+            (2, "B.y", "s2", "B"),
+            (3, "C.z", "s3", "C"),
+        ]
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, declarations)
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        ids = sorted(vocab.values())
+        assert ids == list(range(len(ids))), "IDs are not contiguous"
+
+    def test_ids_are_unique(self, tmp_path):
+        """spec §4.0: Each ID maps to exactly one token."""
+        declarations = [
+            (1, "A.x", "s1", "A"),
+            (2, "B.y", "s2", "B"),
+        ]
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, declarations)
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        ids = list(vocab.values())
+        assert len(ids) == len(set(ids)), "Duplicate IDs found"
+
+    def test_tokens_are_unique(self, tmp_path):
+        """spec §4.0: Each token maps to exactly one ID."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "A.x", "s1", "A")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        tokens = list(vocab.keys())
+        assert len(tokens) == len(set(tokens)), "Duplicate tokens found"
+
+
+class TestVocabularyBuilderReport:
+    """spec §4.0: VocabularyReport fields."""
+
+    def test_report_fields(self, tmp_path):
+        """spec §4.0: build returns a VocabularyReport with correct counts."""
+        declarations = [
+            (1, "Nat.add", "s1", "Coq.Init.Nat"),
+            (2, "List.map", "s2", "Coq.Lists.List"),
+        ]
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, declarations)
+
+        record = _make_simple_proof(
+            "Coq.Init.Nat",
+            "forall n : nat, True",
+            [("auto.", "", [("Nat.add", "lemma")])],
+        )
+        record["steps"][0]["goals"][0]["hypotheses"] = [
+            _make_hypothesis("unique_test_var", "nat"),
+        ]
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [record])
+        output_path = tmp_path / "vocab.json"
+
+        report = VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        assert isinstance(report, VocabularyReport)
+        assert report.special_tokens == 5
+        assert report.index_tokens == 2  # Nat.add, List.map
+        assert report.fixed_tokens > 0
+        assert report.training_data_tokens >= 1  # at least "unique_test_var"
+        assert report.total_tokens == (
+            report.special_tokens + report.fixed_tokens +
+            report.index_tokens + report.training_data_tokens
+        )
+        assert str(report.output_path) == str(output_path)
+
+    def test_report_total_matches_vocab_size(self, tmp_path):
+        """spec §4.0: total_tokens matches the number of entries in the JSON."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "A.x", "s1", "A")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        report = VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        assert report.total_tokens == len(vocab)
+
+
+class TestVocabularyBuilderErrors:
+    """spec §5: Error conditions for vocabulary building."""
+
+    def test_raises_on_empty_index(self, tmp_path):
+        """spec §5: No declarations in index raises InsufficientDataError."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [])  # empty declarations
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        with pytest.raises(InsufficientDataError, match="No declarations"):
+            VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+    def test_raises_on_missing_index_db(self, tmp_path):
+        """spec §5: Missing index database raises FileNotFoundError."""
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        with pytest.raises(FileNotFoundError):
+            VocabularyBuilder.build(
+                tmp_path / "nonexistent.db", [jsonl_path], output_path
+            )
+
+    def test_raises_on_missing_jsonl_file(self, tmp_path):
+        """spec §5: Missing JSONL file raises FileNotFoundError."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "A.x", "s1", "A")])
+        output_path = tmp_path / "vocab.json"
+
+        with pytest.raises(FileNotFoundError):
+            VocabularyBuilder.build(
+                db_path, [tmp_path / "nonexistent.jsonl"], output_path
+            )
+
+
+class TestVocabularyBuilderOutputFormat:
+    """spec §4.0: Output format — valid JSON, UTF-8."""
+
+    def test_output_is_valid_json(self, tmp_path):
+        """spec §4.0: The output is valid JSON."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "A.x", "s1", "A")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        # Should not raise
+        vocab = json.loads(output_path.read_text(encoding="utf-8"))
+        assert isinstance(vocab, dict)
+
+    def test_output_values_are_integers(self, tmp_path):
+        """spec §4.0: All values in the JSON are integer IDs."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "A.x", "s1", "A")])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        output_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], output_path)
+
+        vocab = json.loads(output_path.read_text())
+        for token, token_id in vocab.items():
+            assert isinstance(token_id, int), \
+                f"Token {token} has non-integer ID: {type(token_id)}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 17. CoqTokenizer — Closed Vocabulary Tokenization
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _write_vocab(path, tokens):
+    """Write a minimal vocabulary JSON file from a list of token strings.
+
+    Special tokens [PAD], [UNK], [CLS], [SEP], [MASK] are always included
+    at IDs 0–4. Additional tokens get sequential IDs starting from 5.
+    """
+    vocab = {
+        "[PAD]": 0, "[UNK]": 1, "[CLS]": 2, "[SEP]": 3, "[MASK]": 4,
+    }
+    next_id = 5
+    for t in tokens:
+        if t not in vocab:
+            vocab[t] = next_id
+            next_id += 1
+    path.write_text(json.dumps(vocab), encoding="utf-8")
+    return vocab
+
+
+class TestCoqTokenizerInit:
+    """spec §4.0.1: CoqTokenizer loads vocabulary and sets special token IDs."""
+
+    def test_loads_vocabulary(self, tmp_path):
+        """spec §4.0.1: Loads the vocabulary mapping into memory."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["nat", "bool"])
+        tok = CoqTokenizer(vocab_path)
+        assert tok.vocab_size == 7  # 5 special + 2 custom
+
+    def test_special_token_ids(self, tmp_path):
+        """spec §4.0.1: pad=0, unk=1, cls=2, sep=3, mask=4."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, [])
+        tok = CoqTokenizer(vocab_path)
+        assert tok.pad_token_id == 0
+        assert tok.unk_token_id == 1
+        assert tok.cls_token_id == 2
+        assert tok.sep_token_id == 3
+        assert tok.mask_token_id == 4
+
+    def test_raises_on_missing_file(self):
+        """spec §4.0.1: FileNotFoundError if path does not exist."""
+        with pytest.raises(FileNotFoundError):
+            CoqTokenizer(Path("/nonexistent/vocab.json"))
+
+    def test_raises_on_malformed_json(self, tmp_path):
+        """spec §4.0.1: DataFormatError if JSON is malformed."""
+        vocab_path = tmp_path / "vocab.json"
+        vocab_path.write_text("not json", encoding="utf-8")
+        from Poule.neural.training.errors import DataFormatError
+        with pytest.raises(DataFormatError):
+            CoqTokenizer(vocab_path)
+
+
+class TestCoqTokenizerEncode:
+    """spec §4.0.1: encode() tokenizes text with whitespace split + lookup."""
+
+    def test_basic_encoding(self, tmp_path):
+        """spec §4.0.1: Whitespace split, lookup, prepend CLS, append SEP."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["n", ":", "nat"])
+        tok = CoqTokenizer(vocab_path)
+
+        ids, mask = tok.encode("n : nat", max_length=8)
+
+        assert ids[0] == 2  # [CLS]
+        assert ids[1] == tok._vocab["n"]
+        assert ids[2] == tok._vocab[":"]
+        assert ids[3] == tok._vocab["nat"]
+        assert ids[4] == 3  # [SEP]
+        # Padding
+        assert ids[5] == 0
+        assert len(ids) == 8
+        assert mask == [1, 1, 1, 1, 1, 0, 0, 0]
+
+    def test_unknown_token_maps_to_unk(self, tmp_path):
+        """spec §4.0.1: Unknown tokens map to unk_token_id."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["nat"])
+        tok = CoqTokenizer(vocab_path)
+
+        ids, mask = tok.encode("unknown_token", max_length=6)
+        assert ids[1] == 1  # [UNK]
+
+    def test_truncation(self, tmp_path):
+        """spec §4.0.1: Truncate to max_length, keeping CLS and SEP."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["a", "b", "c", "d", "e"])
+        tok = CoqTokenizer(vocab_path)
+
+        ids, mask = tok.encode("a b c d e", max_length=4)
+        assert len(ids) == 4
+        assert ids[0] == 2  # [CLS]
+        assert ids[-1] == 3  # [SEP]
+        assert all(m == 1 for m in mask)
+
+    def test_empty_text(self, tmp_path):
+        """Encoding empty string produces CLS + SEP + padding."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, [])
+        tok = CoqTokenizer(vocab_path)
+
+        ids, mask = tok.encode("", max_length=4)
+        assert ids[0] == 2  # [CLS]
+        assert ids[1] == 3  # [SEP]
+        assert mask == [1, 1, 0, 0]
+
+    def test_nfc_normalization(self, tmp_path):
+        """spec §4.0.1: NFC normalization applied before lookup."""
+        import unicodedata
+        vocab_path = tmp_path / "vocab.json"
+        # Store the NFC form in the vocab
+        _write_vocab(vocab_path, ["é"])  # precomposed
+        tok = CoqTokenizer(vocab_path)
+
+        # Use decomposed form (e + combining accent)
+        decomposed = unicodedata.normalize("NFD", "é")
+        ids, _ = tok.encode(decomposed, max_length=4)
+        # Should find it (NFC normalizes decomposed → precomposed)
+        assert ids[1] != 1  # not UNK
+
+
+class TestCoqTokenizerEncodeBatch:
+    """spec §4.0.1: encode_batch() encodes multiple texts with dynamic padding."""
+
+    def test_batch_encoding_shapes(self, tmp_path):
+        """spec §4.0.1: Returns dict with input_ids and attention_mask arrays."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["a", "b", "c"])
+        tok = CoqTokenizer(vocab_path)
+
+        result = tok.encode_batch(["a b", "c"], max_length=512)
+        assert "input_ids" in result
+        assert "attention_mask" in result
+        # Shape: (2, padded_length)
+        assert result["input_ids"].shape[0] == 2
+        assert result["attention_mask"].shape[0] == 2
+
+    def test_dynamic_padding(self, tmp_path):
+        """spec §4.0.1: Padding is to the longest sequence in batch, not max_length."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["a", "b", "c"])
+        tok = CoqTokenizer(vocab_path)
+
+        result = tok.encode_batch(["a b", "c"], max_length=512)
+        # Longest is "a b" = CLS + a + b + SEP = 4 tokens
+        assert result["input_ids"].shape[1] == 4
+
+    def test_batch_attention_mask_correct(self, tmp_path):
+        """Shorter sequences have 0s in attention_mask for padding positions."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["a", "b"])
+        tok = CoqTokenizer(vocab_path)
+
+        result = tok.encode_batch(["a b", "a"], max_length=512)
+        # First: CLS a b SEP -> all 1s
+        assert list(result["attention_mask"][0]) == [1, 1, 1, 1]
+        # Second: CLS a SEP PAD -> 1,1,1,0
+        assert list(result["attention_mask"][1]) == [1, 1, 1, 0]
+
+
+class TestCoqTokenizerIntegration:
+    """Integration: CoqTokenizer works with VocabularyBuilder output."""
+
+    def test_roundtrip_with_vocabulary_builder(self, tmp_path):
+        """Vocabulary built by VocabularyBuilder can be loaded by CoqTokenizer."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [
+            (1, "Nat.add", "stmt1", "Coq.Init.Nat"),
+            (2, "nat", "stmt2", "Coq.Init.Datatypes"),
+        ])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        vocab_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], vocab_path)
+        tok = CoqTokenizer(vocab_path)
+
+        # Both declaration names should tokenize to known IDs
+        ids, _ = tok.encode("Nat.add nat", max_length=10)
+        assert ids[1] != tok.unk_token_id  # Nat.add known
+        assert ids[2] != tok.unk_token_id  # nat known

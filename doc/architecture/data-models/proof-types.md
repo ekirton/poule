@@ -83,7 +83,7 @@ A named assumption in the local proof context of a goal.
 
 ## ProofTrace
 
-A complete record of a proof's execution: all states and the tactics that produced them.
+A complete or partial record of a proof's execution: all states and the tactics that produced them.
 
 | Field | Type | Constraints |
 |-------|------|-------------|
@@ -91,13 +91,16 @@ A complete record of a proof's execution: all states and the tactics that produc
 | `session_id` | reference to Session | Required |
 | `proof_name` | qualified name | Required; fully qualified proof name |
 | `file_path` | text | Required; absolute path to the .v file |
-| `total_steps` | positive integer | Required; N (the number of tactics) |
-| `steps` | list of TraceStep | Required; length must equal `total_steps + 1` (N tactics + initial state) |
+| `total_steps` | positive integer | Required; N (the total number of tactics in the original proof) |
+| `steps` | list of TraceStep | Required; for complete traces, length equals `total_steps + 1`; for partial traces, length equals `failure_step` (steps 0..failure_step-1) |
+| `partial` | boolean | Required; default false; true when tactic replay failed before completing all steps |
+| `failure_step` | non-negative integer or null | Required; null when `partial` is false; the step index where replay failed when `partial` is true |
+| `failure_message` | text | Required; empty string when `partial` is false; error description when `partial` is true |
 
 ### Relationships
 
 - **Belongs to** one Session.
-- **Contains** `total_steps + 1` TraceStep objects (1:*; ordered by step index).
+- **Contains** TraceStep objects (1:*; ordered by step index). For complete traces: `total_steps + 1` steps. For partial traces: `failure_step` steps (the successfully replayed prefix).
 
 ---
 

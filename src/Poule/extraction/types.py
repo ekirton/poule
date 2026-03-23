@@ -16,6 +16,7 @@ class ErrorKind(Enum):
     BACKEND_CRASH = "backend_crash"
     TACTIC_FAILURE = "tactic_failure"
     LOAD_FAILURE = "load_failure"
+    NO_PROOF_BODY = "no_proof_body"
     UNKNOWN = "unknown"
 
 
@@ -98,6 +99,21 @@ class ExtractionRecord:
 
 
 @dataclass(frozen=True)
+class PartialExtractionRecord:
+    schema_version: int
+    record_type: str
+    theorem_name: str
+    source_file: str
+    project_id: str
+    total_steps: int
+    completed_steps: int
+    failure_at_step: int
+    failure_kind: str
+    failure_message: str
+    steps: list[ExtractionStep] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class ExtractionError:
     schema_version: int
     record_type: str
@@ -141,7 +157,9 @@ class FileSummary:
     theorems_found: int
     extracted: int
     failed: int
-    skipped: int
+    no_proof_body: int = 0
+    partial: int = 0
+    skipped: int = 0
 
 
 @dataclass(frozen=True)
@@ -150,7 +168,9 @@ class ProjectSummary:
     theorems_found: int
     extracted: int
     failed: int
-    skipped: int
+    no_proof_body: int = 0
+    partial: int = 0
+    skipped: int = 0
     per_file: list[FileSummary] = field(default_factory=list)
 
 
@@ -161,7 +181,9 @@ class ExtractionSummary:
     total_theorems_found: int
     total_extracted: int
     total_failed: int
-    total_skipped: int
+    total_no_proof_body: int = 0
+    total_partial: int = 0
+    total_skipped: int = 0
     per_project: list[ProjectSummary] = field(default_factory=list)
 
 
@@ -234,6 +256,45 @@ class QualityReport:
     proof_length_distribution: DistributionStats
     tactic_vocabulary: list[TacticFrequency] = field(default_factory=list)
     per_project: list[ProjectQualityReport] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Error analysis report types
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FileErrorSummary:
+    source_file: str
+    error_count: int
+    by_kind: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class NearTimeoutEntry:
+    theorem_name: str
+    source_file: str
+    total_duration_s: float
+
+
+@dataclass(frozen=True)
+class TimingEntry:
+    theorem_name: str
+    source_file: str
+    total_duration_s: float
+
+
+@dataclass(frozen=True)
+class ErrorAnalysisReport:
+    files_analyzed: int
+    total_theorems: int
+    total_extracted: int
+    total_failed: int
+    by_error_kind: dict[str, int]
+    by_file: list[FileErrorSummary]
+    near_timeout: list[NearTimeoutEntry]
+    slowest_successful: list[TimingEntry]
+    timeout_threshold: int
 
 
 # ---------------------------------------------------------------------------

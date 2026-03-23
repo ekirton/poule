@@ -33,7 +33,7 @@ The system shall write output as a single JSON Lines file with the following str
 | Position | Record type | Cardinality |
 |----------|-------------|-------------|
 | First line | `campaign_metadata` | Exactly one |
-| Lines 2..N | `proof_trace` or `extraction_error` | Zero or more |
+| Lines 2..N | `proof_trace`, `partial_proof_trace`, or `extraction_error` | Zero or more |
 | Last line | `extraction_summary` | Exactly one |
 
 MAINTAINS: Every JSON object in the output contains a `record_type` field as a top-level string. Every JSON object contains a `schema_version` field as a top-level positive integer.
@@ -155,7 +155,37 @@ The system shall serialize ExtractionDiff with fields in the following order:
 
 This matches the Phase 2 ProofStateDiff structure but omits `from_step` and `to_step` (implicit from the containing ExtractionStep's `step_index`).
 
-### 4.8 ExtractionError Serialization
+### 4.8 PartialExtractionRecord Serialization
+
+The system shall serialize PartialExtractionRecord with fields in the following order:
+
+| Position | Field | JSON type | Source |
+|----------|-------|-----------|--------|
+| 1 | `schema_version` | integer | Current schema version |
+| 2 | `record_type` | string | Constant: `"partial_proof_trace"` |
+| 3 | `theorem_name` | string | Fully qualified name |
+| 4 | `source_file` | string | Path relative to project root |
+| 5 | `project_id` | string | Matching CampaignMetadata.projects entry |
+| 6 | `total_steps` | integer | Total tactic steps in the original proof |
+| 7 | `completed_steps` | integer | Number of steps successfully replayed (steps 0..completed_steps are present) |
+| 8 | `failure_at_step` | integer | Step index where replay failed |
+| 9 | `failure_kind` | string | One of: `"tactic_failure"`, `"backend_crash"` |
+| 10 | `failure_message` | string | Human-readable error description |
+| 11 | `steps` | array of ExtractionStep | Length = `completed_steps + 1` (initial state + completed tactic steps) |
+
+- REQUIRES: `completed_steps >= 1` (at least one tactic step succeeded; failures at step 1 produce ExtractionError, not partial records). `failure_at_step == completed_steps + 1`. `len(steps) == completed_steps + 1`.
+- ENSURES: Returns a JSON string with exactly 11 fields. Steps use the same ExtractionStep format as §4.5.
+- Downstream consumers process partial records identically to complete records — they iterate over whatever steps exist. The training data loader accepts `record_type == "partial_proof_trace"` alongside `"proof_trace"`.
+
+> **Given** a proof of 12 steps that fails at step 5
+> **When** the PartialExtractionRecord is serialized
+> **Then** `total_steps = 12`, `completed_steps = 4`, `failure_at_step = 5`, and `steps` contains 5 ExtractionStep objects (steps 0-4)
+
+> **Given** a partial record with premise annotations available for steps 1-3 but not step 4
+> **When** the PartialExtractionRecord is assembled
+> **Then** `completed_steps = 3` and steps contains 4 ExtractionStep objects (steps 0-3), using the intersection of trace and premise availability
+
+### 4.9 ExtractionError Serialization
 
 The system shall serialize ExtractionError with fields in the following order:
 
@@ -176,7 +206,7 @@ The system shall serialize ExtractionError with fields in the following order:
 > **When** it is serialized
 > **Then** `error_kind` is `"timeout"` and `error_message` follows the template `"Proof extraction exceeded {n}s time limit"`
 
-### 4.9 ExtractionSummary Serialization
+### 4.10 ExtractionSummary Serialization
 
 The system shall serialize ExtractionSummary with fields in the following order:
 
@@ -185,22 +215,23 @@ The system shall serialize ExtractionSummary with fields in the following order:
 | 1 | `schema_version` | integer | Current schema version |
 | 2 | `record_type` | string | Constant: `"extraction_summary"` |
 | 3 | `total_theorems_found` | integer | Total enumerated |
-| 4 | `total_extracted` | integer | Successful extractions |
-| 5 | `total_failed` | integer | Failed extractions |
-| 6 | `total_skipped` | integer | Scope-filtered (P1); 0 when no filter |
-| 7 | `per_project` | array of ProjectSummary | One per project |
+| 4 | `total_extracted` | integer | Successful complete extractions |
+| 5 | `total_partial` | integer | Partial extractions (failed mid-proof but recovered training data) |
+| 6 | `total_failed` | integer | Failed extractions (no data recovered) |
+| 7 | `total_skipped` | integer | Scope-filtered (P1); 0 when no filter |
+| 8 | `per_project` | array of ProjectSummary | One per project |
 
-ProjectSummary fields in order: `project_id`, `theorems_found`, `extracted`, `failed`, `skipped`, `per_file`.
+ProjectSummary fields in order: `project_id`, `theorems_found`, `extracted`, `partial`, `failed`, `skipped`, `per_file`.
 
-FileSummary fields in order: `source_file`, `theorems_found`, `extracted`, `failed`, `skipped`.
+FileSummary fields in order: `source_file`, `theorems_found`, `extracted`, `partial`, `failed`, `skipped`.
 
-### 4.10 Determinism Contract
+### 4.11 Determinism Contract
 
 The serialization system shall produce byte-identical output for identical input. The following rules apply:
 
 | Rule | Requirement |
 |------|-------------|
-| Field ordering | Fields shall be emitted in the position order defined in §4.2–§4.9 |
+| Field ordering | Fields shall be emitted in the position order defined in §4.2–§4.10 |
 | List ordering — steps | Steps ordered by `step_index` ascending |
 | List ordering — goals | Goals ordered by `index` ascending |
 | List ordering — hypotheses | Hypotheses ordered as Coq presents them |
@@ -217,7 +248,7 @@ The serialization system shall produce byte-identical output for identical input
 > **When** both outputs are compared
 > **Then** they are byte-identical except for the `extraction_timestamp` in CampaignMetadata
 
-### 4.11 Schema Version
+### 4.12 Schema Version
 
 The initial extraction schema version shall be `1`.
 
@@ -228,9 +259,12 @@ All record types in a single output file share the same schema version. The vers
 | Condition | Error |
 |-----------|-------|
 | ExtractionRecord with `len(steps) != total_steps + 1` | `ValueError`: step count mismatch |
+| PartialExtractionRecord with `len(steps) != completed_steps + 1` | `ValueError`: step count mismatch |
+| PartialExtractionRecord with `completed_steps < 1` | `ValueError`: partial records require at least one completed tactic step |
 | ExtractionStep at index 0 with non-null tactic | `ValueError`: step 0 must have null tactic |
 | ExtractionStep at index > 0 with null tactic | `ValueError`: steps 1..N must have non-null tactic |
 | ExtractionError with invalid `error_kind` | `ValueError`: error_kind must be one of timeout, backend_crash, tactic_failure, load_failure, unknown |
+| PartialExtractionRecord with invalid `failure_kind` | `ValueError`: failure_kind must be one of tactic_failure, backend_crash |
 | Premise with invalid `kind` | `ValueError`: kind must be one of lemma, hypothesis, constructor, definition |
 
 ## 6. Non-Functional Requirements

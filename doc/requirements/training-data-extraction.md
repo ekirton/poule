@@ -87,6 +87,7 @@ Cross-references:
 | R3-P1-5 | Resume a partially completed extraction campaign from the point of interruption without re-extracting already-completed proofs |
 | R3-P1-6 | Include proof state diffs (what changed between consecutive tactic steps) alongside full proof state snapshots in the output |
 | R3-P1-7 | Support extraction from arbitrary opam-installable Coq projects, validated on at least two standard-Ltac projects (e.g., Flocq, stdpp) and two ssreflect-based projects (e.g., MathComp satellites) |
+| R3-P1-8 | Produce extraction error analysis reports from completed extraction output: aggregate errors by error kind and by source module, identify successful proofs near the timeout threshold, and report the overall error distribution to guide extraction improvements |
 
 ### P2 — Nice to Have
 

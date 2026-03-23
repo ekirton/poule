@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -22,12 +21,14 @@ from Poule.extraction.types import (
     ExtractionStep,
     ExtractionSummary,
     FileSummary,
+    PartialExtractionRecord,
     ProjectMetadata,
     ProjectSummary,
 )
 from Poule.session.errors import (
     BACKEND_CRASHED,
     FILE_NOT_FOUND,
+    PROOF_NOT_FOUND,
     TACTIC_ERROR,
     SessionError,
 )
@@ -48,27 +49,51 @@ class CampaignPlan:
 
 
 # ---------------------------------------------------------------------------
-# Theorem enumeration (simple regex-based, overridable for testing)
+# Index-based declaration enumeration
 # ---------------------------------------------------------------------------
 
-_THEOREM_RE = re.compile(
-    r"^\s*(?:Theorem|Lemma|Proposition|Corollary|Fact)\s+(\w+)\b",
-    re.MULTILINE,
-)
 
+def module_to_source_file(module: str, module_prefix: str) -> str:
+    """Convert a dot-separated module path to a relative source file path.
 
-def _enumerate_theorems(file_path: str) -> list[str]:
-    """Extract theorem names from a .v file in declaration order.
-
-    Uses a simple regex heuristic. In production this would be replaced
-    by a Coq backend query, but for now this is sufficient and the tests
-    mock or rely on files with simple ``Theorem name : ...`` declarations.
+    Strips *module_prefix* (e.g. ``"Coq."``) from *module*, replaces dots
+    with ``/``, and appends ``.v``.  Handles ``Corelib.`` as an alias for
+    ``Coq.`` (Rocq 9.x compatibility).
     """
+    # Handle Corelib alias for stdlib
+    if module_prefix == "Coq." and module.startswith("Corelib."):
+        module = module[len("Corelib."):]
+    elif module.startswith(module_prefix):
+        module = module[len(module_prefix):]
+    return module.replace(".", "/") + ".v"
+
+
+def _enumerate_from_index(
+    index_db_path: str,
+    project_dirs: list[str],
+    module_prefix: str,
+) -> list[tuple[str, str, str, str]]:
+    """Enumerate provable declarations from the SQLite index.
+
+    Returns a list of ``(project_id, source_file, fqn, decl_kind)`` tuples,
+    ordered by ``(module, name)`` within each project.
+    """
+    from Poule.storage.reader import IndexReader
+
+    reader = IndexReader.open(index_db_path)
     try:
-        text = Path(file_path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-    return [m.group(1) for m in _THEOREM_RE.finditer(text)]
+        decls = reader.get_provable_declarations(module_prefix=module_prefix)
+    finally:
+        reader.close()
+
+    # For single-project use, map all declarations to the first project.
+    # Multi-project enumeration with per-project prefixes is future work.
+    project_id = Path(project_dirs[0]).name
+    targets: list[tuple[str, str, str, str]] = []
+    for decl in decls:
+        source_file = module_to_source_file(decl["module"], module_prefix)
+        targets.append((project_id, source_file, decl["name"], decl["kind"]))
+    return targets
 
 
 # ---------------------------------------------------------------------------
@@ -79,8 +104,14 @@ def _enumerate_theorems(file_path: str) -> list[str]:
 def build_campaign_plan(
     project_dirs: list[str],
     scope_filter=None,
+    index_db_path: str | None = None,
+    module_prefix: str | None = None,
 ) -> CampaignPlan:
     """Build a deterministic campaign plan from project directories.
+
+    When *index_db_path* is provided, declarations are enumerated from
+    the SQLite index.  Otherwise falls back to legacy regex enumeration
+    (deprecated).
 
     Raises ``ValueError`` for empty *project_dirs* and a
     ``DIRECTORY_NOT_FOUND`` exception for nonexistent directories.
@@ -110,7 +141,75 @@ def build_campaign_plan(
         ))
         dir_to_id.append(project_id)
 
-    # Enumerate targets: files lexicographic, theorems in declaration order.
+    if index_db_path is not None:
+        return _build_plan_from_index(
+            project_dirs, projects, dir_to_id,
+            index_db_path, module_prefix or "", scope_filter,
+        )
+
+    # Legacy regex fallback — kept for backward compatibility with existing
+    # tests that don't provide an index.  Will be removed in a future release.
+    return _build_plan_from_regex(project_dirs, projects, dir_to_id, scope_filter)
+
+
+def _build_plan_from_index(
+    project_dirs: list[str],
+    projects: list[ProjectMetadata],
+    dir_to_id: list[str],
+    index_db_path: str,
+    module_prefix: str,
+    scope_filter,
+) -> CampaignPlan:
+    """Build campaign plan using index-based enumeration."""
+    from Poule.storage.reader import IndexReader
+
+    reader = IndexReader.open(index_db_path)
+    try:
+        decls = reader.get_provable_declarations(
+            module_prefix=module_prefix if module_prefix else None,
+        )
+    finally:
+        reader.close()
+
+    # Build targets, assigning each declaration to its project.
+    targets: list[tuple[str, str, str, str]] = []
+    skipped = 0
+    prefix = module_prefix or ""
+
+    for decl in decls:
+        source_file = module_to_source_file(decl["module"], prefix)
+        fqn = decl["name"]
+        decl_kind = decl["kind"]
+
+        # Use the first project's ID (single-project case) or match by prefix.
+        project_id = dir_to_id[0]
+
+        if scope_filter is not None and _should_skip(scope_filter, fqn):
+            skipped += 1
+            continue
+        targets.append((project_id, source_file, fqn, decl_kind))
+
+    return CampaignPlan(
+        projects=projects,
+        targets=targets,
+        skipped_count=skipped,
+    )
+
+
+def _build_plan_from_regex(
+    project_dirs: list[str],
+    projects: list[ProjectMetadata],
+    dir_to_id: list[str],
+    scope_filter,
+) -> CampaignPlan:
+    """Legacy regex-based campaign plan builder (deprecated)."""
+    import re
+
+    _THEOREM_RE = re.compile(
+        r"^\s*(?:Theorem|Lemma|Proposition|Corollary|Fact)\s+(\w+)\b",
+        re.MULTILINE,
+    )
+
     targets: list[tuple[str, str, str]] = []
     skipped = 0
 
@@ -120,7 +219,11 @@ def build_campaign_plan(
 
         for vf in v_files:
             rel = str(vf.relative_to(d))
-            all_theorems = _enumerate_theorems(str(vf))
+            try:
+                text = vf.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            all_theorems = [m.group(1) for m in _THEOREM_RE.finditer(text)]
 
             for thm in all_theorems:
                 if scope_filter is not None and _should_skip(scope_filter, thm):
@@ -157,6 +260,7 @@ _ERROR_KIND_MAP = {
     BACKEND_CRASHED: "backend_crash",
     TACTIC_ERROR: "tactic_failure",
     FILE_NOT_FOUND: "load_failure",
+    PROOF_NOT_FOUND: "no_proof_body",
 }
 
 
@@ -166,30 +270,17 @@ async def extract_single_proof(
     source_file: str,
     theorem_name: str,
     project_path: str = "",
-    timeout_seconds: Optional[float] = None,
 ) -> Union[ExtractionRecord, ExtractionError]:
     """Extract a single proof trace, returning a record or error.
 
     The session is always closed in a finally block.
+    Backend liveness is enforced by the CoqBackend's watchdog (§7.4),
+    not by a campaign-level budget timeout.
     """
     session_id: Optional[str] = None
     try:
-        coro = _do_extraction(session_manager, project_id, source_file, theorem_name, project_path)
-        if timeout_seconds is not None:
-            result = await asyncio.wait_for(coro, timeout=timeout_seconds)
-        else:
-            result = await coro
+        result = await _do_extraction(session_manager, project_id, source_file, theorem_name, project_path)
         return result
-    except asyncio.TimeoutError:
-        return ExtractionError(
-            schema_version=1,
-            record_type="extraction_error",
-            theorem_name=theorem_name,
-            source_file=source_file,
-            project_id=project_id,
-            error_kind="timeout",
-            error_message="Extraction timed out",
-        )
     except SessionError as e:
         error_kind = _ERROR_KIND_MAP.get(e.code, "unknown")
         return ExtractionError(
@@ -221,7 +312,7 @@ async def _do_extraction(
     source_file: str,
     theorem_name: str,
     project_path: str = "",
-) -> ExtractionRecord:
+) -> Union[ExtractionRecord, PartialExtractionRecord]:
     """Core extraction logic with guaranteed session cleanup."""
     session_id = None
     try:
@@ -301,6 +392,29 @@ async def _do_extraction(
                 diff=None,
             ))
 
+        # Check if this is a partial trace
+        is_partial = getattr(trace, "partial", False) is True
+        if is_partial:
+            failure_step = getattr(trace, "failure_step", None)
+            failure_msg = getattr(trace, "failure_message", "")
+            completed_steps = len(steps) - 1  # subtract step 0
+            # Failure at step 1 (only initial state) → not worth recording
+            if completed_steps < 1:
+                raise SessionError(TACTIC_ERROR, failure_msg or "First tactic failed")
+            return PartialExtractionRecord(
+                schema_version=1,
+                record_type="partial_proof_trace",
+                theorem_name=theorem_name,
+                source_file=source_file,
+                project_id=project_id,
+                total_steps=total_steps,
+                completed_steps=completed_steps,
+                failure_at_step=failure_step if failure_step is not None else completed_steps + 1,
+                failure_kind="tactic_failure",
+                failure_message=failure_msg,
+                steps=steps,
+            )
+
         return ExtractionRecord(
             schema_version=1,
             record_type="proof_trace",
@@ -341,10 +455,15 @@ async def run_campaign(
     all_kwargs = {**kwargs, **extra_kwargs}
 
     # Plan the campaign (validates dirs, may raise).
-    plan = build_campaign_plan(project_dirs, scope_filter=all_kwargs.get("scope_filter"))
+    plan = build_campaign_plan(
+        project_dirs,
+        scope_filter=all_kwargs.get("scope_filter"),
+        index_db_path=all_kwargs.get("index_db_path"),
+        module_prefix=all_kwargs.get("module_prefix"),
+    )
 
     # Prepare per-project / per-file tracking.
-    # project_id -> {file -> {extracted, failed}}
+    # project_id -> {file -> {extracted, failed, no_proof_body}}
     project_file_stats: dict[str, dict[str, dict[str, int]]] = {}
     for proj in plan.projects:
         project_file_stats[proj.project_id] = {}
@@ -355,12 +474,14 @@ async def run_campaign(
         project_file_found[proj.project_id] = {}
 
     # Count targets per project per file.
-    for project_id, source_file, _thm in plan.targets:
+    # Targets may be 3-tuples (legacy) or 4-tuples (index-based).
+    for target in plan.targets:
+        project_id, source_file = target[0], target[1]
         pf = project_file_found.setdefault(project_id, {})
         pf[source_file] = pf.get(source_file, 0) + 1
         ps = project_file_stats.setdefault(project_id, {})
         if source_file not in ps:
-            ps[source_file] = {"extracted": 0, "failed": 0}
+            ps[source_file] = {"extracted": 0, "failed": 0, "no_proof_body": 0}
 
     # Also track files with no theorems for per-file summary.
     for proj in plan.projects:
@@ -372,7 +493,7 @@ async def run_campaign(
                 pf[rel] = 0
             ps = project_file_stats.setdefault(proj.project_id, {})
             if rel not in ps:
-                ps[rel] = {"extracted": 0, "failed": 0}
+                ps[rel] = {"extracted": 0, "failed": 0, "no_proof_body": 0}
 
     # Emit campaign metadata.
     metadata = CampaignMetadata(
@@ -398,8 +519,10 @@ async def run_campaign(
     interrupted = False
     extracted_count = 0
     failed_count = 0
+    no_proof_body_count = 0
     current_file = None
-    for idx, (project_id, source_file, theorem_name) in enumerate(plan.targets, 1):
+    for idx, target in enumerate(plan.targets, 1):
+        project_id, source_file, theorem_name = target[0], target[1], target[2]
         if source_file != current_file:
             current_file = source_file
             print(f"  [{idx}/{total_targets}] {source_file}", file=sys.stderr)
@@ -411,7 +534,6 @@ async def run_campaign(
                 source_file,
                 theorem_name,
                 project_path=project_path_map.get(project_id, ""),
-                timeout_seconds=all_kwargs.get("timeout_seconds"),
             )
         except KeyboardInterrupt:
             interrupted = True
@@ -426,6 +548,9 @@ async def run_campaign(
         if isinstance(result, ExtractionRecord):
             fs["extracted"] += 1
             extracted_count += 1
+        elif isinstance(result, ExtractionError) and result.error_kind == "no_proof_body":
+            fs["no_proof_body"] += 1
+            no_proof_body_count += 1
         else:
             fs["failed"] += 1
             failed_count += 1
@@ -433,7 +558,8 @@ async def run_campaign(
         if idx % 100 == 0:
             print(
                 f"  Progress: {idx}/{total_targets}"
-                f" ({extracted_count} ok, {failed_count} err)",
+                f" ({extracted_count} ok, {failed_count} err,"
+                f" {no_proof_body_count} no body)",
                 file=sys.stderr,
             )
 
@@ -442,6 +568,7 @@ async def run_campaign(
     total_found = 0
     total_extracted = 0
     total_failed = 0
+    total_no_proof_body = 0
     total_skipped = plan.skipped_count
 
     for proj in plan.projects:
@@ -453,13 +580,15 @@ async def run_campaign(
         proj_found = 0
         proj_extracted = 0
         proj_failed = 0
+        proj_no_proof_body = 0
 
         for sf in sorted(file_found.keys()):
             found = file_found[sf]
-            stats = file_stats.get(sf, {"extracted": 0, "failed": 0})
+            stats = file_stats.get(sf, {"extracted": 0, "failed": 0, "no_proof_body": 0})
             extracted = stats["extracted"]
             failed = stats["failed"]
-            skipped = found - extracted - failed
+            npb = stats["no_proof_body"]
+            skipped = found - extracted - failed - npb
             if skipped < 0:
                 skipped = 0
 
@@ -468,14 +597,16 @@ async def run_campaign(
                 theorems_found=found,
                 extracted=extracted,
                 failed=failed,
+                no_proof_body=npb,
                 skipped=skipped,
             ))
 
             proj_found += found
             proj_extracted += extracted
             proj_failed += failed
+            proj_no_proof_body += npb
 
-        proj_skipped = proj_found - proj_extracted - proj_failed
+        proj_skipped = proj_found - proj_extracted - proj_failed - proj_no_proof_body
         if proj_skipped < 0:
             proj_skipped = 0
 
@@ -484,6 +615,7 @@ async def run_campaign(
             theorems_found=proj_found,
             extracted=proj_extracted,
             failed=proj_failed,
+            no_proof_body=proj_no_proof_body,
             skipped=proj_skipped,
             per_file=per_file,
         ))
@@ -491,9 +623,10 @@ async def run_campaign(
         total_found += proj_found
         total_extracted += proj_extracted
         total_failed += proj_failed
+        total_no_proof_body += proj_no_proof_body
 
     # Adjust total_skipped to maintain the invariant.
-    total_skipped = total_found - total_extracted - total_failed
+    total_skipped = total_found - total_extracted - total_failed - total_no_proof_body
     if total_skipped < 0:
         total_skipped = 0
 
@@ -503,6 +636,7 @@ async def run_campaign(
         total_theorems_found=total_found,
         total_extracted=total_extracted,
         total_failed=total_failed,
+        total_no_proof_body=total_no_proof_body,
         total_skipped=total_skipped,
         per_project=per_project,
     )

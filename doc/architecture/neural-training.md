@@ -9,7 +9,11 @@ Technical design for the training, evaluation, fine-tuning, and quantization pip
 ## Component Diagram
 
 ```
-Extracted training data (JSON Lines)
+Search index (index.db) + Extracted training data (JSON Lines)
+  │
+  │ poule build-vocabulary
+  ▼
+Closed vocabulary (coq-vocabulary.json)
   │
   │ poule train / poule fine-tune
   ▼
@@ -42,6 +46,102 @@ Extracted training data (JSON Lines)
 Evaluation Report            Comparison Report
 (R@1, R@10, R@32, MRR)     (neural vs. symbolic vs. union)
 ```
+
+## Vocabulary Building
+
+```
+poule build-vocabulary --db <index.db> --data <traces.jsonl> --output <coq-vocabulary.json>
+```
+
+Constructs a closed-vocabulary tokenizer that maps every Coq identifier to a unique integer token ID. This replaces CodeBERT's generic BPE tokenizer, which fragments Coq identifiers into 3–9 subword tokens. With a closed vocabulary, every identifier is exactly 1 token. See `coq-vocabulary.md` for the full design rationale.
+
+### Sources
+
+The vocabulary is built from two sources:
+
+1. **Search index** (`index.db`) — all fully-qualified declaration names from the `declarations` table. This is the authoritative source for premise identifiers: every name in the index becomes a vocabulary entry.
+
+2. **Serialized proof states** from the training data — scanning the JSONL extraction output captures hypothesis variable names (`n`, `m`, `H`, `H0`, `x`, `y`, `IHn'`) and any syntax tokens that appear in the model's actual input distribution.
+
+### Fixed Token Sets
+
+In addition to corpus-extracted tokens, the vocabulary includes fixed token sets that are always present regardless of input data:
+
+| Category | Examples | Count |
+|----------|----------|-------|
+| Special tokens | `[PAD]`, `[UNK]`, `[CLS]`, `[SEP]`, `[MASK]` | 5 |
+| Punctuation / delimiters | `(`, `)`, `{`, `}`, `[`, `]`, `:`, `;`, `,`, `.`, `\|`, `@`, `!`, `?`, `_`, `'`, `#`, `=`, `+`, `-`, `*`, `/`, `<`, `>`, `~` | ~25 |
+| SSReflect tacticals | `/=`, `//`, `//=`, `=>`, `->`, `<-` | 6 |
+| Scope delimiters | `%N`, `%Z`, `%R`, `%Q`, `%positive`, `%type` | 6 |
+| Unicode math symbols | `∀`, `∃`, `→`, `←`, `↔`, `⊢`, `≤`, `≥`, `≠`, `≡`, `∧`, `∨`, `¬`, `⊆`, etc. | ~30 |
+| Greek letters | `α`–`ω`, `Γ`–`Ω` | ~33 |
+| Digits | `0`–`9` | 10 |
+
+### Construction Procedure
+
+1. Initialize the vocabulary with the 5 special tokens at IDs 0–4.
+2. Add all fixed token sets (punctuation, tacticals, scope delimiters, Unicode, Greek, digits).
+3. Read all declaration names from `index.db` — each name becomes a vocabulary entry.
+4. Scan the JSONL training data: for each ExtractionRecord, serialize the proof states and split on whitespace. Collect all unique tokens not already in the vocabulary.
+5. Apply NFC Unicode normalization to all token strings before insertion.
+6. Assign sequential integer IDs (starting after the fixed tokens) to all collected tokens.
+7. Write the vocabulary as a JSON object mapping token strings to integer IDs.
+
+### Output Format
+
+```json
+{
+  "[PAD]": 0,
+  "[UNK]": 1,
+  "[CLS]": 2,
+  "[SEP]": 3,
+  "[MASK]": 4,
+  "∀": 5,
+  "→": 6,
+  ":": 7,
+  "nat": 8,
+  "Nat.add_comm": 9,
+  ...
+}
+```
+
+### Expected Size
+
+~15,500 tokens: ~15,000 library identifiers, ~200 variable names, ~200 syntax/keyword/tactic tokens, ~80 Unicode/Greek symbols, 5 special tokens.
+
+### Tokenization at Inference
+
+Tokenization is a whitespace split followed by O(1) dictionary lookup per token. The procedure:
+
+1. Apply NFC Unicode normalization to the input text
+2. Split on whitespace
+3. Look up each token in the vocabulary dict → token ID (or `[UNK]` ID for unknown tokens)
+4. Prepend `[CLS]`, append `[SEP]`
+5. Pad or truncate to `max_length=512`
+
+No regex pre-tokenizer. No subword search.
+
+### Embedding Layer Integration
+
+The closed vocabulary replaces CodeBERT's 50,265-token BPE vocabulary with ~15,500 tokens. The BiEncoder model reinitializes its embedding layer on construction:
+
+1. Load CodeBERT's transformer layers (layers 1–12) with pretrained weights.
+2. Create a new `nn.Embedding(vocab_size, 768)` sized to the closed vocabulary.
+3. For tokens that overlap with CodeBERT's original vocabulary (digits, punctuation, common English words like `nat`, `list`, `bool`), copy the pretrained embedding vector.
+4. For Coq-specific tokens (`Nat.add_comm`, `ssreflect`, `∀`), initialize randomly (normal distribution, σ = 0.02).
+
+CodeBERT's 12 transformer layers retain their full pretrained weights — only the embedding layer is partially cold. Contrastive fine-tuning on ~15,000+ training pairs provides sufficient signal for the new embeddings to converge.
+
+### CoqTokenizer
+
+A lightweight tokenizer class wraps the vocabulary JSON for use by all pipeline components (trainer, evaluator, quantizer, inference encoder):
+
+- Loads the vocabulary JSON file on construction.
+- `encode(text, max_length=512)` → `(input_ids, attention_mask)` tensors.
+- `encode_batch(texts, max_length=512)` → batched `(input_ids, attention_mask)` tensors with padding.
+- `vocab_size` property returns the vocabulary size for embedding layer construction.
+
+This replaces `AutoTokenizer.from_pretrained("microsoft/codebert-base")` throughout the pipeline.
 
 ## Data Loading
 

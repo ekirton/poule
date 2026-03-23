@@ -8,7 +8,7 @@ set -euo pipefail
 # Usage:
 #   ./scripts/extract-training-data.sh
 #   ./scripts/extract-training-data.sh --libraries stdlib,mathcomp
-#   ./scripts/extract-training-data.sh --force --timeout 120
+#   ./scripts/extract-training-data.sh --force --watchdog-timeout 300
 
 # Rocq 9.x deprecates COQLIB in favour of ROCQLIB; export it so coqc
 # stops emitting the deprecation warning on every invocation.
@@ -18,20 +18,20 @@ ALL_LIBRARIES="stdlib,mathcomp,stdpp,flocq,coquelicot,coqinterval"
 LIBRARIES="$ALL_LIBRARIES"
 OUTPUT_DIR="/data"
 FORCE=false
-TIMEOUT=60
+WATCHDOG_TIMEOUT=600
 
 usage() {
-    echo "Usage: $(basename "$0") [--libraries lib1,lib2,...] [--force] [--timeout N]" >&2
+    echo "Usage: $(basename "$0") [--libraries lib1,lib2,...] [--force] [--watchdog-timeout N]" >&2
     echo "" >&2
     echo "Extract proof traces from Coq libraries for neural training." >&2
     echo "Only re-extracts libraries whose installed version differs from" >&2
     echo "the version recorded in the existing output file." >&2
     echo "" >&2
     echo "Options:" >&2
-    echo "  --libraries   Comma-separated list of libraries (default: all 6)" >&2
-    echo "  --force       Re-extract all libraries regardless of version" >&2
-    echo "  --timeout N   Per-proof timeout in seconds (default: 60)" >&2
-    echo "  --output-dir  Output directory (default: /data)" >&2
+    echo "  --libraries          Comma-separated list of libraries (default: all 6)" >&2
+    echo "  --force              Re-extract all libraries regardless of version" >&2
+    echo "  --watchdog-timeout N Inactivity threshold in seconds (default: 600, 0 to disable)" >&2
+    echo "  --output-dir         Output directory (default: /data)" >&2
     echo "" >&2
     echo "Libraries: stdlib, mathcomp, stdpp, flocq, coquelicot, coqinterval" >&2
     echo "" >&2
@@ -50,8 +50,8 @@ while [[ $# -gt 0 ]]; do
             FORCE=true
             shift
             ;;
-        --timeout)
-            TIMEOUT="$2"
+        --watchdog-timeout)
+            WATCHDOG_TIMEOUT="$2"
             shift 2
             ;;
         --output-dir)
@@ -193,8 +193,17 @@ for lib in "${LIB_ARRAY[@]}"; do
         fi
     fi
 
+    INDEX_DB="${OUTPUT_DIR}/index.db"
+    if [[ ! -f "$INDEX_DB" ]]; then
+        echo "ERROR: Index database not found at ${INDEX_DB}" >&2
+        echo "Build the index first before running extraction." >&2
+        RESULTS[$lib]="FAILED (no index)"
+        FAILED=1
+        continue
+    fi
+
     echo "Extracting proof traces for ${lib}..." >&2
-    if poule extract "$lib_path" --output "$output_file" --timeout "$TIMEOUT"; then
+    if poule extract "$lib_path" --output "$output_file" --watchdog-timeout "$WATCHDOG_TIMEOUT" --index-db "$INDEX_DB"; then
         RESULTS[$lib]="extracted"
         EXTRACTED=$((EXTRACTED + 1))
     else
@@ -257,6 +266,22 @@ if [[ "$EXTRACTED" -gt 0 ]]; then
             echo "  ${lib}.jsonl  ${size}"
         fi
     done
+fi
+
+# --- Post-extraction error analysis ---
+
+JSONL_FILES=()
+for lib in "${LIB_ARRAY[@]}"; do
+    f="${OUTPUT_DIR}/${lib}.jsonl"
+    if [[ -f "$f" ]]; then
+        JSONL_FILES+=("$f")
+    fi
+done
+
+if [[ ${#JSONL_FILES[@]} -gt 0 ]]; then
+    echo ""
+    echo "Running error analysis..."
+    poule analyze-errors "${JSONL_FILES[@]}" || true
 fi
 
 if [[ "$FAILED" -eq 1 ]]; then

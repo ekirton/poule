@@ -93,7 +93,7 @@ A structured error record emitted when a single proof fails to extract. Appears 
 | `theorem_name` | qualified name | Required; fully qualified name of the proof that failed |
 | `source_file` | text | Required; path relative to project root |
 | `project_id` | text | Required; identifier for the source project |
-| `error_kind` | text | Required; one of: `timeout`, `backend_crash`, `tactic_failure`, `load_failure`, `unknown` |
+| `error_kind` | text | Required; one of: `timeout`, `backend_crash`, `tactic_failure`, `load_failure`, `no_proof_body`, `unknown` |
 | `error_message` | text | Required; human-readable description of the failure |
 
 ### Relationships
@@ -144,6 +144,7 @@ Summary statistics for a completed extraction campaign. Emitted as the last reco
 | `total_theorems_found` | non-negative integer | Required |
 | `total_extracted` | non-negative integer | Required |
 | `total_failed` | non-negative integer | Required |
+| `total_no_proof_body` | non-negative integer | Required; declarations without proof bodies (expected, not failures) |
 | `total_skipped` | non-negative integer | Required |
 | `per_project` | list of ProjectSummary | Required |
 
@@ -159,6 +160,7 @@ Per-project extraction statistics.
 | `theorems_found` | non-negative integer | Required |
 | `extracted` | non-negative integer | Required |
 | `failed` | non-negative integer | Required |
+| `no_proof_body` | non-negative integer | Required; declarations without proof bodies |
 | `skipped` | non-negative integer | Required |
 | `per_file` | list of FileSummary | Required |
 
@@ -174,6 +176,7 @@ Per-file extraction statistics within a project.
 | `theorems_found` | non-negative integer | Required |
 | `extracted` | non-negative integer | Required |
 | `failed` | non-negative integer | Required |
+| `no_proof_body` | non-negative integer | Required; declarations without proof bodies |
 | `skipped` | non-negative integer | Required |
 
 ---
@@ -252,3 +255,57 @@ Per-project quality metrics within a quality report.
 | `premise_coverage` | float | Required |
 | `proof_length_distribution` | DistributionStats | Required |
 | `theorem_count` | non-negative integer | Required |
+
+---
+
+## ErrorAnalysisReport
+
+Aggregated error analysis for one or more extraction output files (P1).
+
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `files_analyzed` | positive integer | Required; number of JSONL files read |
+| `total_theorems` | non-negative integer | Required; total proof_trace + extraction_error records |
+| `total_extracted` | non-negative integer | Required; count of proof_trace records |
+| `total_failed` | non-negative integer | Required; count of extraction_error records |
+| `by_error_kind` | dict mapping text to non-negative integer | Required; error_kind string → count |
+| `by_file` | list of FileErrorSummary | Required; sorted by error count descending |
+| `near_timeout` | list of NearTimeoutEntry | Required; successful proofs within 10% of the timeout threshold |
+| `slowest_successful` | list of TimingEntry | Required; top-N slowest successful extractions by total duration |
+| `timeout_threshold` | positive integer | Required; the timeout value in seconds used for near-timeout detection |
+
+---
+
+## FileErrorSummary
+
+Per-source-file error breakdown within an ErrorAnalysisReport.
+
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `source_file` | text | Required; source file path |
+| `error_count` | non-negative integer | Required; total errors in this file |
+| `by_kind` | dict mapping text to non-negative integer | Required; error_kind → count within this file |
+
+---
+
+## NearTimeoutEntry
+
+A successful proof that completed within 10% of the timeout threshold.
+
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `theorem_name` | qualified name | Required |
+| `source_file` | text | Required |
+| `total_duration_s` | float | Required; total extraction duration in seconds |
+
+---
+
+## TimingEntry
+
+A successful proof with its total extraction duration.
+
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `theorem_name` | qualified name | Required |
+| `source_file` | text | Required |
+| `total_duration_s` | float | Required; total extraction duration in seconds |

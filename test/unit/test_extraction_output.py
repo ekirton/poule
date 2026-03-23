@@ -756,7 +756,117 @@ class TestExtractionErrorSerialization:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# §4.9 ExtractionSummary Serialization
+# §4.8 PartialExtractionRecord Serialization
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _make_partial_extraction_record(
+    theorem_name="Nat.sub_add",
+    source_file="theories/Arith/PeanoNat.v",
+    project_id="coq-stdlib",
+    total_steps=12,
+    completed_steps=4,
+    failure_at_step=5,
+    failure_kind="tactic_failure",
+    failure_message="Tactic apply failed",
+):
+    from Poule.extraction.types import PartialExtractionRecord, ExtractionStep
+    steps = []
+    for i in range(completed_steps + 1):
+        steps.append(ExtractionStep(
+            step_index=i,
+            tactic=None if i == 0 else f"tactic_{i}.",
+            goals=[],
+            focused_goal_index=0,
+            premises=[],
+            diff=None,
+        ))
+    return PartialExtractionRecord(
+        schema_version=1,
+        record_type="partial_proof_trace",
+        theorem_name=theorem_name,
+        source_file=source_file,
+        project_id=project_id,
+        total_steps=total_steps,
+        completed_steps=completed_steps,
+        failure_at_step=failure_at_step,
+        failure_kind=failure_kind,
+        failure_message=failure_message,
+        steps=steps,
+    )
+
+
+class TestPartialExtractionRecordSerialization:
+    """Spec §4.8: PartialExtractionRecord has 11 fields."""
+
+    def test_field_ordering(self):
+        from Poule.extraction.output import serialize_partial_extraction_record
+        rec = _make_partial_extraction_record()
+        result = json.loads(serialize_partial_extraction_record(rec))
+        assert list(result.keys()) == [
+            "schema_version",
+            "record_type",
+            "theorem_name",
+            "source_file",
+            "project_id",
+            "total_steps",
+            "completed_steps",
+            "failure_at_step",
+            "failure_kind",
+            "failure_message",
+            "steps",
+        ]
+
+    def test_exactly_eleven_fields(self):
+        from Poule.extraction.output import serialize_partial_extraction_record
+        rec = _make_partial_extraction_record()
+        result = json.loads(serialize_partial_extraction_record(rec))
+        assert len(result) == 11
+
+    def test_record_type_is_partial_proof_trace(self):
+        from Poule.extraction.output import serialize_partial_extraction_record
+        rec = _make_partial_extraction_record()
+        result = json.loads(serialize_partial_extraction_record(rec))
+        assert result["record_type"] == "partial_proof_trace"
+
+    def test_steps_count_matches_completed_plus_one(self):
+        from Poule.extraction.output import serialize_partial_extraction_record
+        rec = _make_partial_extraction_record(completed_steps=4)
+        result = json.loads(serialize_partial_extraction_record(rec))
+        assert len(result["steps"]) == 5  # completed_steps + 1
+
+    @pytest.mark.parametrize("failure_kind", ["tactic_failure", "backend_crash"])
+    def test_valid_failure_kind_values(self, failure_kind):
+        from Poule.extraction.output import serialize_partial_extraction_record
+        rec = _make_partial_extraction_record(failure_kind=failure_kind)
+        result = json.loads(serialize_partial_extraction_record(rec))
+        assert result["failure_kind"] == failure_kind
+
+    def test_invalid_failure_kind_raises_value_error(self):
+        from Poule.extraction.output import serialize_partial_extraction_record
+        rec = _make_partial_extraction_record(failure_kind="invalid")
+        with pytest.raises(ValueError):
+            serialize_partial_extraction_record(rec)
+
+    def test_completed_steps_less_than_one_raises_value_error(self):
+        """Spec §5: partial records require at least one completed tactic step."""
+        from Poule.extraction.output import serialize_partial_extraction_record
+        rec = _make_partial_extraction_record(completed_steps=0, failure_at_step=1)
+        # Override steps to have only step 0
+        from Poule.extraction.types import PartialExtractionRecord, ExtractionStep
+        rec = PartialExtractionRecord(
+            schema_version=1, record_type="partial_proof_trace",
+            theorem_name="t", source_file="f.v", project_id="p",
+            total_steps=5, completed_steps=0, failure_at_step=1,
+            failure_kind="tactic_failure", failure_message="fail",
+            steps=[ExtractionStep(step_index=0, tactic=None, goals=[], premises=[])],
+        )
+        with pytest.raises(ValueError):
+            serialize_partial_extraction_record(rec)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# §4.10 ExtractionSummary Serialization
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -772,6 +882,7 @@ class TestExtractionSummarySerialization:
             "record_type",
             "total_theorems_found",
             "total_extracted",
+            "total_partial",
             "total_failed",
             "total_skipped",
             "per_project",
@@ -784,7 +895,7 @@ class TestExtractionSummarySerialization:
         assert result["record_type"] == "extraction_summary"
 
     def test_per_project_field_ordering(self):
-        """ProjectSummary fields: project_id, theorems_found, extracted, failed, skipped, per_file."""
+        """ProjectSummary fields: project_id, theorems_found, extracted, partial, failed, skipped, per_file."""
         (_, _, _, _, _, serialize_extraction_summary, _, _) = _import_output()
         summary = _make_extraction_summary()
         result = json.loads(serialize_extraction_summary(summary))
@@ -793,13 +904,14 @@ class TestExtractionSummarySerialization:
             "project_id",
             "theorems_found",
             "extracted",
+            "partial",
             "failed",
             "skipped",
             "per_file",
         ]
 
     def test_per_file_field_ordering(self):
-        """FileSummary fields: source_file, theorems_found, extracted, failed, skipped."""
+        """FileSummary fields: source_file, theorems_found, extracted, partial, failed, skipped."""
         (_, _, _, _, _, serialize_extraction_summary, _, _) = _import_output()
         summary = _make_extraction_summary()
         result = json.loads(serialize_extraction_summary(summary))
@@ -808,6 +920,7 @@ class TestExtractionSummarySerialization:
             "source_file",
             "theorems_found",
             "extracted",
+            "partial",
             "failed",
             "skipped",
         ]

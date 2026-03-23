@@ -23,6 +23,7 @@ from Poule.extraction.types import (
     GoalChange,
     Hypothesis,
     HypothesisChange,
+    PartialExtractionRecord,
     Premise,
     ProjectMetadata,
     ProjectSummary,
@@ -32,6 +33,7 @@ _VALID_PREMISE_KINDS = frozenset({"lemma", "hypothesis", "constructor", "definit
 _VALID_ERROR_KINDS = frozenset(
     {"timeout", "backend_crash", "tactic_failure", "load_failure", "unknown"}
 )
+_VALID_FAILURE_KINDS = frozenset({"tactic_failure", "backend_crash"})
 
 
 def _compact(obj: dict[str, Any]) -> str:
@@ -109,6 +111,7 @@ def _file_summary_to_dict(fs: FileSummary) -> dict[str, Any]:
         "source_file": fs.source_file,
         "theorems_found": fs.theorems_found,
         "extracted": fs.extracted,
+        "partial": fs.partial,
         "failed": fs.failed,
         "skipped": fs.skipped,
     }
@@ -119,6 +122,7 @@ def _project_summary_to_dict(ps: ProjectSummary) -> dict[str, Any]:
         "project_id": ps.project_id,
         "theorems_found": ps.theorems_found,
         "extracted": ps.extracted,
+        "partial": ps.partial,
         "failed": ps.failed,
         "skipped": ps.skipped,
         "per_file": [_file_summary_to_dict(fs) for fs in ps.per_file],
@@ -178,6 +182,42 @@ def serialize_extraction_step(step: ExtractionStep) -> str:
     return _compact(_step_to_dict(step))
 
 
+def serialize_partial_extraction_record(record: PartialExtractionRecord) -> str:
+    """Serialize PartialExtractionRecord to a compact JSON line.
+
+    Raises ValueError if completed_steps < 1 or failure_kind is invalid.
+    """
+    if record.completed_steps < 1:
+        raise ValueError(
+            f"Partial records require at least one completed tactic step, "
+            f"got completed_steps={record.completed_steps}"
+        )
+    if len(record.steps) != record.completed_steps + 1:
+        raise ValueError(
+            f"Step count mismatch: expected {record.completed_steps + 1} steps "
+            f"(completed_steps + 1), got {len(record.steps)}"
+        )
+    if record.failure_kind not in _VALID_FAILURE_KINDS:
+        raise ValueError(
+            f"Invalid failure_kind: {record.failure_kind!r}. "
+            f"Must be one of {sorted(_VALID_FAILURE_KINDS)}"
+        )
+    obj = {
+        "schema_version": record.schema_version,
+        "record_type": record.record_type,
+        "theorem_name": record.theorem_name,
+        "source_file": record.source_file,
+        "project_id": record.project_id,
+        "total_steps": record.total_steps,
+        "completed_steps": record.completed_steps,
+        "failure_at_step": record.failure_at_step,
+        "failure_kind": record.failure_kind,
+        "failure_message": record.failure_message,
+        "steps": [_step_to_dict(s) for s in record.steps],
+    }
+    return _compact(obj)
+
+
 def serialize_extraction_error(err: ExtractionError) -> str:
     """Serialize ExtractionError to a compact JSON line.
 
@@ -207,6 +247,7 @@ def serialize_extraction_summary(summary: ExtractionSummary) -> str:
         "record_type": summary.record_type,
         "total_theorems_found": summary.total_theorems_found,
         "total_extracted": summary.total_extracted,
+        "total_partial": summary.total_partial,
         "total_failed": summary.total_failed,
         "total_skipped": summary.total_skipped,
         "per_project": [_project_summary_to_dict(ps) for ps in summary.per_project],

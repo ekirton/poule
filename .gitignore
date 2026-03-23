@@ -32,6 +32,8 @@ proof-diagram.html
 *.glob
 .*.aux
 .lia.cache
+.nia.cache
+.nra.cache
 Makefile.coq
 Makefile.coq.conf
 .coqdeps.d

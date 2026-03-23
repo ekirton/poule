@@ -126,11 +126,16 @@ class _SessionState:
 class SessionManager:
     """Manages interactive proof sessions."""
 
-    def __init__(self, backend_factory: Callable | None = None) -> None:
+    def __init__(
+        self,
+        backend_factory: Callable | None = None,
+        watchdog_timeout: float | None = None,
+    ) -> None:
         if backend_factory is None:
             from Poule.session.backend import create_coq_backend
             backend_factory = create_coq_backend
         self._backend_factory = backend_factory
+        self._watchdog_timeout = watchdog_timeout
         self._registry: dict[str, _SessionState] = {}
         self._registry_lock = asyncio.Lock()
         self._expired_ids: set[str] = set()
@@ -142,7 +147,12 @@ class SessionManager:
     async def create_session(
         self, file_path: str, proof_name: str,
     ) -> tuple[str, ProofState]:
-        backend = await self._backend_factory(file_path)
+        if self._watchdog_timeout is not None:
+            backend = await self._backend_factory(
+                file_path, watchdog_timeout=self._watchdog_timeout,
+            )
+        else:
+            backend = await self._backend_factory(file_path)
         try:
             await backend.load_file(file_path)
         except (FileNotFoundError, OSError):
@@ -289,30 +299,108 @@ class SessionManager:
             # Record which steps need replay so we can time them.
             first_replayed = len(ss.step_history)
             timing: dict[int, float] = {}
-            while len(ss.step_history) <= ss.total_steps:
-                next_idx = len(ss.step_history)
-                if next_idx > len(ss.original_script):
-                    break
-                tactic = ss.original_script[next_idx - 1]
-                t0 = time.monotonic()
-                new_state = await ss.coq_backend.execute_tactic(tactic)
-                elapsed_ms = (time.monotonic() - t0) * 1000.0
-                new_state = ProofState(
-                    schema_version=new_state.schema_version,
+            failure_step: int | None = None
+            failure_message: str = ""
+
+            # Check if the backend has pre-computed state tokens from
+            # position_at_proof's initial replay (original_states).
+            # When available, use petanque/goals directly instead of
+            # re-executing tactics — avoids redundant double replay.
+            original_states = getattr(ss.coq_backend, "_original_states", None)
+            use_precomputed = (
+                original_states is not None
+                and len(original_states) > 1
+                and len(ss.step_history) <= 1
+            )
+
+            if use_precomputed:
+                # Materialize proof states from pre-computed Petanque tokens
+                for next_idx in range(len(ss.step_history), min(len(original_states), ss.total_steps + 1)):
+                    st_token = original_states[next_idx]
+                    try:
+                        goals_result = await ss.coq_backend._petanque_goals(st_token)
+                        new_state = ss.coq_backend._translate_petanque_goals(
+                            goals_result, step_index=next_idx,
+                        )
+                    except Exception as exc:
+                        failure_step = next_idx
+                        failure_message = str(exc)
+                        break
+                    new_state = ProofState(
+                        schema_version=new_state.schema_version,
+                        session_id=ss.session_id,
+                        step_index=next_idx,
+                        is_complete=new_state.is_complete,
+                        focused_goal_index=new_state.focused_goal_index,
+                        goals=new_state.goals,
+                    )
+                    ss.step_history.append(new_state)
+                # If original_states is shorter than total_steps (partial
+                # replay in position_at_proof), record the failure.
+                if (
+                    failure_step is None
+                    and len(original_states) <= ss.total_steps
+                    and len(ss.step_history) <= ss.total_steps
+                ):
+                    failure_step = len(original_states)
+                    failure_message = "Backend replay failed during positioning"
+            else:
+                # Standard replay path via execute_tactic
+                while len(ss.step_history) <= ss.total_steps:
+                    next_idx = len(ss.step_history)
+                    if next_idx > len(ss.original_script):
+                        break
+                    tactic = ss.original_script[next_idx - 1]
+                    t0 = time.monotonic()
+                    try:
+                        new_state = await ss.coq_backend.execute_tactic(tactic)
+                    except Exception as exc:
+                        # Partial trace recovery: capture what we have so far
+                        failure_step = next_idx
+                        failure_message = str(exc)
+                        break
+                    elapsed_ms = (time.monotonic() - t0) * 1000.0
+                    new_state = ProofState(
+                        schema_version=new_state.schema_version,
+                        session_id=ss.session_id,
+                        step_index=next_idx,
+                        is_complete=new_state.is_complete,
+                        focused_goal_index=new_state.focused_goal_index,
+                        goals=new_state.goals,
+                    )
+                    ss.step_history.append(new_state)
+                    timing[next_idx] = elapsed_ms
+            # Build steps from whatever was successfully replayed
+            completed = len(ss.step_history)
+            if failure_step is not None:
+                # Partial trace: steps 0..failure_step-1
+                steps = []
+                for i in range(completed):
+                    tac = None if i == 0 else ss.original_script[i - 1]
+                    steps.append(TraceStep(
+                        step_index=i,
+                        tactic=tac,
+                        state=ss.step_history[i],
+                        duration_ms=timing.get(i),
+                    ))
+                return ProofTrace(
+                    schema_version=1,
                     session_id=ss.session_id,
-                    step_index=next_idx,
-                    is_complete=new_state.is_complete,
-                    focused_goal_index=new_state.focused_goal_index,
-                    goals=new_state.goals,
+                    proof_name=ss.proof_name,
+                    file_path=ss.file_path,
+                    total_steps=ss.total_steps,
+                    steps=steps,
+                    partial=True,
+                    failure_step=failure_step,
+                    failure_message=failure_message,
                 )
-                ss.step_history.append(new_state)
-                timing[next_idx] = elapsed_ms
+            # Complete trace
             steps = []
             for i in range(ss.total_steps + 1):
-                tactic = None if i == 0 else ss.original_script[i - 1]
+                tac = None if i == 0 else ss.original_script[i - 1]
                 steps.append(TraceStep(
                     step_index=i,
-                    tactic=tactic,
+                    tactic=tac,
                     state=ss.step_history[i],
                     duration_ms=timing.get(i),
                 ))

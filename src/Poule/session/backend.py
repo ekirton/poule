@@ -25,24 +25,13 @@ from Poule.session.types import (
 
 logger = logging.getLogger(__name__)
 
-# Regex to split a proof body into individual tactic sentences.
+# Regex to split a proof body into individual tactic sentences (fallback).
 # A Coq sentence ends with a period followed by whitespace or end-of-string.
 # Periods inside qualified names (e.g., Nat.add_comm) are NOT sentence terminators
 # because they are followed by a letter/digit, not whitespace.
+# NOTE: This regex cannot handle bullets, braces, comments, or numeric literals.
+# The primary path uses coq/getDocument for exact sentence boundaries.
 _TACTIC_RE = re.compile(r"(?:[^.]|\.(?=[a-zA-Z0-9_]))*\.\s*")
-
-# Proof-opening keywords in Coq/Rocq.
-_PROOF_START_RE = re.compile(
-    r"^\s*(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|Fixpoint|"
-    r"CoFixpoint|Example|Let|Instance|Program\s+\w+)\s+",
-    re.MULTILINE,
-)
-
-# Match the "Proof." keyword (or "Proof with ...") on its own line.
-_PROOF_KW_RE = re.compile(r"^\s*Proof\b", re.MULTILINE)
-
-# Match Qed., Defined., Admitted., Abort. to find proof end.
-_PROOF_END_RE = re.compile(r"^\s*(Qed|Defined|Admitted|Abort)\s*\.", re.MULTILINE)
 
 
 class CoqProofBackend:
@@ -53,7 +42,11 @@ class CoqProofBackend:
     petanque/premises) for stateful proof exploration.
     """
 
-    def __init__(self, proc: asyncio.subprocess.Process) -> None:
+    def __init__(
+        self,
+        proc: asyncio.subprocess.Process,
+        watchdog_timeout: Optional[float] = None,
+    ) -> None:
         self._proc = proc
         self._next_id = 0
         self._notification_buffer: list[dict[str, Any]] = []
@@ -61,6 +54,7 @@ class CoqProofBackend:
         self._file_path: Optional[str] = None
         self._shut_down = False
         self.original_script: list[str] = []
+        self._watchdog_timeout = watchdog_timeout
 
         # Petanque state management
         self._petanque_state: Optional[int] = None  # current state token
@@ -79,21 +73,35 @@ class CoqProofBackend:
 
     async def _read_message(self) -> dict[str, Any]:
         stdout = self._proc.stdout  # type: ignore[union-attr]
-        headers: dict[str, str] = {}
-        while True:
-            line = await stdout.readline()
-            if not line:
-                raise ConnectionError("coq-lsp closed stdout unexpectedly")
-            line_str = line.decode("ascii").rstrip("\r\n")
-            if not line_str:
-                break
-            if ":" in line_str:
-                key, val = line_str.split(":", 1)
-                headers[key.strip().lower()] = val.strip()
+        wt = self._watchdog_timeout
+        try:
+            headers: dict[str, str] = {}
+            while True:
+                if wt is not None:
+                    line = await asyncio.wait_for(stdout.readline(), timeout=wt)
+                else:
+                    line = await stdout.readline()
+                if not line:
+                    raise ConnectionError("coq-lsp closed stdout unexpectedly")
+                line_str = line.decode("ascii").rstrip("\r\n")
+                if not line_str:
+                    break
+                if ":" in line_str:
+                    key, val = line_str.split(":", 1)
+                    headers[key.strip().lower()] = val.strip()
 
-        content_length = int(headers.get("content-length", 0))
-        body = await stdout.readexactly(content_length)
-        return json.loads(body)
+            content_length = int(headers.get("content-length", 0))
+            if wt is not None:
+                body = await asyncio.wait_for(
+                    stdout.readexactly(content_length), timeout=wt,
+                )
+            else:
+                body = await stdout.readexactly(content_length)
+            return json.loads(body)
+        except asyncio.TimeoutError:
+            raise ConnectionError(
+                f"coq-lsp unresponsive for {wt}s"
+            ) from None
 
     async def _send_request(
         self, method: str, params: dict[str, Any],
@@ -258,6 +266,132 @@ class CoqProofBackend:
         )
 
     # ------------------------------------------------------------------
+    # Document model queries
+    # ------------------------------------------------------------------
+
+    async def _get_document_sentences(self) -> list[dict[str, Any]]:
+        """Query coq/getDocument for sentence spans.
+
+        Returns a list of span dicts, each with a 'range' key containing
+        LSP-style start/end positions (line, character).
+        """
+        if self._doc_uri is None:
+            return []
+        try:
+            result = await self._send_request(
+                "coq/getDocument",
+                {"textDocument": {"uri": self._doc_uri}},
+            )
+            return result.get("spans", [])
+        except (RuntimeError, ConnectionError):
+            return []
+
+    def _extract_tactics_from_spans(
+        self, text: str, spans: list[dict[str, Any]], proof_name: str,
+    ) -> list[str]:
+        """Extract tactic sentences from document spans for a named proof.
+
+        Identifies the Proof./Qed. boundaries, then extracts the text of
+        each span that falls within the proof body.
+        """
+        lines = text.split("\n")
+
+        def span_text(span: dict[str, Any]) -> str:
+            r = span.get("range", {})
+            start = r.get("start", {})
+            end = r.get("end", {})
+            sl, sc = start.get("line", 0), start.get("character", 0)
+            el, ec = end.get("line", 0), end.get("character", 0)
+            if sl == el:
+                return lines[sl][sc:ec] if sl < len(lines) else ""
+            parts = []
+            if sl < len(lines):
+                parts.append(lines[sl][sc:])
+            for l_idx in range(sl + 1, min(el, len(lines))):
+                parts.append(lines[l_idx])
+            if el < len(lines):
+                parts.append(lines[el][:ec])
+            return "\n".join(parts)
+
+        # Find the Proof. and Qed./Defined./Admitted./Abort. span indices
+        proof_start_idx: Optional[int] = None
+        proof_end_idx: Optional[int] = None
+        # First, find the declaration span containing proof_name
+        decl_idx: Optional[int] = None
+        for i, span in enumerate(spans):
+            txt = span_text(span).strip()
+            if re.search(
+                rf"\b(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|"
+                rf"Fixpoint|CoFixpoint|Example|Let|Instance)\s+{re.escape(proof_name)}\b",
+                txt,
+            ):
+                decl_idx = i
+                break
+
+        if decl_idx is None:
+            return []
+
+        # Find "Proof." span after the declaration
+        for i in range(decl_idx + 1, len(spans)):
+            txt = span_text(spans[i]).strip()
+            if re.match(r"Proof\b", txt):
+                proof_start_idx = i
+                break
+
+        if proof_start_idx is None:
+            return []
+
+        # Find Qed/Defined/Admitted/Abort span after Proof.
+        for i in range(proof_start_idx + 1, len(spans)):
+            txt = span_text(spans[i]).strip()
+            if re.match(r"(Qed|Defined|Admitted|Abort)\s*\.", txt):
+                proof_end_idx = i
+                break
+
+        if proof_end_idx is None:
+            return []
+
+        # Extract tactic text from spans between Proof. and Qed.
+        tactics = []
+        for i in range(proof_start_idx + 1, proof_end_idx):
+            txt = span_text(spans[i]).strip()
+            if txt:
+                tactics.append(txt)
+
+        return tactics
+
+    def _extract_tactics_regex(self, text: str, proof_name: str) -> list[str]:
+        """Fallback: extract tactic sentences using regex splitting.
+
+        Used when coq/getDocument is unavailable or returns no spans.
+        """
+        decl_pattern = re.compile(
+            rf"\b(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|"
+            rf"Fixpoint|CoFixpoint|Example|Let|Instance)\s+{re.escape(proof_name)}\b"
+        )
+        decl_match = decl_pattern.search(text)
+        if decl_match is None:
+            return []
+
+        proof_kw_match = re.search(r"\bProof\s*\.", text[decl_match.start():])
+        if proof_kw_match is None:
+            return []
+        proof_kw_end = decl_match.start() + proof_kw_match.end()
+
+        end_match = re.search(
+            r"\b(Qed|Defined|Admitted|Abort)\s*\.", text[proof_kw_end:]
+        )
+        if end_match:
+            body_text = text[proof_kw_end:proof_kw_end + end_match.start()].strip()
+        else:
+            body_text = ""
+
+        if not body_text:
+            return []
+        tactics = _TACTIC_RE.findall(body_text)
+        return [t.strip() for t in tactics if t.strip()]
+
+    # ------------------------------------------------------------------
     # CoqBackend protocol (§4.1)
     # ------------------------------------------------------------------
 
@@ -286,33 +420,18 @@ class CoqProofBackend:
         path = Path(self._file_path)  # type: ignore[arg-type]
         text = path.read_text(encoding="utf-8")
 
-        # Find the proof declaration
-        decl_pattern = re.compile(
-            rf"\b(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|"
-            rf"Fixpoint|CoFixpoint|Example|Let|Instance)\s+{re.escape(proof_name)}\b"
-        )
-        decl_match = decl_pattern.search(text)
-        if decl_match is None:
-            raise ValueError(f"Proof not found: {proof_name}")
-
-        # Find "Proof." after the declaration
-        proof_kw_match = re.search(r"\bProof\s*\.", text[decl_match.start():])
-        if proof_kw_match is None:
-            raise ValueError(f"No 'Proof.' found for {proof_name}")
-        proof_kw_end = decl_match.start() + proof_kw_match.end()
-
-        # Find Qed/Defined/Admitted/Abort after Proof.
-        end_match = re.search(r"\b(Qed|Defined|Admitted|Abort)\s*\.", text[proof_kw_end:])
-        if end_match:
-            body_text = text[proof_kw_end:proof_kw_end + end_match.start()].strip()
+        # Try document model first for exact tactic boundaries
+        spans = await self._get_document_sentences()
+        if spans:
+            doc_tactics = self._extract_tactics_from_spans(text, spans, proof_name)
+            if doc_tactics:
+                self.original_script = doc_tactics
+            else:
+                # Document model didn't find the proof — fall back to regex
+                self.original_script = self._extract_tactics_regex(text, proof_name)
         else:
-            body_text = ""
-
-        # Extract original tactic script from body
-        self.original_script = []
-        if body_text:
-            tactics = _TACTIC_RE.findall(body_text)
-            self.original_script = [t.strip() for t in tactics if t.strip()]
+            # No document model available — fall back to regex
+            self.original_script = self._extract_tactics_regex(text, proof_name)
 
         # Use petanque/start to get the initial proof state
         try:
@@ -478,7 +597,10 @@ class CoqProofBackend:
 # ------------------------------------------------------------------
 
 
-async def create_coq_backend(file_path: str) -> CoqProofBackend:
+async def create_coq_backend(
+    file_path: str,
+    watchdog_timeout: Optional[float] = None,
+) -> CoqProofBackend:
     """Spawn a coq-lsp process and return a connected CoqProofBackend.
 
     Per spec §4.2: the factory is the only way to create backend instances.
@@ -495,7 +617,7 @@ async def create_coq_backend(file_path: str) -> CoqProofBackend:
             f"coq-lsp not found on PATH: {exc}"
         ) from exc
 
-    backend = CoqProofBackend(proc)
+    backend = CoqProofBackend(proc, watchdog_timeout=watchdog_timeout)
 
     # LSP initialize handshake
     await backend._send_request(

@@ -10,13 +10,18 @@ Coq projects (.v)
   ▼
 Proof traces (JSONL)
   │  poule validate-training-data
+  ▼
+Validated training data
+  │  poule build-vocabulary
+  ▼
+Closed vocabulary (coq-vocabulary.json)
   │  poule train
   ▼
 PyTorch checkpoint (.pt)
   │  poule evaluate / poule compare
   │  poule quantize
   ▼
-INT8 ONNX model (.onnx)
+INT8 ONNX model (.onnx) + vocabulary
   │  publish via GitHub Release
   │  baked into Docker image / downloaded by user
   ▼
@@ -69,20 +74,42 @@ The validator reports:
 
 The training pipeline constructs pairs by pairing the goals from step k-1 (state before the tactic) with the global premises from step k (filtering out local hypotheses). A minimum of 10,000 pairs is needed; the stdlib alone provides ~15K.
 
-## Step 3: Train the model
+## Step 3: Build the vocabulary
+
+Build a closed-vocabulary tokenizer that assigns every Coq identifier its own token ID. This replaces CodeBERT's generic RoBERTa tokenizer, which fragments identifiers like `Nat.add_comm` into 5 subword tokens. With a closed vocabulary, every identifier is exactly 1 token.
+
+```bash
+# Build vocabulary from search index + extracted training data
+poule build-vocabulary \
+  --db index.db \
+  --data training-data.jsonl \
+  --output coq-vocabulary.json
+```
+
+The vocabulary is constructed from two sources:
+- **Search index** (`index.db`) — all fully-qualified declaration names from the indexed libraries
+- **Serialized proof states** from the training data — hypothesis variable names and syntax tokens
+
+The resulting vocabulary contains ~15,500 tokens: ~15,000 library identifiers, ~200 variable names, ~200 syntax/keyword/tactic tokens, ~80 Unicode math symbols, and 5 special tokens (`[PAD]`, `[UNK]`, `[CLS]`, `[SEP]`, `[MASK]`). NFC Unicode normalization is applied before tokenization.
+
+At inference time, tokenization is a whitespace split followed by O(1) dictionary lookup per token — no regex, no subword search. See `coq-vocabulary.md` for the full design rationale.
+
+## Step 4: Train the model
 
 Train a bi-encoder retrieval model from the extracted data. Requires a GPU (any 16GB+ for stdlib-only; 24GB recommended for larger corpora).
 
 ```bash
-# Train from scratch on stdlib + MathComp
+# Train with closed vocabulary
 poule train \
   --data stdlib.jsonl mathcomp.jsonl \
+  --vocabulary coq-vocabulary.json \
   --db index.db \
   --output model.pt
 
 # With custom hyperparameters
 poule train \
   --data training-data.jsonl \
+  --vocabulary coq-vocabulary.json \
   --db index.db \
   --output model.pt \
   --batch-size 128 \
@@ -92,6 +119,8 @@ poule train \
 
 Training details:
 - **Architecture**: ~100M parameter bi-encoder (shared-weight CodeBERT-class encoder, 768-dim embeddings, mean pooling)
+- **Vocabulary**: Closed vocabulary (~15,500 tokens) from `coq-vocabulary.json`
+- **Embedding initialization**: Tokens overlapping with CodeBERT's vocabulary (digits, punctuation, common English words) retain pretrained embeddings; Coq-specific tokens initialized randomly (σ=0.02). CodeBERT's 12 transformer layers keep their full pretrained weights
 - **Loss**: Masked contrastive (InfoNCE) with temperature τ=0.05. Shared premises across proof states in a batch are masked to prevent false negatives
 - **Hard negatives**: 3 per proof state, sampled from accessible-but-unused premises (falls back to random corpus sampling if dependency graph unavailable)
 - **Split**: Deterministic file-level split — position % 10 == 8 → validation, == 9 → test, rest → training. Prevents data leakage from related proofs in the same file
@@ -103,7 +132,7 @@ Training details:
 | 50K pairs (stdlib + MathComp) | 24GB GPU (A6000/4090) | ~8 hours | $50–100 |
 | 100K+ pairs (multi-project) | 24GB GPU (A6000/4090) | ~16 hours | $100–200 |
 
-## Step 4: Evaluate the model
+## Step 5: Evaluate the model
 
 Measure retrieval quality on the held-out test set.
 
@@ -123,7 +152,7 @@ Deployment gates (advisory):
 - Neural Recall@32 ≥ 50%
 - Union relative improvement ≥ 15% over symbolic-only
 
-## Step 5: Quantize for deployment
+## Step 6: Quantize for deployment
 
 Convert the PyTorch checkpoint to INT8 ONNX for CPU inference.
 
@@ -138,15 +167,17 @@ The quantization pipeline:
 
 Result: ~100MB ONNX file (vs. ~400MB full precision), <10ms per encoding on CPU.
 
-## Step 6: Publish the model
+## Step 7: Publish the model
 
-Include the ONNX model in the `index-merged` GitHub Release:
+Include the ONNX model and vocabulary in the `index-merged` GitHub Release:
 
 ```bash
-./scripts/publish-indexes.sh --model neural-premise-selector.onnx
+./scripts/publish-indexes.sh \
+  --model neural-premise-selector.onnx \
+  --vocabulary coq-vocabulary.json
 ```
 
-This uploads the model alongside the merged search index. The Docker image build downloads it and places it at the well-known model path (`~/.local/share/poule/models/neural-premise-selector.onnx`).
+This uploads the model and vocabulary alongside the merged search index. The Docker image build downloads them and places them at the well-known paths (`~/.local/share/poule/models/neural-premise-selector.onnx` and `~/.local/share/poule/models/coq-vocabulary.json`).
 
 Users can also download the model separately:
 
@@ -154,67 +185,61 @@ Users can also download the model separately:
 poule-dev uv run python -m poule.cli download-index --output ~/data/index.db --include-model
 ```
 
-## Step 7: Rebuild the index with embeddings
+## Step 8: Rebuild the index with embeddings
 
-When the search index is rebuilt with a model checkpoint present, an embedding pass runs automatically after the standard indexing pass:
+When the search index is rebuilt with a model checkpoint and vocabulary present, an embedding pass runs automatically after the standard indexing pass:
 
-1. Load the INT8 ONNX encoder
+1. Load the INT8 ONNX encoder and vocabulary
 2. Encode each declaration's statement → 768-dim vector
 3. Batch-insert into the `embeddings` table (batches of 64, ~500ms each)
 4. Write the model hash to `index_meta` for consistency checking
 
 For 50K declarations on CPU: ~7 minutes. The embedding pass is atomic — failure discards the entire index.
 
-At server startup, embeddings are loaded into a contiguous in-memory matrix (~150MB for 50K declarations). The neural channel is available when: (1) the model checkpoint exists, (2) the `embeddings` table has rows, and (3) the stored model hash matches the current checkpoint. If any condition fails, search operates with symbolic channels only — no error, no degradation.
-
-## Fine-tuning on a user project
-
-Users with large custom projects can fine-tune the pre-trained model on their own proof traces:
-
-```bash
-# 1. Extract the project's proofs
-poule extract /path/to/my-project --output my-project.jsonl
-
-# 2. Fine-tune from the pre-trained checkpoint
-poule fine-tune \
-  --checkpoint neural-premise-selector.pt \
-  --data my-project.jsonl \
-  --output fine-tuned.pt \
-
-# 3. Quantize and deploy
-poule quantize --checkpoint fine-tuned.pt --output neural-premise-selector.onnx
-```
-
-Fine-tuning uses a lower learning rate (5e-6 vs. 2e-5) and fewer epochs (10 vs. 20) to avoid catastrophic forgetting. On a consumer GPU with 1K–10K project-specific proofs, fine-tuning completes in under 4 hours.
+At server startup, embeddings are loaded into a contiguous in-memory matrix (~150MB for 50K declarations). The neural channel is available when: (1) the model checkpoint exists, (2) the vocabulary file exists, (3) the `embeddings` table has rows, and (4) the stored model hash matches the current checkpoint. If any condition fails, search operates with symbolic channels only — no error, no degradation.
 
 ## End-to-end example: training the canonical model
 
 This is the full workflow for producing the pre-trained model that ships with the tool:
 
 ```bash
+COQ_LIBS="/opt/opam/coq/lib/coq/user-contrib"
+
 # 1. Extract training data from all supported libraries
 poule extract \
-  /opt/opam/coq/lib/coq/user-contrib/Stdlib \
-  /opt/opam/coq/lib/coq/user-contrib/mathcomp \
-  /opt/opam/coq/lib/coq/user-contrib/stdpp \
-  /opt/opam/coq/lib/coq/user-contrib/Flocq \
-  /opt/opam/coq/lib/coq/user-contrib/Coquelicot \
-  /opt/opam/coq/lib/coq/user-contrib/Interval \
+  $COQ_LIBS/Stdlib \
+  $COQ_LIBS/mathcomp \
+  $COQ_LIBS/stdpp \
+  $COQ_LIBS/Flocq \
+  $COQ_LIBS/Coquelicot \
+  $COQ_LIBS/Interval \
   --output training-data.jsonl
 
 # 2. Validate
 poule validate-training-data training-data.jsonl
 
-# 3. Train (on a GPU machine)
-poule train --data training-data.jsonl --db index.db --output model.pt
+# 3. Build vocabulary (scans index + training data, runs instantly)
+poule build-vocabulary \
+  --db index.db \
+  --data training-data.jsonl \
+  --output coq-vocabulary.json
 
-# 4. Evaluate
+# 4. Train model (on a GPU machine)
+poule train \
+  --data training-data.jsonl \
+  --vocabulary coq-vocabulary.json \
+  --db index.db \
+  --output model.pt
+
+# 5. Evaluate
 poule evaluate --checkpoint model.pt --test-data training-data.jsonl --db index.db
 poule compare  --checkpoint model.pt --test-data training-data.jsonl --db index.db
 
-# 5. Quantize
+# 6. Quantize
 poule quantize --checkpoint model.pt --output neural-premise-selector.onnx
 
-# 6. Publish (includes model in the GitHub Release)
-./scripts/publish-indexes.sh --model neural-premise-selector.onnx
+# 7. Publish (includes model + vocabulary in the GitHub Release)
+./scripts/publish-indexes.sh \
+  --model neural-premise-selector.onnx \
+  --vocabulary coq-vocabulary.json
 ```

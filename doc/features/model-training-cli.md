@@ -16,7 +16,8 @@ Neural premise selection requires a trained bi-encoder model. Training requires 
 
 A set of CLI commands that handle the full training lifecycle:
 
-- **Train**: Given extracted proof trace data, train a bi-encoder retrieval model from scratch or from a pre-trained checkpoint
+- **Build-vocabulary**: Given a search index and extracted training data, build a closed-vocabulary tokenizer that maps every Coq identifier, syntax token, and Unicode symbol to a unique integer ID
+- **Train**: Given extracted proof trace data and a vocabulary, train a bi-encoder retrieval model from scratch or from a pre-trained checkpoint
 - **Evaluate**: Given a trained model and a held-out test set, compute retrieval quality metrics (Recall@k, MRR) and comparison statistics (neural vs. symbolic vs. union)
 - **Fine-tune**: Given a pre-trained model and project-specific extracted data, adapt the model to a specific codebase
 - **Validate**: Given extracted proof trace data, check for completeness and consistency before committing to a training run
@@ -64,6 +65,12 @@ Training a retrieval model costs GPU hours and real money. Validating the input 
 
 A neural model that achieves high recall but retrieves the same results as existing channels adds latency without value. The union metric captures complementary value — results the neural channel finds that no other channel does. This is what justifies adding the neural channel to the pipeline.
 
+### Why a closed vocabulary rather than subword tokenization
+
+CodeBERT's generic BPE tokenizer fragments Coq identifiers (`Nat.add_comm` → 5 tokens, `ssreflect` → 3 tokens), wasting the 512-token context window and diluting embeddings. Unlike natural language, Coq's vocabulary is closed: ~15,000 library identifiers, ~200 variable names, ~200 syntax tokens, ~80 Unicode symbols — all known at index time. A closed-vocabulary tokenizer assigns every identifier exactly 1 token via O(1) dictionary lookup, eliminating subword complexity. CFR (Zhu et al., 2025) demonstrated +33% Recall@5 from domain-specific tokenization alone — the single largest gain from any individual design decision.
+
+The vocabulary is a derived artifact rebuilt whenever the search index is rebuilt, so it automatically tracks library updates. See `coq-vocabulary.md` for the full design rationale.
+
 ### Why fine-tuning rather than retraining
 
 Fine-tuning from a pre-trained checkpoint on 1K–10K project-specific proofs is vastly more data-efficient and compute-efficient than training from scratch. The pre-trained model already understands Coq's type theory, standard library conventions, and MathComp idioms; fine-tuning adapts it to the user's project-specific definitions and proof patterns. This follows the transfer learning pattern validated by PROOFWALA (cross-system transfer) and standard practice in NLP retrieval.
@@ -71,6 +78,18 @@ Fine-tuning from a pre-trained checkpoint on 1K–10K project-specific proofs is
 ---
 
 ## Acceptance Criteria
+
+### Build a Closed Vocabulary from the Search Index and Training Data
+
+**Priority:** P0
+**Stability:** Stable
+**Traces to:** R5-P0-14, R5-P0-15
+
+- GIVEN a search index database and one or more JSON Lines extraction files WHEN the build-vocabulary command is run THEN a JSON file mapping tokens to sequential integer IDs is produced at the specified output path
+- GIVEN the vocabulary output WHEN inspected THEN it contains the 5 special tokens (`[PAD]`, `[UNK]`, `[CLS]`, `[SEP]`, `[MASK]`) at IDs 0–4, followed by fixed token sets (punctuation, Unicode symbols, Greek letters), followed by identifiers extracted from the index and training data
+- GIVEN the search index contains fully-qualified declaration names WHEN the vocabulary is built THEN every declaration name in the index appears as a vocabulary entry
+- GIVEN serialized proof states in the training data WHEN the vocabulary is built THEN hypothesis variable names and syntax tokens that appear in the proof states are included
+- GIVEN the vocabulary WHEN used to tokenize a held-out proof state THEN the `[UNK]` rate is < 1%
 
 ### Train a Retrieval Model from Extracted Data
 

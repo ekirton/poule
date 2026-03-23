@@ -12,7 +12,7 @@ Define the CLI layer that accepts user commands from the terminal, validates inp
 
 ## 2. Scope
 
-**In scope**: 7 search subcommands, 1 proof replay subcommand, 1 distribution subcommand, 3 extraction subcommands, 6 neural subcommands, shared option handling, input validation, human-readable and JSON output formatting, index state checks, error reporting.
+**In scope**: 7 search subcommands, 1 proof replay subcommand, 1 distribution subcommand, 3 extraction subcommands, 7 neural subcommands, shared option handling, input validation, human-readable and JSON output formatting, index state checks, error reporting.
 
 **Out of scope**: Search logic (owned by pipeline/channels), storage management (owned by storage), Coq expression parsing (owned by pipeline), MCP protocol handling (owned by MCP server), extraction logic (owned by extraction-campaign), output serialization (owned by extraction-output), download client internals (owned by prebuilt-distribution).
 
@@ -298,29 +298,62 @@ JSON (`--json`): a single QualityReport JSON object (compact format).
 > **When** `quality-report extraction.jsonl --json` is run
 > **Then** a QualityReport JSON object is printed to stdout and exit code is 0
 
-### 4.10 train(traces, db, output, hyperparams)
+### 4.10 build-vocabulary(db, data, output)
 
-- REQUIRES: `traces` is a non-empty list of paths to JSON Lines extraction output files. `db` points to a valid index database. `output` is a writable path.
-- ENSURES: Validates training data. Loads dataset with train/val/test split. Trains a bi-encoder model. Saves the best checkpoint to `output`. Prints training progress (epoch, loss, validation R@32) to stderr. Exits with code 0.
+- REQUIRES: `db` points to a valid index database. `data` is a non-empty list of paths to JSON Lines extraction output files. `output` is a writable path.
+- ENSURES: Builds a closed vocabulary from the search index and training data. Writes a JSON file mapping tokens to integer IDs to `output`. Prints a VocabularyReport summary to stderr. Exits with code 0.
+- Delegates to: `VocabularyBuilder.build`.
+
+| Option | Type | Default | Validation |
+|--------|------|---------|------------|
+| `--db` | path | required | File must exist |
+| `--data` | path(s) | required | Each file must exist |
+| `--output` | path | required | Parent directory must exist |
+
+**Output (stderr):**
+
+```
+Vocabulary built.
+  Total tokens:       15,425
+  Special tokens:          5
+  Fixed tokens:          120
+  Index declarations: 15,000
+  Training data:         300
+  Output: coq-vocabulary.json
+```
+
+> **Given** a valid index database and extraction files
+> **When** `build-vocabulary --db index.db --data stdlib.jsonl --output coq-vocabulary.json` is run
+> **Then** a vocabulary JSON file is written, a summary is printed to stderr, and exit code is 0
+
+> **Given** an index database with no declarations
+> **When** `build-vocabulary --db empty.db --data stdlib.jsonl --output coq-vocabulary.json` is run
+> **Then** `"No declarations found in index database"` is printed to stderr and exit code is 1
+
+### 4.11 train(traces, vocabulary, db, output, hyperparams)
+
+- REQUIRES: `traces` is a non-empty list of paths to JSON Lines extraction output files. `vocabulary` points to a valid vocabulary JSON file. `db` points to a valid index database. `output` is a writable path.
+- ENSURES: Validates training data. Loads dataset with train/val/test split. Trains a bi-encoder model using the closed vocabulary. Saves the best checkpoint to `output`. Prints training progress (epoch, loss, validation R@32) to stderr. Exits with code 0.
 - Delegates to: `TrainingDataValidator.validate`, `TrainingDataLoader.load`, `BiEncoderTrainer.train`.
 
 | Option | Type | Default | Validation |
 |--------|------|---------|------------|
+| `--vocabulary` | path | required | File must exist |
 | `--db` | path | required | File must exist |
 | `--output` | path | required | Parent directory must exist |
 | `--epochs` | integer | 20 | Must be positive |
 | `--batch-size` | integer | 256 | Must be positive |
 | `--lr` | float | 2e-5 | Must be positive |
 
-> **Given** valid extraction files and index database
-> **When** `train stdlib.jsonl --db index.db --output model.pt` is run
+> **Given** valid extraction files, vocabulary, and index database
+> **When** `train stdlib.jsonl --vocabulary coq-vocabulary.json --db index.db --output model.pt` is run
 > **Then** training progress is printed to stderr, model checkpoint is saved, exit code is 0
 
 > **Given** an extraction file with < 1,000 valid training pairs
-> **When** `train small.jsonl --db index.db --output model.pt` is run
+> **When** `train small.jsonl --vocabulary coq-vocabulary.json --db index.db --output model.pt` is run
 > **Then** `"Insufficient training data"` is printed to stderr and exit code is 1
 
-### 4.11 fine-tune(checkpoint, data, db, output, hyperparams)
+### 4.12 fine-tune(checkpoint, data, db, output, hyperparams)
 
 - REQUIRES: `checkpoint` points to a valid training checkpoint. `data` points to a JSON Lines extraction file. `db` points to a valid index database. `output` is a writable path.
 - ENSURES: Fine-tunes the pre-trained model on the project data. Saves the fine-tuned checkpoint. Exits with code 0.
@@ -335,7 +368,7 @@ JSON (`--json`): a single QualityReport JSON object (compact format).
 | `--epochs` | integer | 10 | Must be positive |
 | `--lr` | float | 5e-6 | Must be positive |
 
-### 4.12 evaluate(checkpoint, test_data, db)
+### 4.13 evaluate(checkpoint, test_data, db)
 
 - REQUIRES: `checkpoint` points to a valid model checkpoint. `test_data` points to a JSON Lines extraction file. `db` points to a valid index database.
 - ENSURES: Prints an EvaluationReport (R@1, R@10, R@32, MRR, test count, mean latency) to stdout. Prints a warning to stderr if R@32 < 50%. Exits with code 0.
@@ -352,7 +385,7 @@ JSON (`--json`): a single QualityReport JSON object (compact format).
 > **When** `evaluate --checkpoint model.pt --test-data test.jsonl --db index.db` is run
 > **Then** retrieval metrics are printed to stdout and exit code is 0
 
-### 4.13 compare(checkpoint, test_data, db)
+### 4.14 compare(checkpoint, test_data, db)
 
 - REQUIRES: Same as `evaluate`.
 - ENSURES: Prints a ComparisonReport (neural R@32, symbolic R@32, union R@32, relative improvement, overlap, exclusivity) to stdout. Prints a warning to stderr if relative improvement < 15%. Exits with code 0.
@@ -365,7 +398,7 @@ JSON (`--json`): a single QualityReport JSON object (compact format).
 | `--db` | path | required | File must exist |
 | `--json` | flag | false | — |
 
-### 4.14 quantize(checkpoint, output)
+### 4.15 quantize(checkpoint, output)
 
 - REQUIRES: `checkpoint` points to a valid PyTorch training checkpoint. `output` is a writable path.
 - ENSURES: Exports to ONNX, applies INT8 quantization, validates quality (max cosine distance < 0.02), writes ONNX model to `output`. Exits with code 0.
@@ -384,7 +417,7 @@ JSON (`--json`): a single QualityReport JSON object (compact format).
 > **When** `quantize --checkpoint model.pt --output model.onnx` is run
 > **Then** the max cosine distance is printed to stderr and exit code is 1
 
-### 4.15 validate-training-data(traces)
+### 4.16 validate-training-data(traces)
 
 - REQUIRES: `traces` is a non-empty list of paths to JSON Lines extraction output files.
 - ENSURES: Prints a ValidationReport to stdout. Exits with code 0 (even when warnings are present — validation warnings are informational, not failures).
@@ -394,7 +427,7 @@ JSON (`--json`): a single QualityReport JSON object (compact format).
 > **When** `validate-training-data stdlib.jsonl mathcomp.jsonl` is run
 > **Then** a validation report is printed to stdout and exit code is 0
 
-### 4.16 download-index(output, include_model, model_dir, force)
+### 4.17 download-index(output, include_model, model_dir, force)
 
 Specified in [prebuilt-distribution.md](prebuilt-distribution.md) §4.7. This subcommand downloads prebuilt index databases and model checkpoints from GitHub Releases. It does not require `--db` or any index state checks — it produces the index rather than consuming it.
 
@@ -422,7 +455,9 @@ Specified in [prebuilt-distribution.md](prebuilt-distribution.md) §4.7. This su
 | Insufficient training data (train, fine-tune) | 1 | `Insufficient training data: {n} pairs found, minimum 1,000 required.` |
 | GPU out of memory (train, fine-tune) | 1 | `GPU out of memory. Try reducing --batch-size (current: {n}).` |
 | Quantization validation failure (quantize) | 1 | `Quantization quality check failed: max cosine distance {d:.4f} >= 0.02 threshold.` |
-| Training data file not found (train, fine-tune, validate-training-data) | 1 | `Training data file not found: {path}` |
+| Training data file not found (train, fine-tune, validate-training-data, build-vocabulary) | 1 | `Training data file not found: {path}` |
+| No declarations in index (build-vocabulary) | 1 | `No declarations found in index database.` |
+| Vocabulary file not found (train) | 1 | `Vocabulary file not found: {path}` |
 | Output file exists, no --force (download-index) | 1 | `{path} already exists. Use --force to overwrite.` |
 | No matching release (download-index) | 1 | `No index release found on GitHub.` |
 | Checksum mismatch (download-index) | 1 | `Checksum verification failed for {label}. Expected {expected}, got {actual}. File deleted.` |
@@ -564,6 +599,21 @@ $ poule quality-report stdlib.jsonl --json
 {"premise_coverage":0.87,"proof_length_distribution":{"min":1,"max":342,"mean":12.4,"median":8.0,"p25":4.0,"p75":16.0,"p95":45.0},"tactic_vocabulary":[{"tactic":"apply","count":24500}],"per_project":[{"project_id":"coq-stdlib","premise_coverage":0.89,"proof_length_distribution":{"min":1,"max":200,"mean":10.2,"median":7.0,"p25":3.0,"p75":14.0,"p95":38.0},"theorem_count":4500}]}
 ```
 
+### build-vocabulary
+
+```
+$ poule build-vocabulary --db index.db --data stdlib.jsonl --output coq-vocabulary.json
+Vocabulary built.
+  Total tokens:       15,425
+  Special tokens:          5
+  Fixed tokens:          120
+  Index declarations: 15,000
+  Training data:         300
+  Output: coq-vocabulary.json
+$ echo $?
+0
+```
+
 ### train (success)
 
 ```
@@ -632,6 +682,6 @@ Top premises:
 - For proof replay: use `SessionManager` from `poule.session.manager`, `serialize_proof_trace` and `serialize_premise_annotation` from `poule.serialization.serialize`.
 - For extraction: use `ExtractionCampaignOrchestrator` from `poule.extraction.campaign`, `extract_dependency_graph` from `poule.extraction.dependency_graph`, `generate_quality_report` from `poule.extraction.reporting`.
 - Use `asyncio.run()` to bridge Click's sync execution model to the async `SessionManager` API.
-- For neural subcommands: use `TrainingDataValidator`, `TrainingDataLoader`, `BiEncoderTrainer`, `RetrievalEvaluator`, `ModelQuantizer` from `poule.neural.training`.
+- For neural subcommands: use `VocabularyBuilder`, `TrainingDataValidator`, `TrainingDataLoader`, `BiEncoderTrainer`, `RetrievalEvaluator`, `ModelQuantizer` from `poule.neural.training`.
 - Neural subcommands do not require `PipelineContext` (except `compare`, which needs the symbolic retrieval pipeline for comparison).
 - Package location: `src/poule/cli/`.

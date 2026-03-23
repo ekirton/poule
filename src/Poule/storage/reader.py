@@ -290,6 +290,26 @@ class IndexReader:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_provable_declarations(self, module_prefix: str | None = None) -> list[dict]:
+        """Return declarations with kind in {lemma, theorem, instance, definition}.
+
+        Results are ordered by (module, name) for deterministic enumeration.
+        When *module_prefix* is given, only declarations whose module starts
+        with that prefix are returned.
+        """
+        self._check_open()
+        sql = (
+            "SELECT id, name, module, kind FROM declarations "
+            "WHERE kind IN ('lemma', 'theorem', 'instance', 'definition')"
+        )
+        params: list = []
+        if module_prefix is not None:
+            sql += " AND module LIKE ?"
+            params.append(module_prefix + "%")
+        sql += " ORDER BY module, name"
+        rows = self._conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
     def list_modules(self, prefix: str) -> list[dict]:
         self._check_open()
         rows = self._conn.execute(
