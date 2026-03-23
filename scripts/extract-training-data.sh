@@ -92,6 +92,20 @@ if [[ ! -d "${LIB_PATHS[stdlib]}" ]]; then
     LIB_PATHS[stdlib]="${COQ_LIB}/theories"
 fi
 
+# --- Map library identifiers to module prefixes ---
+# These prefixes are stripped from fully-qualified module paths when
+# converting to relative source file paths (e.g., Coq.Arith.PeanoNat → Arith/PeanoNat.v).
+# They also filter the index to only the relevant library's declarations.
+
+declare -A MODULE_PREFIXES=(
+    [stdlib]="Coq."
+    [mathcomp]="mathcomp."
+    [stdpp]="stdpp."
+    [flocq]="Flocq."
+    [coquelicot]="Coquelicot."
+    [coqinterval]="Interval."
+)
+
 # --- Map library identifiers to opam package names ---
 
 declare -A OPAM_PACKAGES=(
@@ -203,7 +217,8 @@ for lib in "${LIB_ARRAY[@]}"; do
     fi
 
     echo "Extracting proof traces for ${lib}..." >&2
-    if poule extract "$lib_path" --output "$output_file" --watchdog-timeout "$WATCHDOG_TIMEOUT" --index-db "$INDEX_DB"; then
+    module_prefix="${MODULE_PREFIXES[$lib]:-}"
+    if poule extract "$lib_path" --output "$output_file" --watchdog-timeout "$WATCHDOG_TIMEOUT" --index-db "$INDEX_DB" --module-prefix "$module_prefix"; then
         RESULTS[$lib]="extracted"
         EXTRACTED=$((EXTRACTED + 1))
     else

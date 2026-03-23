@@ -489,6 +489,46 @@ class TestExtractSingleProofFailureModes:
         assert isinstance(result, ExtractionError)
         assert result.error_kind == "unknown"
 
+    def test_step_out_of_range_returns_no_proof_body(self):
+        """STEP_OUT_OF_RANGE from extract_trace (empty original_script)
+        maps to error_kind='no_proof_body' — expected for definitions
+        without proof bodies (§4.2 line 121)."""
+        from Poule.extraction.campaign import extract_single_proof
+        from Poule.extraction.types import ExtractionError
+        from Poule.session.errors import STEP_OUT_OF_RANGE, SessionError
+
+        sm = _make_mock_session_manager()
+        sm.extract_trace = AsyncMock(
+            side_effect=SessionError(STEP_OUT_OF_RANGE, "No original script to trace"),
+        )
+
+        result = asyncio.run(extract_single_proof(
+            sm, "proj", "file.v", "some_definition",
+            project_path="/path/to/proj",
+        ))
+
+        assert isinstance(result, ExtractionError)
+        assert result.error_kind == "no_proof_body"
+
+    def test_proof_not_found_returns_no_proof_body(self):
+        """PROOF_NOT_FOUND from create_session maps to
+        error_kind='no_proof_body' (§4.2 line 121)."""
+        from Poule.extraction.campaign import extract_single_proof
+        from Poule.extraction.types import ExtractionError
+        from Poule.session.errors import PROOF_NOT_FOUND, SessionError
+
+        sm = _make_mock_session_manager(
+            create_raises=SessionError(PROOF_NOT_FOUND, "Proof not found: foo"),
+        )
+
+        result = asyncio.run(extract_single_proof(
+            sm, "proj", "file.v", "foo",
+            project_path="/path/to/proj",
+        ))
+
+        assert isinstance(result, ExtractionError)
+        assert result.error_kind == "no_proof_body"
+
 
 class TestExtractSingleProofPartialRecovery:
     """When extract_trace returns a partial trace, extract_single_proof

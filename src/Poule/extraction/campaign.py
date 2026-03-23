@@ -29,6 +29,7 @@ from Poule.session.errors import (
     BACKEND_CRASHED,
     FILE_NOT_FOUND,
     PROOF_NOT_FOUND,
+    STEP_OUT_OF_RANGE,
     TACTIC_ERROR,
     SessionError,
 )
@@ -261,6 +262,7 @@ _ERROR_KIND_MAP = {
     TACTIC_ERROR: "tactic_failure",
     FILE_NOT_FOUND: "load_failure",
     PROOF_NOT_FOUND: "no_proof_body",
+    STEP_OUT_OF_RANGE: "no_proof_body",
 }
 
 
