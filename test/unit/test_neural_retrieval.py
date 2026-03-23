@@ -467,3 +467,115 @@ class TestNeuralErrors:
     def test_errors_are_distinct(self):
         assert not issubclass(ModelNotFoundError, ModelLoadError)
         assert not issubclass(ModelLoadError, ModelNotFoundError)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 9. NeuralEncoder with CoqTokenizer
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _write_vocab_file(path, tokens):
+    """Write a minimal vocabulary JSON file."""
+    import json
+
+    vocab = {
+        "[PAD]": 0, "[UNK]": 1, "[CLS]": 2, "[SEP]": 3, "[MASK]": 4,
+    }
+    next_id = 5
+    for t in tokens:
+        if t not in vocab:
+            vocab[t] = next_id
+            next_id += 1
+    path.write_text(json.dumps(vocab), encoding="utf-8")
+
+
+class TestNeuralEncoderWithVocabulary:
+    """spec §4.1: NeuralEncoder.load accepts vocabulary_path for CoqTokenizer."""
+
+    def test_load_with_vocabulary_path_stores_coq_tokenizer(self, tmp_path):
+        """When vocabulary_path is provided, the encoder uses CoqTokenizer."""
+        from Poule.neural.training.vocabulary import CoqTokenizer
+
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab_file(vocab_path, ["nat", ":", "forall"])
+
+        # We can't construct a full encoder without ONNX, but we can verify
+        # the constructor accepts a CoqTokenizer
+        tokenizer = CoqTokenizer(vocab_path)
+        enc = NeuralEncoder(
+            session=Mock(),
+            tokenizer=tokenizer,
+            file_hash="abc123",
+        )
+        assert isinstance(enc._tokenizer, CoqTokenizer)
+
+    def test_encode_with_coq_tokenizer(self, tmp_path):
+        """NeuralEncoder.encode works with CoqTokenizer (whitespace split)."""
+        from Poule.neural.training.vocabulary import CoqTokenizer
+
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab_file(vocab_path, ["forall", "n", ":", "nat"])
+        tokenizer = CoqTokenizer(vocab_path)
+
+        # Mock ONNX session that returns a plausible embedding
+        mock_session = Mock()
+        # ONNX output: [1, seq_len, 768] for last_hidden_state
+        def run_side_effect(output_names, inputs):
+            seq_len = inputs["input_ids"].shape[1]
+            return [np.random.randn(1, seq_len, 768).astype(np.float32)]
+
+        mock_session.run.side_effect = run_side_effect
+
+        enc = NeuralEncoder(
+            session=mock_session,
+            tokenizer=tokenizer,
+            file_hash="abc123",
+        )
+        result = enc.encode("forall n : nat")
+        assert result.shape == (768,)
+        assert result.dtype == np.float32
+        # L2 normalized
+        assert abs(np.linalg.norm(result) - 1.0) < 1e-5
+
+    def test_encode_with_coq_tokenizer_passes_correct_shapes(self, tmp_path):
+        """CoqTokenizer produces integer arrays for ONNX session."""
+        from Poule.neural.training.vocabulary import CoqTokenizer
+
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab_file(vocab_path, ["a", "b"])
+        tokenizer = CoqTokenizer(vocab_path)
+
+        captured_inputs = {}
+
+        def run_side_effect(output_names, inputs):
+            captured_inputs.update(inputs)
+            seq_len = inputs["input_ids"].shape[1]
+            return [np.ones((1, seq_len, 768), dtype=np.float32)]
+
+        mock_session = Mock()
+        mock_session.run.side_effect = run_side_effect
+
+        enc = NeuralEncoder(
+            session=mock_session,
+            tokenizer=tokenizer,
+            file_hash="test",
+        )
+        enc.encode("a b")
+
+        # input_ids should be int, shape (1, seq_len)
+        assert captured_inputs["input_ids"].dtype in (np.int64, np.int32)
+        assert captured_inputs["input_ids"].ndim == 2
+        assert captured_inputs["input_ids"].shape[0] == 1
+        # attention_mask same shape
+        assert captured_inputs["attention_mask"].shape == captured_inputs["input_ids"].shape
+
+    def test_load_with_nonexistent_vocabulary_raises(self, tmp_path):
+        """spec §4.1: FileNotFoundError when vocabulary file does not exist."""
+        # Create a dummy model file so the model path check passes
+        model_path = tmp_path / "model.onnx"
+        model_path.write_bytes(b"dummy")
+        with pytest.raises(FileNotFoundError, match="Vocabulary"):
+            NeuralEncoder.load(
+                model_path,
+                vocabulary_path=tmp_path / "nonexistent_vocab.json",
+            )

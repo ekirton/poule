@@ -12,7 +12,7 @@ Define the training pipeline that produces neural encoder model checkpoints from
 
 ## 2. Scope
 
-**In scope**: `VocabularyBuilder` (closed-vocabulary construction from search index and training data), `TrainingDataLoader` (JSONL parsing, pair extraction, train/val/test split, hard negative sampling), `BiEncoderTrainer` (training loop, masked contrastive loss, checkpointing), `RetrievalEvaluator` (recall@k, MRR, neural vs. symbolic comparison), `ModelQuantizer` (PyTorch → INT8 ONNX conversion, validation), `TrainingDataValidator` (pre-training data quality checks).
+**In scope**: `VocabularyBuilder` (closed-vocabulary construction from search index and training data), `CoqTokenizer` (whitespace-split tokenization using closed vocabulary), `TrainingDataLoader` (JSONL parsing, pair extraction, train/val/test split, hard negative sampling), `BiEncoderTrainer` (training loop, masked contrastive loss, checkpointing), `RetrievalEvaluator` (recall@k, MRR, neural vs. symbolic comparison), `ModelQuantizer` (PyTorch → INT8 ONNX conversion, validation), `TrainingDataValidator` (pre-training data quality checks).
 
 **Out of scope**: Neural encoder inference at query time (owned by neural-retrieval), embedding index construction (owned by neural-retrieval), retrieval pipeline integration (owned by pipeline), storage schema (owned by storage).
 
@@ -150,6 +150,48 @@ The vocabulary shall be written as a JSON object where keys are token strings an
 > **When** `build` completes
 > **Then** VocabularyReport has total_tokens ≈ 15,425, index_tokens = 15,000, training_data_tokens = 300
 
+### 4.0.1 CoqTokenizer
+
+A lightweight tokenizer that performs whitespace splitting and dictionary lookup against the closed vocabulary. Replaces `AutoTokenizer.from_pretrained("microsoft/codebert-base")` throughout the pipeline.
+
+#### __init__(vocabulary_path)
+
+- REQUIRES: `vocabulary_path` points to a valid vocabulary JSON file (as produced by `VocabularyBuilder.build`).
+- ENSURES: Loads the vocabulary mapping into memory. Sets `pad_token_id`, `unk_token_id`, `cls_token_id`, `sep_token_id`, `mask_token_id` from the vocabulary (IDs 0–4). Sets `vocab_size` to the number of entries.
+- Raises `FileNotFoundError` if the path does not exist. Raises `DataFormatError` if the JSON is malformed.
+
+#### encode(text, max_length=512)
+
+- REQUIRES: `text` is a string.
+- ENSURES: Returns a tuple `(input_ids, attention_mask)` where:
+  1. `text` is NFC-normalized.
+  2. Split on whitespace into tokens.
+  3. Each token is looked up in the vocabulary dict → token ID (or `unk_token_id` for unknown tokens).
+  4. `[CLS]` ID is prepended, `[SEP]` ID is appended.
+  5. If length > `max_length`: truncate to `max_length` (keeping `[CLS]` at start, replacing last token with `[SEP]`).
+  6. `attention_mask` is 1 for real tokens, 0 for padding.
+  7. If length < `max_length`: pad with `pad_token_id` to `max_length`.
+  8. Returns lists of integers (not tensors).
+
+> **Given** text `"n : nat"` and vocabulary `{"[CLS]": 2, "[SEP]": 3, "[PAD]": 0, "n": 10, ":": 7, "nat": 8, "[UNK]": 1}`
+> **When** `encode("n : nat", max_length=8)` is called
+> **Then** `input_ids = [2, 10, 7, 8, 3, 0, 0, 0]` and `attention_mask = [1, 1, 1, 1, 1, 0, 0, 0]`
+
+> **Given** an unknown token `"foobar"` not in the vocabulary
+> **When** `encode("foobar")` is called
+> **Then** `"foobar"` maps to `unk_token_id` (1)
+
+#### encode_batch(texts, max_length=512)
+
+- REQUIRES: `texts` is a non-empty list of strings.
+- ENSURES: Encodes each text via `encode`, then pads all sequences to the length of the longest in the batch (up to `max_length`). Returns a dict `{"input_ids": tensor, "attention_mask": tensor}` with shape `(batch_size, padded_length)`.
+
+- MAINTAINS: Padding is to the longest sequence in the batch, not to `max_length` (dynamic padding for efficiency).
+
+> **Given** texts `["a b", "x"]` where `"a"`, `"b"`, `"x"` are in the vocabulary
+> **When** `encode_batch(["a b", "x"], max_length=512)` is called
+> **Then** `input_ids` has shape `(2, 4)` — both padded to length 4 (CLS + 2 tokens + SEP for the longer one)
+
 ### 4.1 TrainingDataLoader
 
 #### load(jsonl_paths, index_db_path)
@@ -226,12 +268,13 @@ accessible_premises(theorem) = all premises defined in accessible_files(theorem)
 
 ### 4.3 BiEncoderTrainer
 
-#### train(dataset, output_path, hyperparams)
+#### train(dataset, output_path, vocabulary_path, hyperparams)
 
-- REQUIRES: `dataset` is a `TrainingDataset` with at least 1,000 training pairs. `output_path` is a writable path. `hyperparams` has defaults as specified below.
-- ENSURES: Trains a bi-encoder model using masked contrastive loss. Saves the best checkpoint (by validation Recall@32) to `output_path`. Prints training metrics (loss, validation Recall@32) after each epoch.
+- REQUIRES: `dataset` is a `TrainingDataset` with at least 1,000 training pairs. `output_path` is a writable path. `vocabulary_path` points to a valid vocabulary JSON file (as produced by `VocabularyBuilder.build`). `hyperparams` has defaults as specified below.
+- ENSURES: Constructs a `CoqTokenizer` from `vocabulary_path`. Creates a `BiEncoder` model with an embedding layer sized to the vocabulary. Copies overlapping pretrained embeddings from CodeBERT for tokens that appear in both vocabularies (digits, punctuation, common words). Initializes remaining embeddings randomly (σ=0.02). Trains using masked contrastive loss. Saves the best checkpoint (by validation Recall@32) to `output_path`. The checkpoint includes the vocabulary path for reproducibility. Prints training metrics (loss, validation Recall@32) after each epoch.
 - On training completion: saves final checkpoint alongside best checkpoint.
 - On GPU OOM: raises `TrainingResourceError` with message suggesting batch size reduction.
+- When `vocabulary_path` is `None`: falls back to CodeBERT's default tokenizer and embedding layer (backward compatibility).
 
 **Default hyperparameters:**
 
@@ -279,18 +322,19 @@ After each epoch, compute Recall@32 on the validation split. If validation Recal
 #### Checkpoint format
 
 The checkpoint shall include:
-- Model state dict (encoder weights)
+- Model state dict (encoder weights, including the custom embedding layer when using closed vocabulary)
 - Optimizer state dict
 - Epoch number
 - Best validation Recall@32
 - Hyperparameters used
+- `vocabulary_path` (string or None) — the path to the vocabulary JSON used during training
 
 ### 4.4 Fine-Tuning
 
 #### fine_tune(checkpoint_path, dataset, output_path, hyperparams)
 
 - REQUIRES: `checkpoint_path` points to a valid training checkpoint. `dataset` contains project-specific training pairs. `output_path` is writable.
-- ENSURES: Loads the pre-trained checkpoint. Resumes training with adjusted hyperparameters. Saves best fine-tuned checkpoint by validation Recall@32.
+- ENSURES: Loads the pre-trained checkpoint, including the vocabulary path from the checkpoint. Resumes training with adjusted hyperparameters and the same tokenizer. Saves best fine-tuned checkpoint by validation Recall@32.
 
 **Fine-tuning hyperparameter overrides:**
 
@@ -358,7 +402,7 @@ When `relative_improvement < 0.15`, the report shall include a warning: `"Neural
 #### quantize(checkpoint_path, output_path)
 
 - REQUIRES: `checkpoint_path` points to a valid PyTorch training checkpoint. `output_path` is a writable path.
-- ENSURES: Exports the model to ONNX (opset 17+). Applies dynamic INT8 quantization. Validates quantization quality. Writes the INT8 ONNX model to `output_path`.
+- ENSURES: Reads `vocabulary_path` from the checkpoint. When present, reconstructs the model with the custom vocab size and uses `CoqTokenizer` for dummy input generation and validation. Exports the model to ONNX (opset 17+). Applies dynamic INT8 quantization. Validates quantization quality. Writes the INT8 ONNX model to `output_path`.
 
 **Validation step:**
 1. Generate 100 random input texts (from test set or synthetic)
@@ -416,6 +460,8 @@ When `relative_improvement < 0.15`, the report shall include a warning: `"Neural
 | Quantization validation failure (distance ≥ 0.02) | `QuantizationError` | Propagated with max distance value |
 | Training dataset has < 1,000 pairs after filtering | `InsufficientDataError` | Propagated to CLI |
 | Validation split is empty | `InsufficientDataError` | Propagated (split has 0 files in validation position) |
+| Vocabulary JSON not found | `FileNotFoundError` | Propagated to CLI |
+| Vocabulary JSON malformed | `DataFormatError` | Propagated with message: `"Invalid vocabulary file"` |
 
 Error hierarchy:
 - `NeuralTrainingError` — base class for all training pipeline errors
@@ -455,8 +501,9 @@ report = validate(["stdlib.jsonl", "mathcomp.jsonl"])
 dataset = load(["stdlib.jsonl", "mathcomp.jsonl"], "index.db")
 # dataset.train: 36,000 pairs, dataset.val: 4,500 pairs, dataset.test: 4,500 pairs
 
-# 3. Train
-train(dataset, "model.pt", hyperparams={batch_size: 256, lr: 2e-5, epochs: 20})
+# 3. Train (with closed vocabulary)
+train(dataset, "model.pt", vocabulary_path="coq-vocabulary.json",
+      hyperparams={batch_size: 256, lr: 2e-5, epochs: 20})
 # Epoch 1: loss=4.2, val_R@32=0.18
 # Epoch 2: loss=3.1, val_R@32=0.32
 # ...

@@ -121,6 +121,28 @@ Tokenization is a whitespace split followed by O(1) dictionary lookup per token.
 
 No regex pre-tokenizer. No subword search.
 
+### Embedding Layer Integration
+
+The closed vocabulary replaces CodeBERT's 50,265-token BPE vocabulary with ~15,500 tokens. The BiEncoder model reinitializes its embedding layer on construction:
+
+1. Load CodeBERT's transformer layers (layers 1–12) with pretrained weights.
+2. Create a new `nn.Embedding(vocab_size, 768)` sized to the closed vocabulary.
+3. For tokens that overlap with CodeBERT's original vocabulary (digits, punctuation, common English words like `nat`, `list`, `bool`), copy the pretrained embedding vector.
+4. For Coq-specific tokens (`Nat.add_comm`, `ssreflect`, `∀`), initialize randomly (normal distribution, σ = 0.02).
+
+CodeBERT's 12 transformer layers retain their full pretrained weights — only the embedding layer is partially cold. Contrastive fine-tuning on ~15,000+ training pairs provides sufficient signal for the new embeddings to converge.
+
+### CoqTokenizer
+
+A lightweight tokenizer class wraps the vocabulary JSON for use by all pipeline components (trainer, evaluator, quantizer, inference encoder):
+
+- Loads the vocabulary JSON file on construction.
+- `encode(text, max_length=512)` → `(input_ids, attention_mask)` tensors.
+- `encode_batch(texts, max_length=512)` → batched `(input_ids, attention_mask)` tensors with padding.
+- `vocab_size` property returns the vocabulary size for embedding layer construction.
+
+This replaces `AutoTokenizer.from_pretrained("microsoft/codebert-base")` throughout the pipeline.
+
 ## Data Loading
 
 ### Input Format

@@ -43,7 +43,6 @@ class ModelQuantizer:
         import onnxruntime as ort
         import torch
         from onnxruntime.quantization import QuantType, quantize_dynamic
-        from transformers import AutoTokenizer
 
         from Poule.neural.training.model import BiEncoder
         from Poule.neural.training.trainer import load_checkpoint
@@ -52,28 +51,46 @@ class ModelQuantizer:
         checkpoint = load_checkpoint(checkpoint_path)
         hp = checkpoint.get("hyperparams", {})
         max_seq_length = hp.get("max_seq_length", 512)
+        vocab_path_str = checkpoint.get("vocabulary_path")
 
-        model = BiEncoder()
+        # Reconstruct model with correct vocab size
+        if vocab_path_str:
+            from Poule.neural.training.vocabulary import CoqTokenizer
+
+            tokenizer = CoqTokenizer(Path(vocab_path_str))
+            model = BiEncoder(vocab_size=tokenizer.vocab_size)
+        else:
+            from transformers import AutoTokenizer
+
+            tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
+            model = BiEncoder()
+
         model.load_state_dict(checkpoint["model_state_dict"])
         model.eval()
-
-        tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
 
         # Step 1: Export to ONNX
         with tempfile.TemporaryDirectory() as tmpdir:
             fp32_onnx_path = Path(tmpdir) / "model_fp32.onnx"
 
             # Create dummy inputs for tracing
-            dummy_text = ["Example proof state"]
-            dummy_tokens = tokenizer(
-                dummy_text,
-                padding="max_length",
-                truncation=True,
-                max_length=max_seq_length,
-                return_tensors="pt",
-            )
-            dummy_input_ids = dummy_tokens["input_ids"]
-            dummy_attention_mask = dummy_tokens["attention_mask"]
+            from Poule.neural.training.vocabulary import CoqTokenizer
+
+            if isinstance(tokenizer, CoqTokenizer):
+                ids, mask = tokenizer.encode(
+                    "Example proof state", max_length=max_seq_length
+                )
+                dummy_input_ids = torch.tensor([ids], dtype=torch.long)
+                dummy_attention_mask = torch.tensor([mask], dtype=torch.long)
+            else:
+                dummy_tokens = tokenizer(
+                    ["Example proof state"],
+                    padding="max_length",
+                    truncation=True,
+                    max_length=max_seq_length,
+                    return_tensors="pt",
+                )
+                dummy_input_ids = dummy_tokens["input_ids"]
+                dummy_attention_mask = dummy_tokens["attention_mask"]
 
             torch.onnx.export(
                 model,

@@ -35,7 +35,7 @@ from Poule.neural.training.trainer import BiEncoderTrainer
 from Poule.neural.training.evaluator import RetrievalEvaluator, EvaluationReport, ComparisonReport
 from Poule.neural.training.quantizer import ModelQuantizer
 from Poule.neural.training.validator import TrainingDataValidator, ValidationReport
-from Poule.neural.training.vocabulary import VocabularyBuilder, VocabularyReport
+from Poule.neural.training.vocabulary import VocabularyBuilder, VocabularyReport, CoqTokenizer
 from Poule.neural.training.errors import (
     NeuralTrainingError,
     DataFormatError,
@@ -1588,3 +1588,191 @@ class TestVocabularyBuilderOutputFormat:
         for token, token_id in vocab.items():
             assert isinstance(token_id, int), \
                 f"Token {token} has non-integer ID: {type(token_id)}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 17. CoqTokenizer — Closed Vocabulary Tokenization
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _write_vocab(path, tokens):
+    """Write a minimal vocabulary JSON file from a list of token strings.
+
+    Special tokens [PAD], [UNK], [CLS], [SEP], [MASK] are always included
+    at IDs 0–4. Additional tokens get sequential IDs starting from 5.
+    """
+    vocab = {
+        "[PAD]": 0, "[UNK]": 1, "[CLS]": 2, "[SEP]": 3, "[MASK]": 4,
+    }
+    next_id = 5
+    for t in tokens:
+        if t not in vocab:
+            vocab[t] = next_id
+            next_id += 1
+    path.write_text(json.dumps(vocab), encoding="utf-8")
+    return vocab
+
+
+class TestCoqTokenizerInit:
+    """spec §4.0.1: CoqTokenizer loads vocabulary and sets special token IDs."""
+
+    def test_loads_vocabulary(self, tmp_path):
+        """spec §4.0.1: Loads the vocabulary mapping into memory."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["nat", "bool"])
+        tok = CoqTokenizer(vocab_path)
+        assert tok.vocab_size == 7  # 5 special + 2 custom
+
+    def test_special_token_ids(self, tmp_path):
+        """spec §4.0.1: pad=0, unk=1, cls=2, sep=3, mask=4."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, [])
+        tok = CoqTokenizer(vocab_path)
+        assert tok.pad_token_id == 0
+        assert tok.unk_token_id == 1
+        assert tok.cls_token_id == 2
+        assert tok.sep_token_id == 3
+        assert tok.mask_token_id == 4
+
+    def test_raises_on_missing_file(self):
+        """spec §4.0.1: FileNotFoundError if path does not exist."""
+        with pytest.raises(FileNotFoundError):
+            CoqTokenizer(Path("/nonexistent/vocab.json"))
+
+    def test_raises_on_malformed_json(self, tmp_path):
+        """spec §4.0.1: DataFormatError if JSON is malformed."""
+        vocab_path = tmp_path / "vocab.json"
+        vocab_path.write_text("not json", encoding="utf-8")
+        from Poule.neural.training.errors import DataFormatError
+        with pytest.raises(DataFormatError):
+            CoqTokenizer(vocab_path)
+
+
+class TestCoqTokenizerEncode:
+    """spec §4.0.1: encode() tokenizes text with whitespace split + lookup."""
+
+    def test_basic_encoding(self, tmp_path):
+        """spec §4.0.1: Whitespace split, lookup, prepend CLS, append SEP."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["n", ":", "nat"])
+        tok = CoqTokenizer(vocab_path)
+
+        ids, mask = tok.encode("n : nat", max_length=8)
+
+        assert ids[0] == 2  # [CLS]
+        assert ids[1] == tok._vocab["n"]
+        assert ids[2] == tok._vocab[":"]
+        assert ids[3] == tok._vocab["nat"]
+        assert ids[4] == 3  # [SEP]
+        # Padding
+        assert ids[5] == 0
+        assert len(ids) == 8
+        assert mask == [1, 1, 1, 1, 1, 0, 0, 0]
+
+    def test_unknown_token_maps_to_unk(self, tmp_path):
+        """spec §4.0.1: Unknown tokens map to unk_token_id."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["nat"])
+        tok = CoqTokenizer(vocab_path)
+
+        ids, mask = tok.encode("unknown_token", max_length=6)
+        assert ids[1] == 1  # [UNK]
+
+    def test_truncation(self, tmp_path):
+        """spec §4.0.1: Truncate to max_length, keeping CLS and SEP."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["a", "b", "c", "d", "e"])
+        tok = CoqTokenizer(vocab_path)
+
+        ids, mask = tok.encode("a b c d e", max_length=4)
+        assert len(ids) == 4
+        assert ids[0] == 2  # [CLS]
+        assert ids[-1] == 3  # [SEP]
+        assert all(m == 1 for m in mask)
+
+    def test_empty_text(self, tmp_path):
+        """Encoding empty string produces CLS + SEP + padding."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, [])
+        tok = CoqTokenizer(vocab_path)
+
+        ids, mask = tok.encode("", max_length=4)
+        assert ids[0] == 2  # [CLS]
+        assert ids[1] == 3  # [SEP]
+        assert mask == [1, 1, 0, 0]
+
+    def test_nfc_normalization(self, tmp_path):
+        """spec §4.0.1: NFC normalization applied before lookup."""
+        import unicodedata
+        vocab_path = tmp_path / "vocab.json"
+        # Store the NFC form in the vocab
+        _write_vocab(vocab_path, ["é"])  # precomposed
+        tok = CoqTokenizer(vocab_path)
+
+        # Use decomposed form (e + combining accent)
+        decomposed = unicodedata.normalize("NFD", "é")
+        ids, _ = tok.encode(decomposed, max_length=4)
+        # Should find it (NFC normalizes decomposed → precomposed)
+        assert ids[1] != 1  # not UNK
+
+
+class TestCoqTokenizerEncodeBatch:
+    """spec §4.0.1: encode_batch() encodes multiple texts with dynamic padding."""
+
+    def test_batch_encoding_shapes(self, tmp_path):
+        """spec §4.0.1: Returns dict with input_ids and attention_mask arrays."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["a", "b", "c"])
+        tok = CoqTokenizer(vocab_path)
+
+        result = tok.encode_batch(["a b", "c"], max_length=512)
+        assert "input_ids" in result
+        assert "attention_mask" in result
+        # Shape: (2, padded_length)
+        assert result["input_ids"].shape[0] == 2
+        assert result["attention_mask"].shape[0] == 2
+
+    def test_dynamic_padding(self, tmp_path):
+        """spec §4.0.1: Padding is to the longest sequence in batch, not max_length."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["a", "b", "c"])
+        tok = CoqTokenizer(vocab_path)
+
+        result = tok.encode_batch(["a b", "c"], max_length=512)
+        # Longest is "a b" = CLS + a + b + SEP = 4 tokens
+        assert result["input_ids"].shape[1] == 4
+
+    def test_batch_attention_mask_correct(self, tmp_path):
+        """Shorter sequences have 0s in attention_mask for padding positions."""
+        vocab_path = tmp_path / "vocab.json"
+        _write_vocab(vocab_path, ["a", "b"])
+        tok = CoqTokenizer(vocab_path)
+
+        result = tok.encode_batch(["a b", "a"], max_length=512)
+        # First: CLS a b SEP -> all 1s
+        assert list(result["attention_mask"][0]) == [1, 1, 1, 1]
+        # Second: CLS a SEP PAD -> 1,1,1,0
+        assert list(result["attention_mask"][1]) == [1, 1, 1, 0]
+
+
+class TestCoqTokenizerIntegration:
+    """Integration: CoqTokenizer works with VocabularyBuilder output."""
+
+    def test_roundtrip_with_vocabulary_builder(self, tmp_path):
+        """Vocabulary built by VocabularyBuilder can be loaded by CoqTokenizer."""
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [
+            (1, "Nat.add", "stmt1", "Coq.Init.Nat"),
+            (2, "nat", "stmt2", "Coq.Init.Datatypes"),
+        ])
+        jsonl_path = tmp_path / "data.jsonl"
+        _write_jsonl(jsonl_path, [])
+        vocab_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [jsonl_path], vocab_path)
+        tok = CoqTokenizer(vocab_path)
+
+        # Both declaration names should tokenize to known IDs
+        ids, _ = tok.encode("Nat.add nat", max_length=10)
+        assert ids[1] != tok.unk_token_id  # Nat.add known
+        assert ids[2] != tok.unk_token_id  # nat known

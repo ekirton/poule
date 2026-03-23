@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from Poule.neural.training.data import serialize_goals
-from Poule.neural.training.errors import InsufficientDataError
+from Poule.neural.training.errors import DataFormatError, InsufficientDataError
 
 
 @dataclass
@@ -195,3 +195,103 @@ class VocabularyBuilder:
             training_data_tokens=training_count,
             output_path=output_path,
         )
+
+
+# ---------------------------------------------------------------------------
+# CoqTokenizer (spec §4.0.1)
+# ---------------------------------------------------------------------------
+
+
+class CoqTokenizer:
+    """Lightweight tokenizer using a closed vocabulary JSON file.
+
+    Performs whitespace splitting and O(1) dictionary lookup.
+    Replaces AutoTokenizer.from_pretrained("microsoft/codebert-base").
+
+    See specification/neural-training.md §4.0.1.
+    """
+
+    def __init__(self, vocabulary_path: Path):
+        vocabulary_path = Path(vocabulary_path)
+        if not vocabulary_path.exists():
+            raise FileNotFoundError(
+                f"Vocabulary file not found: {vocabulary_path}"
+            )
+        try:
+            self._vocab: dict[str, int] = json.loads(
+                vocabulary_path.read_text(encoding="utf-8")
+            )
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise DataFormatError(
+                f"Invalid vocabulary file: {vocabulary_path}"
+            ) from exc
+
+        self.pad_token_id = self._vocab["[PAD]"]
+        self.unk_token_id = self._vocab["[UNK]"]
+        self.cls_token_id = self._vocab["[CLS]"]
+        self.sep_token_id = self._vocab["[SEP]"]
+        self.mask_token_id = self._vocab["[MASK]"]
+
+    @property
+    def vocab_size(self) -> int:
+        return len(self._vocab)
+
+    def encode(
+        self, text: str, max_length: int = 512
+    ) -> tuple[list[int], list[int]]:
+        """Tokenize text with whitespace split + vocabulary lookup.
+
+        Returns (input_ids, attention_mask) as lists of integers.
+        """
+        text = _nfc(text)
+        tokens = text.split() if text.strip() else []
+
+        # Map tokens to IDs
+        token_ids = [self._vocab.get(t, self.unk_token_id) for t in tokens]
+
+        # Prepend CLS, append SEP
+        token_ids = [self.cls_token_id] + token_ids + [self.sep_token_id]
+
+        # Truncate if needed (keep CLS at start, replace last with SEP)
+        if len(token_ids) > max_length:
+            token_ids = token_ids[:max_length]
+            token_ids[-1] = self.sep_token_id
+
+        # Build attention mask (1 for real tokens)
+        attention_mask = [1] * len(token_ids)
+
+        # Pad to max_length
+        pad_count = max_length - len(token_ids)
+        if pad_count > 0:
+            token_ids.extend([self.pad_token_id] * pad_count)
+            attention_mask.extend([0] * pad_count)
+
+        return token_ids, attention_mask
+
+    def encode_batch(
+        self, texts: list[str], max_length: int = 512
+    ) -> dict:
+        """Encode a batch of texts with dynamic padding.
+
+        Returns a dict with 'input_ids' and 'attention_mask' as numpy arrays
+        of shape (batch_size, padded_length). Callers convert to tensors as
+        needed (torch is a training-only dependency).
+
+        Padding is to the longest sequence in the batch, not max_length.
+        """
+        import numpy as np
+
+        encoded = [self.encode(t, max_length) for t in texts]
+
+        # Find max actual length (non-padding) for dynamic padding
+        actual_lengths = [sum(mask) for _, mask in encoded]
+        padded_length = max(actual_lengths)
+
+        # Trim all sequences to padded_length
+        input_ids = [ids[:padded_length] for ids, _ in encoded]
+        attention_masks = [mask[:padded_length] for _, mask in encoded]
+
+        return {
+            "input_ids": np.array(input_ids, dtype=np.int64),
+            "attention_mask": np.array(attention_masks, dtype=np.int64),
+        }

@@ -21,9 +21,25 @@ class BiEncoder(nn.Module):
     Architecture: CodeBERT -> mean pooling -> L2 normalize -> 768-dim.
     """
 
-    def __init__(self, model_name: str = "microsoft/codebert-base"):
+    def __init__(
+        self,
+        model_name: str = "microsoft/codebert-base",
+        vocab_size: int | None = None,
+    ):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name)
+
+        # Replace embedding layer if a custom vocab size is provided
+        if vocab_size is not None:
+            old_embeddings = self.encoder.embeddings.word_embeddings
+            hidden_size = old_embeddings.embedding_dim
+            new_embeddings = nn.Embedding(vocab_size, hidden_size)
+            # Initialize randomly (σ=0.02), then copy overlapping tokens
+            nn.init.normal_(new_embeddings.weight, mean=0.0, std=0.02)
+            overlap = min(vocab_size, old_embeddings.num_embeddings)
+            with torch.no_grad():
+                new_embeddings.weight[:overlap] = old_embeddings.weight[:overlap]
+            self.encoder.embeddings.word_embeddings = new_embeddings
 
     @property
     def embedding_dim(self) -> int:

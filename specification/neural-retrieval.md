@@ -29,10 +29,10 @@ Define the neural retrieval channel: encoder interface, embedding storage and lo
 
 ### 4.1 NeuralEncoder
 
-#### load(model_path)
+#### load(model_path, vocabulary_path=None)
 
-- REQUIRES: `model_path` points to an existing INT8 ONNX model file.
-- ENSURES: The encoder model is loaded and ready for inference. Returns a `NeuralEncoder` instance.
+- REQUIRES: `model_path` points to an existing INT8 ONNX model file. `vocabulary_path`, when provided, points to a valid vocabulary JSON file (as produced by `VocabularyBuilder.build`).
+- ENSURES: The encoder model is loaded and ready for inference. Returns a `NeuralEncoder` instance. When `vocabulary_path` is provided, uses `CoqTokenizer` (whitespace split + dictionary lookup) for tokenization. When `vocabulary_path` is `None`, falls back to CodeBERT's default tokenizer.
 - On file not found: raises `ModelNotFoundError`.
 - On invalid ONNX format: raises `ModelLoadError`.
 
@@ -177,17 +177,20 @@ Different search operations produce different query text for the encoder:
 | `search_by_symbols` | Space-joined symbol names from the `symbols` list |
 | `search_by_name` | Not used — neural channel is skipped |
 
-### 4.8 Model Checkpoint Path
+### 4.8 Model Checkpoint and Vocabulary Paths
 
-The model checkpoint is located at:
+The model checkpoint and vocabulary are located at:
 
 ```
 <data_dir>/models/neural-premise-selector.onnx
+<data_dir>/models/coq-vocabulary.json
 ```
 
 Where `<data_dir>` follows platform conventions:
 - Linux: `~/.local/share/poule/`
 - macOS: `~/Library/Application Support/poule/`
+
+When both files exist, `NeuralEncoder.load` uses the vocabulary file for tokenization. When only the model exists, it falls back to CodeBERT's tokenizer.
 
 ## 5. Data Model
 

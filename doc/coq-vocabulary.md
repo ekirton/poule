@@ -200,7 +200,27 @@ The following subword algorithms were evaluated and rejected:
 
 **SuperBPE** (COLM 2025). Designed for open-vocabulary language modeling with 200K+ token vocabularies. Not applicable at the ~15K scale of Coq libraries.
 
-### 5.3 Advantages of Closed Vocabulary
+### 5.3 Why Not Train a Custom BPE on Coq Corpora?
+
+The strongest counter-argument to a closed vocabulary is: "train BPE (or WordPiece) on Coq source code so that Coq identifiers become frequent merge pairs." CFR did exactly this for Lean and achieved +33% Recall@5. Why not do the same for Coq?
+
+**The answer is that a custom BPE converges to the closed vocabulary at Coq's scale — but with worse properties.**
+
+**1. At convergence, BPE rediscovers the closed vocabulary.** BPE learns merge rules by greedily combining the most frequent adjacent byte-pairs. On a corpus of ~417K lines of Coq where `Nat.add_comm` appears hundreds of times, BPE will eventually merge `N` + `a` + `t` + `.` + `a` + `d` + `d` + `_` + `c` + `o` + `m` + `m` into a single token — reproducing the closed vocabulary entry. With a vocabulary budget of ~15K–30K tokens (the range used by CFR and BERT), essentially every high-frequency Coq identifier will end up as its own token. The subword decomposition machinery (merge tables, priority queues, regex pre-tokenization) exists only to arrive at the same result that a dictionary lookup achieves directly.
+
+**2. BPE introduces ambiguity that the closed vocabulary avoids.** BPE tokenization is not bijective: the segmentation of a string depends on the learned merge order, and different training corpora produce different segmentations of the same input. If `Nat.add_comm` was rare in the training corpus (e.g., from a library version that added it late), BPE may segment it as `Nat.add` + `_comm` or `Nat` + `.add_comm` — different from the segmentation of `Nat.add` alone. The closed vocabulary eliminates this: `Nat.add_comm` is always token ID 9 (or whatever its assigned ID is), regardless of corpus frequency.
+
+**3. BPE handles the tail poorly.** Even a custom BPE trained on Coq will fragment rare identifiers. Library-specific names like `Interval_missing_bisect` or `Fcore_Raux.bpow_lt_bpow` may not appear often enough in the training corpus to form complete merge pairs. These tail identifiers receive the worst tokenization — precisely the identifiers where retrieval is hardest and correct tokenization matters most. The closed vocabulary treats every declaration identically: one token, always.
+
+**4. CFR's gains came from replacing a *generic* tokenizer, not from BPE itself.** CFR compared a custom WordPiece tokenizer against ByT5's byte-level tokenizer (256-token vocabulary, ~4x sequence length penalty) and CodeBERT's English+code BPE. The +33% gain demonstrates that domain-specific tokenization matters — not that WordPiece is the optimal algorithm. A closed vocabulary is an even more domain-specific tokenizer: it is the limit of what a perfect BPE would converge to, without the convergence process.
+
+**5. CFR operated at a scale where BPE was necessary.** Lean's Mathlib has 149,549 premises — an order of magnitude more than Coq's 6-library target (~15,000). At 150K identifiers, a closed vocabulary would require a 150K+ embedding table, approaching the size of CodeBERT's original vocabulary (50,265) and potentially exceeding it. Subword decomposition is a reasonable compression strategy at that scale. At ~15,500 tokens, the closed vocabulary is *smaller* than CodeBERT's original vocabulary — no compression needed.
+
+**6. A trained tokenizer is not a derived artifact.** A BPE tokenizer's merge rules are learned from a training corpus and frozen at training time. If the library adds new identifiers (e.g., a MathComp update adds 500 new lemmas), the tokenizer cannot incorporate them without retraining. The closed vocabulary is rebuilt from the search index in seconds — it is a derived artifact that tracks the installed library state, not a trained model that must be versioned and distributed.
+
+**In summary:** training a custom BPE on Coq would produce a tokenizer that (a) converges toward the closed vocabulary for frequent identifiers, (b) fragments rare identifiers that the closed vocabulary handles perfectly, (c) introduces segmentation ambiguity, (d) requires training infrastructure, and (e) must be retrained when libraries update. The closed vocabulary achieves the ceiling that BPE asymptotically approaches, with none of the complexity.
+
+### 5.4 Advantages of Closed Vocabulary
 
 | Property | Closed vocabulary | Subword (WordPiece/BPE) |
 |----------|------------------|------------------------|
@@ -211,7 +231,7 @@ The following subword algorithms were evaluated and rejected:
 | Context window usage | Optimal — no wasted tokens | Up to 5x waste on dot-qualified names |
 | Failure modes | [UNK] for unknown tokens | Fragmented embeddings for over-segmented identifiers |
 
-### 5.4 Handling Unknown Tokens
+### 5.5 Handling Unknown Tokens
 
 The closed vocabulary maps unseen identifiers to `[UNK]`. In practice, this is rare: the vocabulary is built from the same declaration corpus that the model retrieves against, so every indexed premise has a token. `[UNK]` appears only for identifiers that are neither in the indexed libraries nor in the fixed token sets — an edge case limited to unusual proof state content.
 
