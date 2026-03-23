@@ -29,6 +29,7 @@ from Poule.session.errors import (
     BACKEND_CRASHED,
     FILE_NOT_FOUND,
     PROOF_NOT_FOUND,
+    STEP_OUT_OF_RANGE,
     TACTIC_ERROR,
     SessionError,
 )
@@ -51,6 +52,32 @@ class CampaignPlan:
 # ---------------------------------------------------------------------------
 # Index-based declaration enumeration
 # ---------------------------------------------------------------------------
+
+
+def fqn_to_proof_name(fqn: str, source_file: str) -> str:
+    """Convert a fully-qualified index name to a document-internal proof name.
+
+    Petanque's ``start`` command needs a name resolvable within the loaded
+    document, not the full index FQN.  For example, the index stores
+    ``Coq.Arith.PeanoNat.Nat.add_comm`` but Petanque needs ``Nat.add_comm``.
+
+    The *source_file* (e.g. ``Arith/PeanoNat.v``) encodes the module suffix.
+    Stripping that suffix from the FQN yields the document-internal name.
+    """
+    if "." not in fqn:
+        return fqn
+    # Derive module suffix from source_file: "Arith/PeanoNat.v" → "Arith.PeanoNat"
+    module_suffix = source_file.replace("/", ".").removesuffix(".v")
+    # Find module_suffix in the FQN and strip everything up to it
+    idx = fqn.find(module_suffix)
+    if idx >= 0:
+        after = idx + len(module_suffix)
+        if after < len(fqn) and fqn[after] == ".":
+            return fqn[after + 1:]
+        # module_suffix is at the end — no internal name beyond it
+        # fall through to short-name fallback
+    # Fallback: return the last dot-separated component
+    return fqn.rsplit(".", 1)[-1]
 
 
 def module_to_source_file(module: str, module_prefix: str) -> str:
@@ -261,6 +288,7 @@ _ERROR_KIND_MAP = {
     TACTIC_ERROR: "tactic_failure",
     FILE_NOT_FOUND: "load_failure",
     PROOF_NOT_FOUND: "no_proof_body",
+    STEP_OUT_OF_RANGE: "no_proof_body",
 }
 
 
@@ -318,8 +346,12 @@ async def _do_extraction(
     try:
         # Resolve to absolute path for the backend (§4.2, §10).
         abs_file = str(Path(project_path) / source_file) if project_path else source_file
+        # Convert FQN to document-internal name for Petanque (§4.2).
+        # The index stores "Coq.Arith.PeanoNat.Nat.add_comm" but Petanque
+        # needs "Nat.add_comm" — the name resolvable within the document.
+        proof_name = fqn_to_proof_name(theorem_name, source_file)
         session_id, _initial_state = await session_manager.create_session(
-            abs_file, theorem_name,
+            abs_file, proof_name,
         )
         trace = await session_manager.extract_trace(session_id)
         premise_annotations = await session_manager.get_premises(session_id)

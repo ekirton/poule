@@ -451,6 +451,123 @@ class TestBuildCampaignPlanWithIndex:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# 5b. FQN-to-proof-name conversion (§4.2)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestFqnToProofName:
+    """fqn_to_proof_name strips module prefix from FQN to get the
+    document-internal name that Petanque can resolve (§4.2 line 129)."""
+
+    def test_strips_module_prefix_from_fqn(self):
+        """Coq.Arith.PeanoNat.Nat.add_comm with source Arith/PeanoNat.v → Nat.add_comm"""
+        from Poule.extraction.campaign import fqn_to_proof_name
+
+        result = fqn_to_proof_name(
+            "Coq.Arith.PeanoNat.Nat.add_comm", "Arith/PeanoNat.v"
+        )
+        assert result == "Nat.add_comm"
+
+    def test_top_level_name_in_module(self):
+        """Coq.Init.Logic.eq_refl with source Init/Logic.v → eq_refl"""
+        from Poule.extraction.campaign import fqn_to_proof_name
+
+        result = fqn_to_proof_name(
+            "Coq.Init.Logic.eq_refl", "Init/Logic.v"
+        )
+        assert result == "eq_refl"
+
+    def test_mathcomp_nested_module(self):
+        """mathcomp.algebra.ring.Ring.sort with source algebra/ring.v → Ring.sort"""
+        from Poule.extraction.campaign import fqn_to_proof_name
+
+        result = fqn_to_proof_name(
+            "mathcomp.algebra.ring.Ring.sort", "algebra/ring.v"
+        )
+        assert result == "Ring.sort"
+
+    def test_single_level_source_file(self):
+        """Coquelicot.Derive.some_thm with source Derive.v → some_thm"""
+        from Poule.extraction.campaign import fqn_to_proof_name
+
+        result = fqn_to_proof_name(
+            "Coquelicot.Derive.some_thm", "Derive.v"
+        )
+        assert result == "some_thm"
+
+    def test_no_match_falls_back_to_short_name(self):
+        """When module suffix is not found in FQN, fall back to last component."""
+        from Poule.extraction.campaign import fqn_to_proof_name
+
+        result = fqn_to_proof_name(
+            "Some.Other.Module.thm_name", "Unrelated/File.v"
+        )
+        assert result == "thm_name"
+
+    def test_short_name_unchanged(self):
+        """A short name without dots passes through unchanged."""
+        from Poule.extraction.campaign import fqn_to_proof_name
+
+        result = fqn_to_proof_name("eq_refl", "Logic.v")
+        assert result == "eq_refl"
+
+
+class TestDoExtractionUsesProofName:
+    """_do_extraction converts FQN to document-internal name before
+    calling create_session, while keeping FQN in ExtractionRecord (§4.2)."""
+
+    def test_create_session_receives_internal_name(self):
+        """create_session should receive the document-internal name,
+        not the full FQN from the index."""
+        from Poule.extraction.campaign import extract_single_proof
+        from Poule.extraction.types import ExtractionRecord
+
+        sm = AsyncMock()
+        sm.create_session = AsyncMock(return_value=("session-1", Mock()))
+        sm.extract_trace = AsyncMock(return_value=Mock(
+            total_steps=0, steps=[], partial=False,
+        ))
+        sm.get_premises = AsyncMock(return_value=[])
+        sm.close_session = AsyncMock()
+
+        asyncio.run(extract_single_proof(
+            sm, "stdlib", "Arith/PeanoNat.v",
+            "Coq.Arith.PeanoNat.Nat.add_comm",
+            project_path="/data/stdlib",
+        ))
+
+        # create_session should be called with the internal name
+        call_args = sm.create_session.call_args
+        proof_name_arg = call_args[0][1]  # second positional arg
+        assert proof_name_arg == "Nat.add_comm", (
+            f"Expected 'Nat.add_comm' but got '{proof_name_arg}'"
+        )
+
+    def test_extraction_record_keeps_fqn(self):
+        """The ExtractionRecord stores the original FQN, not the
+        internal proof name."""
+        from Poule.extraction.campaign import extract_single_proof
+        from Poule.extraction.types import ExtractionRecord
+
+        sm = AsyncMock()
+        sm.create_session = AsyncMock(return_value=("session-1", Mock()))
+        sm.extract_trace = AsyncMock(return_value=Mock(
+            total_steps=0, steps=[], partial=False,
+        ))
+        sm.get_premises = AsyncMock(return_value=[])
+        sm.close_session = AsyncMock()
+
+        result = asyncio.run(extract_single_proof(
+            sm, "stdlib", "Arith/PeanoNat.v",
+            "Coq.Arith.PeanoNat.Nat.add_comm",
+            project_path="/data/stdlib",
+        ))
+
+        assert isinstance(result, ExtractionRecord)
+        assert result.theorem_name == "Coq.Arith.PeanoNat.Nat.add_comm"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # 6. Removal of regex enumeration
 # ═══════════════════════════════════════════════════════════════════════════
 

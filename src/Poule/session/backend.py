@@ -286,6 +286,15 @@ class CoqProofBackend:
         except (RuntimeError, ConnectionError):
             return []
 
+    @staticmethod
+    def _short_name(proof_name: str) -> str:
+        """Extract the short (unqualified) name from a possibly FQN.
+
+        For ``Coq.Arith.PeanoNat.Nat.add_comm`` returns ``add_comm``.
+        For ``add_comm`` returns ``add_comm`` unchanged.
+        """
+        return proof_name.rsplit(".", 1)[-1] if "." in proof_name else proof_name
+
     def _extract_tactics_from_spans(
         self, text: str, spans: list[dict[str, Any]], proof_name: str,
     ) -> list[str]:
@@ -294,6 +303,9 @@ class CoqProofBackend:
         Identifies the Proof./Qed. boundaries, then extracts the text of
         each span that falls within the proof body.
         """
+        # The index stores fully-qualified names (e.g., Coq.Arith.PeanoNat.Nat.add_comm)
+        # but source files use the short name (e.g., add_comm).
+        short_name = self._short_name(proof_name)
         lines = text.split("\n")
 
         def span_text(span: dict[str, Any]) -> str:
@@ -322,7 +334,7 @@ class CoqProofBackend:
             txt = span_text(span).strip()
             if re.search(
                 rf"\b(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|"
-                rf"Fixpoint|CoFixpoint|Example|Let|Instance)\s+{re.escape(proof_name)}\b",
+                rf"Fixpoint|CoFixpoint|Example|Let|Instance)\s+{re.escape(short_name)}\b",
                 txt,
             ):
                 decl_idx = i
@@ -331,12 +343,19 @@ class CoqProofBackend:
         if decl_idx is None:
             return []
 
-        # Find "Proof." span after the declaration
+        # Find "Proof." span after the declaration, but stop if another
+        # declaration is encountered first (the Proof. would belong to it).
         for i in range(decl_idx + 1, len(spans)):
             txt = span_text(spans[i]).strip()
             if re.match(r"Proof\b", txt):
                 proof_start_idx = i
                 break
+            if re.search(
+                r"\b(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|"
+                r"Fixpoint|CoFixpoint|Example|Let|Instance)\s+\w+",
+                txt,
+            ):
+                break  # Another declaration before Proof. — not our proof
 
         if proof_start_idx is None:
             return []
@@ -365,9 +384,11 @@ class CoqProofBackend:
 
         Used when coq/getDocument is unavailable or returns no spans.
         """
+        # The index stores fully-qualified names but source uses short names.
+        short_name = self._short_name(proof_name)
         decl_pattern = re.compile(
             rf"\b(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|"
-            rf"Fixpoint|CoFixpoint|Example|Let|Instance)\s+{re.escape(proof_name)}\b"
+            rf"Fixpoint|CoFixpoint|Example|Let|Instance)\s+{re.escape(short_name)}\b"
         )
         decl_match = decl_pattern.search(text)
         if decl_match is None:
@@ -376,6 +397,17 @@ class CoqProofBackend:
         proof_kw_match = re.search(r"\bProof\s*\.", text[decl_match.start():])
         if proof_kw_match is None:
             return []
+
+        # Guard: if another declaration appears between this declaration and
+        # the Proof. keyword, the Proof. belongs to a different declaration.
+        between_text = text[decl_match.end():decl_match.start() + proof_kw_match.start()]
+        if re.search(
+            r"\b(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|"
+            r"Fixpoint|CoFixpoint|Example|Let|Instance)\s+\w+",
+            between_text,
+        ):
+            return []
+
         proof_kw_end = decl_match.start() + proof_kw_match.end()
 
         end_match = re.search(
