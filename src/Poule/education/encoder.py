@@ -62,14 +62,19 @@ class EducationEncoder:
         encoding = self._tokenizer.encode(text)
         input_ids = encoding.ids[:256]
         attention_mask = encoding.attention_mask[:256]
+        seq_len = len(input_ids)
 
         input_ids_np = np.array([input_ids], dtype=np.int64)
         attention_mask_np = np.array([attention_mask], dtype=np.int64)
 
-        outputs = self._session.run(
-            None,
-            {"input_ids": input_ids_np, "attention_mask": attention_mask_np},
-        )
+        # Build feed dict from the model's required inputs (some models
+        # require token_type_ids, others do not).
+        feed = {"input_ids": input_ids_np, "attention_mask": attention_mask_np}
+        required = {inp.name for inp in self._session.get_inputs()}
+        if "token_type_ids" in required:
+            feed["token_type_ids"] = np.zeros((1, seq_len), dtype=np.int64)
+
+        outputs = self._session.run(None, feed)
 
         # Mean pooling over token embeddings
         token_embeddings = outputs[0]  # [1, seq_len, dim]
