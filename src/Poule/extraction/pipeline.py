@@ -816,8 +816,12 @@ def run_extraction(
             if progress_callback is not None:
                 progress_callback("Querying declaration data...")
             decl_names = [name for name, _kind, _constr_t, _vo in all_declarations]
+            name_to_import = {
+                name: CoqLspBackend._vo_to_logical_path(vo)
+                for name, _kind, _constr_t, vo in all_declarations
+            }
             try:
-                batch_result = _query_fn(decl_names)
+                batch_result = _query_fn(decl_names, name_to_import=name_to_import)
                 # Validate result is a real dict (not a Mock artifact)
                 if isinstance(batch_result, dict):
                     decl_data = batch_result

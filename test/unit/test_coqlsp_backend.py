@@ -1990,6 +1990,99 @@ class TestQueryDeclarationData:
         result = backend.query_declaration_data([])
         assert result == {}
 
+    def test_with_import_prepends_require_import(self):
+        """When name_to_import is provided, batch documents include Require Import."""
+        backend = self._make_backend()
+        captured_calls: list[tuple] = []
+
+        def track_batch(commands):
+            captured_calls.append(commands[:])
+            return [[] for _ in commands]
+
+        with patch.object(backend, "_run_vernac_batch", side_effect=track_batch):
+            backend.query_declaration_data(
+                ["Nat.add"],
+                name_to_import={"Nat.add": "Arith.PeanoNat"},
+            )
+
+        assert len(captured_calls) == 1
+        cmds = captured_calls[0]
+        assert cmds[0] == "Require Import Arith.PeanoNat."
+        assert cmds[1] == "Print Nat.add."
+        assert cmds[2] == "Print Assumptions Nat.add."
+
+    def test_with_import_groups_by_module(self):
+        """Names from different modules are batched separately with their own imports."""
+        backend = self._make_backend()
+        captured_calls: list[tuple] = []
+
+        def track_batch(commands):
+            captured_calls.append(commands[:])
+            return [[] for _ in commands]
+
+        with patch.object(backend, "_run_vernac_batch", side_effect=track_batch):
+            backend.query_declaration_data(
+                ["A.x", "B.y", "A.z"],
+                name_to_import={"A.x": "ModA", "B.y": "ModB", "A.z": "ModA"},
+            )
+
+        # Should produce 2 batch calls (one per module)
+        assert len(captured_calls) == 2
+        preambles = {c[0] for c in captured_calls}
+        assert preambles == {
+            "Require Import ModA.",
+            "Require Import ModB.",
+        }
+        # ModA batch has 2 names (A.x, A.z) → 1 import + 4 Print commands
+        mod_a_call = [c for c in captured_calls if c[0] == "Require Import ModA."][0]
+        assert len(mod_a_call) == 5  # 1 import + 2*2 Print commands
+
+    def test_with_import_returns_correct_data(self):
+        """Print output is correctly parsed when import preamble is present."""
+        backend = self._make_backend()
+
+        def fake_batch(commands):
+            results = []
+            for cmd in commands:
+                if cmd.startswith("Require Import"):
+                    results.append([])  # import line returns no useful messages
+                elif cmd.startswith("Print Assumptions"):
+                    results.append([_make_sentence_message("Closed under the global context")])
+                elif cmd.startswith("Print"):
+                    results.append([_make_sentence_message("foo = fun x => x")])
+                else:
+                    results.append([])
+            return results
+
+        with patch.object(backend, "_run_vernac_batch", side_effect=fake_batch):
+            result = backend.query_declaration_data(
+                ["Mod.foo"],
+                name_to_import={"Mod.foo": "SomeMod"},
+            )
+
+        assert "Mod.foo" in result
+        stmt, deps = result["Mod.foo"]
+        assert "foo" in stmt
+        assert deps == []
+
+    def test_without_import_backward_compatible(self):
+        """Without name_to_import, behavior is unchanged (no Require Import)."""
+        backend = self._make_backend()
+        captured_calls: list[tuple] = []
+
+        def track_batch(commands):
+            captured_calls.append(commands[:])
+            return [[] for _ in commands]
+
+        with patch.object(backend, "_run_vernac_batch", side_effect=track_batch):
+            backend.query_declaration_data(["Nat.add"])
+
+        assert len(captured_calls) == 1
+        cmds = captured_calls[0]
+        # No Require Import — just Print + Print Assumptions
+        assert cmds[0] == "Print Nat.add."
+        assert cmds[1] == "Print Assumptions Nat.add."
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 19. _parse_about_kind (extracted static method)
