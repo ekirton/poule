@@ -130,7 +130,10 @@ _enumerate_from_index(index_db_path, project_dirs)
   ├─ Open IndexReader on index_db_path
   ├─ Query: SELECT name, module, kind FROM declarations
   │         WHERE kind IN ('lemma', 'theorem', 'instance', 'definition')
+  │           AND has_proof_body = 1
   │         ORDER BY module, name
+  │  (Fallback: if no declarations match with has_proof_body = 1,
+  │   re-query without the filter for backward compatibility)
   ├─ For each declaration:
   │    Map module to source file via module_to_source_file()
   │    Match source file to project directory
@@ -157,9 +160,21 @@ Each library has a known prefix that is stripped to produce the relative path:
 
 The prefix is detected from the project path basename or provided explicitly. Stdlib under Rocq 9.x may use `Corelib.` prefix instead of `Coq.`; the module_to_source_file utility handles both.
 
-### Handling Definitions Without Proof Bodies
+### Pre-filtering on `has_proof_body`
 
-Not all `definition` entries have proof bodies. The index does not distinguish `Definition foo := 42.` from `Definition foo : T. Proof. ... Qed.`. The campaign attempts extraction for all definitions. When `create_session` raises `PROOF_NOT_FOUND`, this is classified as `no_proof_body` — an expected outcome, not a failure.
+Not all declarations in the index have tactic proof bodies. The index distinguishes declarations with proof bodies from those without via the `has_proof_body` column (see [index-entities.md](data-models/index-entities.md)). Declarations without proof bodies include:
+
+- `:=` definitions (e.g., `Definition foo := 42.`)
+- Declarations brought into scope via module `Include` or functor application (their proof bodies exist in the original source files, not in the re-exporting file)
+- Axioms, parameters, and conjectures
+
+The campaign planner filters the index query to only include declarations where `has_proof_body = 1`. This eliminates the majority of wasted extraction attempts — in the Coq stdlib, module `Include` chains (e.g., `PeanoNat.Nat` includes 15+ sub-modules) generate thousands of re-exported declarations per file, none of which have extractable proof bodies in the re-exporting file.
+
+When `has_proof_body` filtering is active, the campaign still encounters occasional `no_proof_body` errors (e.g., false positives from the regex-based source scan). These are handled as before — classified as `no_proof_body` in the summary, not counted as failures.
+
+#### Fallback behavior
+
+If the index was built without `has_proof_body` annotations (all values are 0 or the column is absent), the campaign planner falls back to unfiltered enumeration to maintain backward compatibility with older indexes.
 
 ### Scope Filtering (P1)
 

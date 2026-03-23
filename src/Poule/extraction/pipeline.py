@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import pickle
+import re
 import subprocess
 from collections import Counter
 from dataclasses import dataclass, field
@@ -56,6 +57,7 @@ class DeclarationResult:
     symbol_set: list[str] = field(default_factory=list)
     wl_vector: dict[str, int] = field(default_factory=dict)
     dependency_names: list[tuple[str, str]] = field(default_factory=list)
+    has_proof_body: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +100,7 @@ class PipelineWriter:
                 "constr_tree": constr_tree,
                 "node_count": node_count,
                 "symbol_set": getattr(r, "symbol_set", []),
+                "has_proof_body": getattr(r, "has_proof_body", 0),
             })
 
         name_to_id = self._writer.insert_declarations(decl_dicts)
@@ -338,6 +341,81 @@ def create_writer(db_path: Path) -> Any:
     return PipelineWriter(index_writer)
 
 
+_PROOF_BODY_DECL_RE = re.compile(
+    r"\b(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|"
+    r"Fixpoint|CoFixpoint|Example|Let|Instance)\s+{short_name}\b"
+)
+
+
+def _check_has_proof_body(
+    short_name: str,
+    v_text: str,
+) -> bool:
+    """Check whether *short_name* has a ``Proof.`` block in *v_text*.
+
+    Uses the same regex patterns as the session backend's
+    ``_extract_tactics_regex`` to detect declarations with tactic proofs.
+    """
+    escaped = re.escape(short_name)
+    decl_pattern = re.compile(
+        rf"\b(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|"
+        rf"Fixpoint|CoFixpoint|Example|Let|Instance)\s+{escaped}\b"
+    )
+    decl_match = decl_pattern.search(v_text)
+    if decl_match is None:
+        return False
+
+    after_decl = v_text[decl_match.start():]
+    proof_kw_match = re.search(r"\bProof\s*\.", after_decl)
+    if proof_kw_match is None:
+        return False
+
+    # Guard: if another declaration appears between this declaration and
+    # the Proof. keyword, the Proof. belongs to a different declaration.
+    between_text = after_decl[decl_match.end() - decl_match.start():proof_kw_match.start()]
+    if re.search(
+        r"\b(Lemma|Theorem|Proposition|Corollary|Fact|Remark|Definition|"
+        r"Fixpoint|CoFixpoint|Example|Let|Instance)\s+\w+",
+        between_text,
+    ):
+        return False
+
+    return True
+
+
+# Cache of .v file text keyed by path, shared within a single extraction run.
+_v_file_cache: dict[str, str | None] = {}
+
+
+def _get_v_text(vo_path: Path) -> str | None:
+    """Read the .v source file corresponding to *vo_path*, with caching."""
+    v_path = vo_path.with_suffix(".v")
+    key = str(v_path)
+    if key not in _v_file_cache:
+        try:
+            _v_file_cache[key] = v_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            _v_file_cache[key] = None
+    return _v_file_cache[key]
+
+
+def detect_proof_body(name: str, kind: str, vo_path: Path | None) -> int:
+    """Return 1 if *name* has a tactic proof body in the .v source, else 0.
+
+    Only checks declarations with kind in {lemma, theorem, definition, instance}.
+    """
+    if kind not in ("lemma", "theorem", "definition", "instance"):
+        return 0
+    if vo_path is None:
+        return 0
+    v_text = _get_v_text(vo_path)
+    if v_text is None:
+        return 0
+    # Use the short name (last dot-separated component)
+    short_name = name.rsplit(".", 1)[-1] if "." in name else name
+    return 1 if _check_has_proof_body(short_name, v_text) else 0
+
+
 def process_declaration(
     name: str,
     kind: str,
@@ -348,6 +426,7 @@ def process_declaration(
     statement: str | None = None,
     dependency_names: list[tuple[str, str]] | None = None,
     resolve_cache: dict[str, str | list[str] | None] | None = None,
+    vo_path: Path | None = None,
 ) -> DeclarationResult | None:
     """Process a single declaration through the normalization pipeline.
 
@@ -437,6 +516,8 @@ def process_declaration(
     if dependency_names is None:
         dependency_names = backend.get_dependencies(name)
 
+    has_body = detect_proof_body(name, storage_kind, vo_path)
+
     return DeclarationResult(
         name=name,
         kind=storage_kind,
@@ -447,6 +528,7 @@ def process_declaration(
         symbol_set=symbol_set,
         wl_vector=wl_vector,
         dependency_names=dependency_names,
+        has_proof_body=has_body,
     )
 
 
@@ -683,6 +765,7 @@ def run_extraction(
                 result = process_declaration(
                     name, kind, constr_t, backend, module_path,
                     statement=stmt, dependency_names=deps,
+                    vo_path=vo_path,
                 )
             except Exception:
                 logger.warning("Failed to process declaration %s", name, exc_info=True)

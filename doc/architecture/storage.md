@@ -19,7 +19,8 @@ CREATE TABLE declarations (
   type_expr TEXT,                     -- pretty-printed type (nullable)
   constr_tree BLOB,                   -- serialized CSE-normalized tree
   node_count INTEGER NOT NULL,
-  symbol_set TEXT NOT NULL            -- JSON array of symbol names
+  symbol_set TEXT NOT NULL,           -- JSON array of symbol names
+  has_proof_body INTEGER NOT NULL DEFAULT 0  -- 1 if declaration has Proof.…Qed./Defined. in its .v source
 );
 
 -- Dependency edges
@@ -87,6 +88,8 @@ CREATE VIRTUAL TABLE declarations_fts USING fts5(
 **WL vectors at multiple h values**: The schema supports histograms at h=1, 3, 5 to allow experimentation with different WL iteration depths without re-extracting. Phase 1 computes h=3 only; h∈{1, 5} are reserved for future use.
 
 **Index metadata table**: The `index_meta` table stores key-value pairs for the index schema version, Coq version, and library identity/versions. The key set differs between per-library indexes (singular `library`/`library_version`/`declarations` keys) and merged indexes (plural `libraries`/`library_versions` keys). On server startup, the schema version is compared against the tool's expected version; a mismatch returns an error directing the user to re-index. Library versions are compared against the currently installed versions; a mismatch likewise returns an error. See [index-entities.md](data-models/index-entities.md) for the full key definitions.
+
+**Proof-body annotation**: The `has_proof_body` column is an integer boolean (0 or 1) set at index time by scanning the `.v` source file for a `Proof.` block matching each declaration. Declarations without `.v` sources, `:=`-style definitions, declarations brought in via module `Include`/functor application (whose proof bodies exist in different source files), and axioms all have `has_proof_body = 0`. The extraction campaign uses this flag to skip declarations that cannot produce proof traces, avoiding redundant backend launches for the same file. The default is 0 (no proof body) so declarations indexed without source-file scanning are conservatively excluded from extraction campaigns.
 
 **Kind values**: The `kind` column stores: `lemma`, `theorem`, `definition`, `instance`, `inductive`, `constructor`, `axiom`. Coq declaration forms that map to these kinds include Record → `inductive`, Class → `inductive`, Let → `definition`, etc. (see [coq-extraction.md](coq-extraction.md) § Kind Mapping for the full table).
 

@@ -46,6 +46,7 @@ def _sample_declaration(
     constr_tree=None,
     node_count=5,
     symbol_set=None,
+    has_proof_body=0,
 ):
     """Return a dict representing a single declaration row."""
     return {
@@ -57,6 +58,7 @@ def _sample_declaration(
         "constr_tree": constr_tree,
         "node_count": node_count,
         "symbol_set": symbol_set or ["Coq.Init.Nat.add", "Coq.Init.Logic.eq"],
+        "has_proof_body": has_proof_body,
     }
 
 
@@ -133,6 +135,43 @@ class TestSchemaCreation:
             "declarations_fts",
         }
         assert expected.issubset(tables)
+
+    def test_declarations_has_proof_body_column(self, tmp_db_path):
+        """declarations table has has_proof_body INTEGER column."""
+        writer = IndexWriter.create(tmp_db_path)
+        conn = sqlite3.connect(tmp_db_path)
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(declarations)").fetchall()
+        }
+        conn.close()
+        writer.finalize()
+
+        assert "has_proof_body" in cols
+
+    def test_has_proof_body_stored_and_retrieved(self, tmp_db_path):
+        """has_proof_body value round-trips through insert and read."""
+        writer = IndexWriter.create(tmp_db_path)
+        decl_with = _sample_declaration(
+            name="A.thm1", module="A", kind="lemma", has_proof_body=1
+        )
+        decl_without = _sample_declaration(
+            name="A.def1", module="A", kind="definition", has_proof_body=0
+        )
+        writer.insert_declarations([decl_with, decl_without])
+        writer.write_meta("schema_version", "1")
+        writer.write_meta("coq_version", "9.1.1")
+        writer.write_meta("created_at", "2026-03-23T00:00:00Z")
+        writer.finalize()
+
+        conn = sqlite3.connect(tmp_db_path)
+        rows = conn.execute(
+            "SELECT name, has_proof_body FROM declarations ORDER BY name"
+        ).fetchall()
+        conn.close()
+
+        assert rows[0] == ("A.def1", 0)
+        assert rows[1] == ("A.thm1", 1)
 
     def test_declarations_fts_is_fts5_virtual_table(self, tmp_db_path):
         writer = IndexWriter.create(tmp_db_path)

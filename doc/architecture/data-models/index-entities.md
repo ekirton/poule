@@ -21,6 +21,7 @@ The core indexing unit representing one Coq/Rocq declaration extracted from a co
 | `constr_tree` | serialized tree | Optional; CSE-normalized expression tree (see [expression-tree.md](expression-tree.md)); null when extraction is unsupported for this kind |
 | `node_count` | positive integer | Required; must be > 0; determines which ranking metrics apply (TED threshold at 50) |
 | `symbol_set` | list of qualified names | Required; JSON-encoded; each entry must be a fully qualified constant, inductive, or constructor name |
+| `has_proof_body` | boolean | Required; true when the declaration has a tactic proof body (`Proof. … Qed.`/`Defined.`) in its source `.v` file; false for `:=` definitions, module-Include'd re-exports, axioms, and declarations without a proof block. Set at index time by scanning the source file. |
 
 ### Relationships
 

@@ -32,6 +32,21 @@ Per-declaration processing:
   7. pretty_print(name)        → human-readable statement
   8. pretty_print_type(name)   → human-readable type signature
 
+  8b. Proof-body detection:
+     For each declaration whose kind ∈ {lemma, theorem, definition, instance}:
+       Derive .v source path from .vo path: vo_path.with_suffix('.v')
+       If .v file exists:
+         Regex-scan for the declaration's short name preceded by a declaration
+         keyword (Lemma|Theorem|Proposition|Corollary|Fact|Definition|
+         Fixpoint|Instance|...) AND followed by a Proof. keyword before the
+         next declaration keyword.
+         Set has_proof_body = true if both conditions are met, false otherwise.
+       If .v file does not exist:
+         Set has_proof_body = false (conservative default).
+     This check runs during per-declaration processing; it reads each .v file
+     once (cached across all declarations from the same .vo file) and uses
+     the same regex patterns as the session backend's _extract_tactics_regex.
+
   Pass 2 (after all declarations are inserted):
   9. For each declaration, issue Print Assumptions <name> via coq-lsp.
      Parse the response to extract the names of axioms, definitions,

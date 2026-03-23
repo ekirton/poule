@@ -192,9 +192,17 @@ def _build_plan_from_index(
 
     reader = IndexReader.open(index_db_path)
     try:
+        # Try with has_proof_body filter first (indexes built with annotation).
+        prefix_arg = module_prefix if module_prefix else None
         decls = reader.get_provable_declarations(
-            module_prefix=module_prefix if module_prefix else None,
+            module_prefix=prefix_arg,
+            has_proof_body=True,
         )
+        # Fallback: if no results (older index without annotations), retry unfiltered.
+        if not decls:
+            decls = reader.get_provable_declarations(
+                module_prefix=prefix_arg,
+            )
     finally:
         reader.close()
 

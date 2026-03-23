@@ -19,7 +19,8 @@ CREATE TABLE declarations (
     type_expr TEXT,
     constr_tree BLOB,
     node_count INTEGER NOT NULL CHECK(node_count > 0),
-    symbol_set TEXT NOT NULL
+    symbol_set TEXT NOT NULL,
+    has_proof_body INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE dependencies (
@@ -81,7 +82,8 @@ class IndexWriter:
             cursor = self._conn.execute(
                 "INSERT INTO declarations "
                 "(name, module, kind, statement, type_expr, constr_tree, "
-                "node_count, symbol_set) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "node_count, symbol_set, has_proof_body) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     decl["name"],
                     decl["module"],
@@ -91,6 +93,7 @@ class IndexWriter:
                     decl.get("constr_tree"),
                     decl["node_count"],
                     symbol_set_json,
+                    decl.get("has_proof_body", 0),
                 ),
             )
             row_id = cursor.lastrowid

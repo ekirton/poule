@@ -204,7 +204,25 @@ For each declaration extracted from a `.vo` file:
 7. `pretty_print(name)` → statement
 8. Type expression: derived from the Search output `type_signature` field in `constr_t` when available; falls back to `pretty_print_type(name)` otherwise (nullable)
 
-The declaration row, WL vector, and declaration data are co-inserted in the same batch transaction (batch size: 1000 declarations).
+9. Proof-body detection: For each declaration whose kind ∈ {`lemma`, `theorem`, `definition`, `instance`}, derive the `.v` source path from the `.vo` path (`vo_path.with_suffix('.v')`). If the `.v` file exists, regex-scan for the declaration's short name preceded by a declaration keyword (`Lemma|Theorem|Proposition|Corollary|Fact|Definition|Fixpoint|Instance|...`) AND followed by a `Proof.` keyword before the next declaration keyword. Set `has_proof_body = 1` if both conditions are met, `0` otherwise. If the `.v` file does not exist, set `has_proof_body = 0`. Each `.v` file's text shall be read at most once (cached across all declarations from the same `.vo` file).
+
+> **Given** a declaration `Nat.add_comm` of kind `lemma` with `.vo` at `PeanoNat.vo` and `.v` at `PeanoNat.v` containing `Lemma add_comm ... Proof. ... Qed.`
+> **When** proof-body detection runs
+> **Then** `has_proof_body = 1`
+
+> **Given** a declaration `Nat.eq` of kind `definition` with `.v` containing `Definition eq := @eq nat.`
+> **When** proof-body detection runs
+> **Then** `has_proof_body = 0` (no `Proof.` block)
+
+> **Given** a declaration `Nat.add_0_l` of kind `lemma` brought in via `Include NAddProp`, where `PeanoNat.v` does not contain a `Lemma add_0_l` block
+> **When** proof-body detection runs
+> **Then** `has_proof_body = 0` (declaration name not found in the `.v` file)
+
+> **Given** a declaration with `.vo` at a path where no corresponding `.v` file exists
+> **When** proof-body detection runs
+> **Then** `has_proof_body = 0`
+
+The declaration row (including `has_proof_body`), WL vector, and declaration data are co-inserted in the same batch transaction (batch size: 1000 declarations).
 
 **Individual declaration failure**: When normalization or extraction fails for a single declaration, log the declaration name and error, then continue to the next declaration. The index is usable with partial coverage.
 

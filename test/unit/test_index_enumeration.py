@@ -28,7 +28,7 @@ def _create_test_index_db(db_path: Path, declarations: list[dict] | None = None)
     """Create a minimal index.db with declarations for testing.
 
     Each declaration dict should have keys: name, module, kind.
-    Optional keys: id, statement, type_expr, node_count, symbol_set.
+    Optional keys: id, statement, type_expr, node_count, symbol_set, has_proof_body.
     """
     conn = sqlite3.connect(str(db_path))
     conn.execute(
@@ -41,7 +41,8 @@ def _create_test_index_db(db_path: Path, declarations: list[dict] | None = None)
         "  type_expr TEXT,"
         "  constr_tree BLOB,"
         "  node_count INTEGER DEFAULT 1,"
-        "  symbol_set TEXT DEFAULT '[]'"
+        "  symbol_set TEXT DEFAULT '[]',"
+        "  has_proof_body INTEGER NOT NULL DEFAULT 0"
         ")"
     )
     conn.execute(
@@ -61,14 +62,15 @@ def _create_test_index_db(db_path: Path, declarations: list[dict] | None = None)
     if declarations:
         for i, decl in enumerate(declarations, start=1):
             conn.execute(
-                "INSERT INTO declarations (id, name, module, kind, statement) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO declarations (id, name, module, kind, statement, has_proof_body) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     decl.get("id", i),
                     decl["name"],
                     decl["module"],
                     decl["kind"],
                     decl.get("statement", f"Statement of {decl['name']}"),
+                    decl.get("has_proof_body", 0),
                 ),
             )
 
@@ -340,6 +342,119 @@ class TestGetProvableDeclarations:
 
         names = [d["name"] for d in decls]
         assert names == ["A.a", "A.b", "B.z"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 3b. has_proof_body filtering (specification/storage.md, extraction-campaign.md)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestHasProofBodyFiltering:
+    """get_provable_declarations filters on has_proof_body when requested."""
+
+    def test_filters_to_only_proof_body_declarations(self, tmp_path):
+        from Poule.storage.reader import IndexReader
+
+        db_path = tmp_path / "index.db"
+        _create_test_index_db(db_path, [
+            {"name": "A.with_proof", "module": "A", "kind": "lemma", "has_proof_body": 1},
+            {"name": "A.no_proof", "module": "A", "kind": "definition", "has_proof_body": 0},
+            {"name": "A.included", "module": "A", "kind": "theorem", "has_proof_body": 0},
+        ])
+
+        reader = IndexReader.open(db_path)
+        decls = reader.get_provable_declarations(has_proof_body=True)
+        reader.close()
+
+        assert len(decls) == 1
+        assert decls[0]["name"] == "A.with_proof"
+
+    def test_no_filter_returns_all(self, tmp_path):
+        from Poule.storage.reader import IndexReader
+
+        db_path = tmp_path / "index.db"
+        _create_test_index_db(db_path, [
+            {"name": "A.with_proof", "module": "A", "kind": "lemma", "has_proof_body": 1},
+            {"name": "A.no_proof", "module": "A", "kind": "definition", "has_proof_body": 0},
+        ])
+
+        reader = IndexReader.open(db_path)
+        decls = reader.get_provable_declarations()
+        reader.close()
+
+        assert len(decls) == 2
+
+    def test_has_proof_body_field_in_result(self, tmp_path):
+        from Poule.storage.reader import IndexReader
+
+        db_path = tmp_path / "index.db"
+        _create_test_index_db(db_path, [
+            {"name": "A.thm", "module": "A", "kind": "theorem", "has_proof_body": 1},
+        ])
+
+        reader = IndexReader.open(db_path)
+        decls = reader.get_provable_declarations()
+        reader.close()
+
+        assert "has_proof_body" in decls[0]
+        assert decls[0]["has_proof_body"] == 1
+
+    def test_combined_with_module_prefix(self, tmp_path):
+        from Poule.storage.reader import IndexReader
+
+        db_path = tmp_path / "index.db"
+        _create_test_index_db(db_path, [
+            {"name": "Coq.A.thm1", "module": "Coq.A", "kind": "lemma", "has_proof_body": 1},
+            {"name": "Coq.A.def1", "module": "Coq.A", "kind": "definition", "has_proof_body": 0},
+            {"name": "mc.B.thm1", "module": "mc.B", "kind": "lemma", "has_proof_body": 1},
+        ])
+
+        reader = IndexReader.open(db_path)
+        decls = reader.get_provable_declarations(module_prefix="Coq.", has_proof_body=True)
+        reader.close()
+
+        assert len(decls) == 1
+        assert decls[0]["name"] == "Coq.A.thm1"
+
+
+class TestCampaignPlanFiltersOnProofBody:
+    """build_campaign_plan uses has_proof_body to filter targets."""
+
+    def test_plan_excludes_no_proof_body_declarations(self, tmp_path):
+        from Poule.extraction.campaign import build_campaign_plan
+
+        proj = tmp_path / "stdlib"
+        proj.mkdir()
+        db_path = tmp_path / "index.db"
+        _create_test_index_db(db_path, [
+            {"name": "Coq.A.thm1", "module": "Coq.A", "kind": "lemma", "has_proof_body": 1},
+            {"name": "Coq.A.def1", "module": "Coq.A", "kind": "definition", "has_proof_body": 0},
+            {"name": "Coq.A.included", "module": "Coq.A", "kind": "theorem", "has_proof_body": 0},
+        ])
+
+        plan = build_campaign_plan(
+            [str(proj)], index_db_path=str(db_path), module_prefix="Coq."
+        )
+        assert len(plan.targets) == 1
+        assert plan.targets[0][2] == "Coq.A.thm1"
+
+    def test_plan_fallback_when_all_zero(self, tmp_path):
+        """Backward compat: if all has_proof_body=0, fall back to unfiltered."""
+        from Poule.extraction.campaign import build_campaign_plan
+
+        proj = tmp_path / "stdlib"
+        proj.mkdir()
+        db_path = tmp_path / "index.db"
+        _create_test_index_db(db_path, [
+            {"name": "Coq.A.thm1", "module": "Coq.A", "kind": "lemma", "has_proof_body": 0},
+            {"name": "Coq.A.thm2", "module": "Coq.A", "kind": "theorem", "has_proof_body": 0},
+        ])
+
+        plan = build_campaign_plan(
+            [str(proj)], index_db_path=str(db_path), module_prefix="Coq."
+        )
+        # Fallback: returns all provable declarations
+        assert len(plan.targets) == 2
 
 
 # ═══════════════════════════════════════════════════════════════════════════
