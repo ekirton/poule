@@ -1,0 +1,422 @@
+[
+  {
+    "query": "how does proof by induction work on natural numbers",
+    "expected_volume": "lf",
+    "expected_chapter": "Induction",
+    "expected_section": "Proof by Induction"
+  },
+  {
+    "query": "what is proof by simplification in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "Basics",
+    "expected_section": "Proof by Simplification"
+  },
+  {
+    "query": "how does proof by rewriting work",
+    "expected_volume": "lf",
+    "expected_chapter": "Basics",
+    "expected_section": "Proof by Rewriting"
+  },
+  {
+    "query": "how does case analysis work in Coq proofs",
+    "expected_volume": "lf",
+    "expected_chapter": "Basics",
+    "expected_section": "Proof by Case Analysis"
+  },
+  {
+    "query": "what are enumerated types and how do you define them",
+    "expected_volume": "lf",
+    "expected_chapter": "Basics",
+    "expected_section": "Enumerated Types"
+  },
+  {
+    "query": "how do booleans work in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "Basics",
+    "expected_section": "Booleans"
+  },
+  {
+    "query": "how are natural numbers defined inductively",
+    "expected_volume": "lf",
+    "expected_chapter": "Basics",
+    "expected_section": "Numbers"
+  },
+  {
+    "query": "what is the difference between formal and informal proofs",
+    "expected_volume": "lf",
+    "expected_chapter": "Induction",
+    "expected_section": "Formal vs. Informal Proof"
+  },
+  {
+    "query": "how do pairs of numbers work in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "Lists",
+    "expected_section": "Pairs of Numbers"
+  },
+  {
+    "query": "how do lists work in Coq and how do you define them",
+    "expected_volume": "lf",
+    "expected_chapter": "Lists",
+    "expected_section": "Lists of Numbers"
+  },
+  {
+    "query": "how does induction on lists work",
+    "expected_volume": "lf",
+    "expected_chapter": "Lists",
+    "expected_section": "Induction on Lists"
+  },
+  {
+    "query": "what is the option type and how do you use it",
+    "expected_volume": "lf",
+    "expected_chapter": "Lists",
+    "expected_section": "Options"
+  },
+  {
+    "query": "what are partial maps and how are they defined",
+    "expected_volume": "lf",
+    "expected_chapter": "Lists",
+    "expected_section": "Partial Maps"
+  },
+  {
+    "query": "what is polymorphism in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "Poly",
+    "expected_section": "Polymorphism"
+  },
+  {
+    "query": "what are implicit arguments in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "Poly",
+    "expected_section": "Implicit Arguments"
+  },
+  {
+    "query": "what are higher-order functions in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "Poly",
+    "expected_section": "Higher-Order Functions"
+  },
+  {
+    "query": "how does the map function work on lists",
+    "expected_volume": "lf",
+    "expected_chapter": "Poly",
+    "expected_section": "Map"
+  },
+  {
+    "query": "how does the fold function work",
+    "expected_volume": "lf",
+    "expected_chapter": "Poly",
+    "expected_section": "Fold"
+  },
+  {
+    "query": "how does the filter function work on lists",
+    "expected_volume": "lf",
+    "expected_chapter": "Poly",
+    "expected_section": "Filter"
+  },
+  {
+    "query": "what are anonymous functions in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "Poly",
+    "expected_section": "Anonymous Functions"
+  },
+  {
+    "query": "how does the apply tactic work",
+    "expected_volume": "lf",
+    "expected_chapter": "Tactics",
+    "expected_section": "The apply Tactic"
+  },
+  {
+    "query": "how do injection and discriminate tactics work",
+    "expected_volume": "lf",
+    "expected_chapter": "Tactics",
+    "expected_section": "The injection and discriminate Tactics"
+  },
+  {
+    "query": "how do you vary the induction hypothesis",
+    "expected_volume": "lf",
+    "expected_chapter": "Tactics",
+    "expected_section": "Varying the Induction Hypothesis"
+  },
+  {
+    "query": "how does unfolding definitions work in proofs",
+    "expected_volume": "lf",
+    "expected_chapter": "Tactics",
+    "expected_section": "Unfolding Definitions"
+  },
+  {
+    "query": "how does destruct work on compound expressions",
+    "expected_volume": "lf",
+    "expected_chapter": "Tactics",
+    "expected_section": "Using destruct on Compound Expressions"
+  },
+  {
+    "query": "how does logical conjunction work in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "Logic",
+    "expected_section": "Conjunction"
+  },
+  {
+    "query": "how does disjunction work in Coq propositions",
+    "expected_volume": "lf",
+    "expected_chapter": "Logic",
+    "expected_section": "Disjunction"
+  },
+  {
+    "query": "what is negation and falsehood in Coq logic",
+    "expected_volume": "lf",
+    "expected_chapter": "Logic",
+    "expected_section": "Falsehood and Negation"
+  },
+  {
+    "query": "how does existential quantification work in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "Logic",
+    "expected_section": "Existential Quantification"
+  },
+  {
+    "query": "what is functional extensionality",
+    "expected_volume": "lf",
+    "expected_chapter": "Logic",
+    "expected_section": "Functional Extensionality"
+  },
+  {
+    "query": "what is the difference between classical and constructive logic",
+    "expected_volume": "lf",
+    "expected_chapter": "Logic",
+    "expected_section": "Classical vs. Constructive Logic"
+  },
+  {
+    "query": "how do you define propositions inductively in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "IndProp",
+    "expected_section": "Inductively Defined Propositions"
+  },
+  {
+    "query": "how does induction on evidence work",
+    "expected_volume": "lf",
+    "expected_chapter": "IndProp",
+    "expected_section": "Induction on Evidence"
+  },
+  {
+    "query": "how do regular expressions work in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "IndProp",
+    "expected_section": "Case Study: Regular Expressions"
+  },
+  {
+    "query": "what is the remember tactic and when do you use it",
+    "expected_volume": "lf",
+    "expected_chapter": "IndProp",
+    "expected_section": "The remember Tactic"
+  },
+  {
+    "query": "what are total maps in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "Maps",
+    "expected_section": "Total Maps"
+  },
+  {
+    "query": "what is the Curry-Howard correspondence",
+    "expected_volume": "lf",
+    "expected_chapter": "ProofObjects",
+    "expected_section": "Proof Scripts"
+  },
+  {
+    "query": "how does the auto tactic work in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "Auto",
+    "expected_section": "The auto Tactic"
+  },
+  {
+    "query": "how do eapply and eauto tactics work",
+    "expected_volume": "lf",
+    "expected_chapter": "Auto",
+    "expected_section": "The eapply and eauto tactics"
+  },
+  {
+    "query": "what is behavioral equivalence of programs",
+    "expected_volume": "plf",
+    "expected_chapter": "Equiv",
+    "expected_section": "Behavioral Equivalence"
+  },
+  {
+    "query": "what is constant folding and how do you prove it sound",
+    "expected_volume": "plf",
+    "expected_chapter": "Equiv",
+    "expected_section": "The Constant-Folding Transformation"
+  },
+  {
+    "query": "what are Hoare triples and how do they work",
+    "expected_volume": "plf",
+    "expected_chapter": "Hoare",
+    "expected_section": "Hoare Triples, Informally"
+  },
+  {
+    "query": "how does the assignment rule work in Hoare logic",
+    "expected_volume": "plf",
+    "expected_chapter": "Hoare",
+    "expected_section": "Assignment"
+  },
+  {
+    "query": "how do while loops work in Hoare logic",
+    "expected_volume": "plf",
+    "expected_chapter": "Hoare",
+    "expected_section": "While Loops"
+  },
+  {
+    "query": "what is small-step operational semantics",
+    "expected_volume": "plf",
+    "expected_chapter": "Smallstep",
+    "expected_section": "A Toy Language"
+  },
+  {
+    "query": "what are values and normal forms in small-step semantics",
+    "expected_volume": "plf",
+    "expected_chapter": "Smallstep",
+    "expected_section": "Values"
+  },
+  {
+    "query": "what is multi-step reduction",
+    "expected_volume": "plf",
+    "expected_chapter": "Smallstep",
+    "expected_section": "Multi-Step Reduction"
+  },
+  {
+    "query": "what is the progress theorem for type systems",
+    "expected_volume": "plf",
+    "expected_chapter": "Types",
+    "expected_section": "Progress"
+  },
+  {
+    "query": "what is type preservation and how do you prove it",
+    "expected_volume": "plf",
+    "expected_chapter": "Types",
+    "expected_section": "Type Preservation"
+  },
+  {
+    "query": "what is type soundness",
+    "expected_volume": "plf",
+    "expected_chapter": "Types",
+    "expected_section": "Type Soundness"
+  },
+  {
+    "query": "what is the simply typed lambda calculus",
+    "expected_volume": "plf",
+    "expected_chapter": "Stlc",
+    "expected_section": "Overview"
+  },
+  {
+    "query": "how does substitution work in lambda calculus",
+    "expected_volume": "plf",
+    "expected_chapter": "Stlc",
+    "expected_section": "Substitution"
+  },
+  {
+    "query": "what is the substitution lemma for STLC",
+    "expected_volume": "plf",
+    "expected_chapter": "StlcProp",
+    "expected_section": "The Substitution Lemma"
+  },
+  {
+    "query": "what is the weakening lemma",
+    "expected_volume": "plf",
+    "expected_chapter": "StlcProp",
+    "expected_section": "The Weakening Lemma"
+  },
+  {
+    "query": "how does insertion sort work and how do you verify it",
+    "expected_volume": "vfa",
+    "expected_chapter": "Sort",
+    "expected_section": "The Insertion-Sort Program"
+  },
+  {
+    "query": "what are permutations and how do you prove a sort is a permutation",
+    "expected_volume": "vfa",
+    "expected_chapter": "Perm",
+    "expected_section": "Permutations"
+  },
+  {
+    "query": "how do binary search trees work in Coq",
+    "expected_volume": "vfa",
+    "expected_chapter": "SearchTree",
+    "expected_section": "BST Implementation"
+  },
+  {
+    "query": "how do red-black trees work and how do you verify them",
+    "expected_volume": "vfa",
+    "expected_chapter": "Redblack",
+    "expected_section": "Implementation"
+  },
+  {
+    "query": "how do priority queues work in Coq",
+    "expected_volume": "vfa",
+    "expected_chapter": "Priqueue",
+    "expected_section": "The Program"
+  },
+  {
+    "query": "what is separation logic and how does it differ from Hoare logic",
+    "expected_volume": "slf",
+    "expected_chapter": "Basic",
+    "expected_section": "A First Taste"
+  },
+  {
+    "query": "what are heap predicates in separation logic",
+    "expected_volume": "slf",
+    "expected_chapter": "Hprop",
+    "expected_section": "Heap Predicates"
+  },
+  {
+    "query": "what is heap entailment in separation logic",
+    "expected_volume": "slf",
+    "expected_chapter": "Himpl",
+    "expected_section": "Definition of Entailment"
+  },
+  {
+    "query": "what is the frame rule in separation logic",
+    "expected_volume": "slf",
+    "expected_chapter": "Himpl",
+    "expected_section": "Frame Rule for Entailment"
+  },
+  {
+    "query": "what are weakest preconditions in separation logic",
+    "expected_volume": "slf",
+    "expected_chapter": "WPsem",
+    "expected_section": "Definition of Weakest Preconditions"
+  },
+  {
+    "query": "what is property-based testing with QuickChick",
+    "expected_volume": "qc",
+    "expected_chapter": "Introduction",
+    "expected_section": "A First Taste of Testing"
+  },
+  {
+    "query": "how do typeclasses work in Coq",
+    "expected_volume": "qc",
+    "expected_chapter": "Typeclasses",
+    "expected_section": "Classes and Instances"
+  },
+  {
+    "query": "how do generators work in QuickChick",
+    "expected_volume": "qc",
+    "expected_chapter": "QC",
+    "expected_section": "Generators"
+  },
+  {
+    "query": "how does shrinking work in property-based testing",
+    "expected_volume": "qc",
+    "expected_chapter": "QC",
+    "expected_section": "Shrinking"
+  },
+  {
+    "query": "what is logical equivalence and iff in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "Logic",
+    "expected_section": "Logical Equivalence"
+  },
+  {
+    "query": "how do modules work in Coq",
+    "expected_volume": "lf",
+    "expected_chapter": "Basics",
+    "expected_section": "Modules"
+  }
+]
