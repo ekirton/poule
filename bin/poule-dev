@@ -312,6 +312,7 @@ if [ ${#ARGS[@]} -eq 0 ]; then
         -w /poule \
         -e HOME="/home/$HOST_USER" \
         -e ANTHROPIC_API_KEY \
+        -e CONTAINER_HOME="$CONTAINER_HOME" \
         -e TZ="${TZ:-UTC}" \
         "$DEV_IMAGE" \
         zsh -c "$INIT_CMD; zsh; poule-mcp stop 2>/dev/null"
@@ -325,6 +326,7 @@ else
         -w /poule \
         -e HOME="/home/$HOST_USER" \
         -e ANTHROPIC_API_KEY \
+        -e CONTAINER_HOME="$CONTAINER_HOME" \
         -e TZ="${TZ:-UTC}" \
         "$DEV_IMAGE" \
         zsh -c "$INIT_CMD; ${ARGS[*]}"

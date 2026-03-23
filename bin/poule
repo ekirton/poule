@@ -320,6 +320,7 @@ if [ ${#ARGS[@]} -eq 0 ]; then
         -w "$PROJECT_DIR" \
         -e ANTHROPIC_API_KEY \
         -e HOME="/home/$HOST_USER" \
+        -e CONTAINER_HOME="$CONTAINER_HOME" \
         -e TZ="${TZ:-UTC}" \
         "$IMAGE"
 elif [[ "${ARGS[0]}" =~ ^($POULE_SUBCOMMANDS)$ ]]; then
@@ -332,6 +333,7 @@ elif [[ "${ARGS[0]}" =~ ^($POULE_SUBCOMMANDS)$ ]]; then
         -w "$PROJECT_DIR" \
         -e ANTHROPIC_API_KEY \
         -e HOME="/home/$HOST_USER" \
+        -e CONTAINER_HOME="$CONTAINER_HOME" \
         -e TZ="${TZ:-UTC}" \
         "$IMAGE" \
         poule "${ARGS[@]}"
@@ -345,6 +347,7 @@ else
         -w "$PROJECT_DIR" \
         -e ANTHROPIC_API_KEY \
         -e HOME="/home/$HOST_USER" \
+        -e CONTAINER_HOME="$CONTAINER_HOME" \
         -e TZ="${TZ:-UTC}" \
         "$IMAGE" \
         "${ARGS[@]}"
