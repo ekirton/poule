@@ -191,7 +191,12 @@ RUN python3 /tmp/validate-index.py && rm -f /tmp/validate-index.py
 # Placed before source COPY so model/SF changes (rare) don't invalidate
 # the source layer.  The education DB is built from SF HTML at image time.
 COPY --chown=${HOST_UID}:${HOST_GID} models/education/ /data/models/education/
-COPY --chown=${HOST_UID}:${HOST_GID} software-foundations/ software-foundations/
+
+# Download SF volumes from upstream (not checked into the repo).
+# CACHEBUST_SF is set by CI when a new SF release is published.
+ARG CACHEBUST_SF=0
+COPY --chown=${HOST_UID}:${HOST_GID} scripts/download-software-foundations.sh /tmp/download-sf.sh
+RUN bash /tmp/download-sf.sh && rm -f /tmp/download-sf.sh
 
 # ── Application code ─────────────────────────────────────────────────────
 COPY --chown=${HOST_UID}:${HOST_GID} src/ src/

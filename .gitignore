@@ -28,6 +28,9 @@ proof-diagram.html
 # Downloaded model files (see scripts/download-education-model.sh)
 models/
 
+# Software Foundations HTML (see scripts/download-software-foundations.sh)
+software-foundations/
+
 # Coq build artifacts
 *.vo
 *.vos
