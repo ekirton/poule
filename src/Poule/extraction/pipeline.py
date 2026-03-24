@@ -11,6 +11,7 @@ import subprocess
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
@@ -351,19 +352,18 @@ _ALL_DECL_KEYWORDS = _PROOF_REQUIRING_KEYWORDS | _AMBIGUOUS_KEYWORDS | frozenset
 })
 
 
-# Cache of .v file text keyed by path, shared within a single extraction run.
-_v_file_cache: dict[str, str | None] = {}
-
-
+# LRU cache for .v file text.  Declarations from the same .vo file
+# reference the same .v source, and processing moves through .vo files
+# sequentially, so a small cache captures nearly all hits.  The cache
+# is cleared in the run_extraction() finally block via
+# ``_get_v_text.cache_clear()``.
+@lru_cache(maxsize=16)
 def _get_v_text(v_path: Path) -> str | None:
-    """Read a .v source file, with caching."""
-    key = str(v_path)
-    if key not in _v_file_cache:
-        try:
-            _v_file_cache[key] = v_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            _v_file_cache[key] = None
-    return _v_file_cache[key]
+    """Read a .v source file, with bounded LRU caching."""
+    try:
+        return v_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
 
 
 def _resolve_v_path(
@@ -849,6 +849,9 @@ def run_extraction(
         name_to_id: dict[str, int] = {}
         all_results: list[Any] = []
         batch: list[Any] = []
+        # Shared cache for symbol FQN resolution (Locate queries) across
+        # all declarations — avoids redundant backend round-trips.
+        resolve_cache: dict[str, str | list[str] | None] = {}
 
         for idx, (name, kind, constr_t, vo_path) in enumerate(all_declarations, 1):
             if progress_callback is not None:
@@ -867,6 +870,7 @@ def run_extraction(
                 result = process_declaration(
                     name, kind, constr_t, backend, module_path,
                     statement=stmt, dependency_names=deps,
+                    resolve_cache=resolve_cache,
                     vo_path=vo_path,
                 )
             except Exception:
@@ -884,7 +888,13 @@ def run_extraction(
                 if ids:
                     name_to_id.update(ids)
                 for r in batch:
+                    # Free fields already written to SQLite that are not
+                    # needed in Phase 2 (dependency resolution only uses
+                    # name, dependency_names, and symbol_set).
                     r.tree = None
+                    r.statement = None
+                    r.type_expr = None
+                    r.wl_vector = None
                 batch = []
 
         # Flush remaining batch
@@ -894,10 +904,14 @@ def run_extraction(
                 name_to_id.update(ids)
             for r in batch:
                 r.tree = None
+                r.statement = None
+                r.type_expr = None
+                r.wl_vector = None
 
         # Free Pass 1 intermediates no longer needed.
         del all_declarations
         decl_data.clear()
+        resolve_cache.clear()
 
         # ------------------------------------------------------------------
         # Pass 2: Dependency resolution
@@ -957,7 +971,7 @@ def run_extraction(
     finally:
         if hasattr(backend, "stop"):
             backend.stop()
-        _v_file_cache.clear()
+        _get_v_text.cache_clear()
 
 
 def _cleanup_db(db_path: Path) -> None:
