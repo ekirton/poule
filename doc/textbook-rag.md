@@ -136,7 +136,7 @@ The Dockerfile will:
 1. COPY `software-foundations/` to `/poule/software-foundations/`
 2. COPY model files to `/data/models/education/`
 3. RUN the build pipeline to produce `/data/education.db`
-4. The SF HTML stays in the image at `/poule/software-foundations/` and is symlinked to `$HOME/software-foundations/` at container startup for browser access
+4. The SF HTML stays in the image at `/poule/software-foundations/` and is copied to `$HOME/software-foundations/` at container startup for browser access
 
 ### 6. Commit and release
 

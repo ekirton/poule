@@ -203,7 +203,7 @@ After completing their primary workflow, these commands call `education_context`
 
 ### Runtime
 
-The entrypoint symlinks `/poule/software-foundations` to `$HOME/software-foundations` so the SF HTML is accessible in the user's persistent home directory (same pattern as the examples/ symlink). The host can browse chapters at `~/poule-home/software-foundations/lf/Basics.html`.
+The entrypoint copies `/poule/software-foundations` to `$HOME/software-foundations` so the SF HTML is accessible in the user's persistent home directory. A real copy (not a symlink) is required because the host cannot follow symlinks into container-internal paths. The host can browse chapters at `~/poule-home/software-foundations/lf/Basics.html`.
 
 ## Module Structure
 

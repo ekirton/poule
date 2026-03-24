@@ -33,10 +33,12 @@ if [ ! -e examples ] && [ -d /poule/examples ]; then
 fi
 
 # ── Software Foundations textbook ──────────────────────────────────────────
-# Symlink baked-in SF HTML into the user's persistent home so the host
+# Copy baked-in SF HTML into the user's persistent home so the host
 # browser can open chapters at ~/poule-home/software-foundations/lf/Basics.html
-if [ ! -e "$HOME/software-foundations" ] && [ -d /poule/software-foundations ]; then
-    ln -sf /poule/software-foundations "$HOME/software-foundations"
+# Must be a real copy, not a symlink — the host cannot follow symlinks into
+# container-internal paths.
+if [ ! -d "$HOME/software-foundations" ] && [ -d /poule/software-foundations ]; then
+    cp -r /poule/software-foundations "$HOME/software-foundations"
 fi
 
 # ── MCP config ──────────────────────────────────────────────────────────
