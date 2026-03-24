@@ -472,6 +472,7 @@ All paths are relative to the Coq base directory returned by `coqc -where`. File
 - ENSURES: When enabled, the extraction pipeline writes progress messages to stderr for each processing stage. When disabled (the default), no progress messages are emitted.
 
 Per-stage message format (per-declaration granularity):
+- Batch queries: `"Querying declaration data [N/M groups]..."`
 - Pass 1: `"Extracting declarations [N/total]"`
 - Pass 2: `"Resolving dependencies [N/total]"`
 
@@ -480,6 +481,8 @@ Each message identifies the current stage name. Messages are written to stderr s
 ### 4.12 Backend Process Lifecycle
 
 **Per-file restart:** The backend process shall be stopped and restarted after processing each `.vo` file during declaration collection. Each `Require Import` permanently loads a module and its transitive dependencies into the coq-lsp process; restarting is the only way to reclaim that memory. Without per-file restarts, libraries like MathComp (105 `.vo` files with deep dependency chains) cause coq-lsp to consume multiple gigabytes of RAM.
+
+**Per-group restart (batched queries):** The backend process shall be stopped and restarted between import-path groups during batched Print + Print Assumptions queries. Each group shares a single `Require Import`; restarting between groups reclaims the memory from previous imports. The backend shall not be restarted after the last group, since Pass 1 processing requires a live backend.
 
 **Notification buffer draining:** The backend shall discard buffered LSP notifications (e.g., `$/progress`) after each document lifecycle (query or batch) completes. coq-lsp emits progress notifications between responses; without draining, these accumulate unboundedly across hundreds of `proof/goals` requests per file.
 
@@ -514,7 +517,7 @@ Error hierarchy:
 - The entire process runs without GPU, network access, or external API keys.
 - Batch size: 1000 declarations per transaction.
 - Progress reporting at per-declaration granularity.
-- **Backend memory:** coq-lsp is restarted after every `.vo` file (§4.12). Peak backend memory is bounded by the single largest module, not cumulative across the library.
+- **Backend memory:** coq-lsp is restarted after every `.vo` file during declaration collection and after every import-path group during batched queries (§4.12). Peak backend memory is bounded by the single largest module, not cumulative across the library.
 - **Kind detection overhead (coq-lsp):** About queries are batched into shared documents (≤100 commands each), and Print + Print Assumptions queries are batched similarly (≤50 declarations = ≤100 lines per document), reducing document lifecycle overhead by 3–10x compared to per-declaration queries. Each Print batch document shall begin with `Require Import <import_path>.` so that declaration names are in scope; names shall be grouped by source module so each group shares a single import preamble.
 
 ## 7. Examples
