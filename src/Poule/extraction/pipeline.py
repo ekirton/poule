@@ -810,32 +810,52 @@ def run_extraction(
                     if alias_fqn != name:
                         re_export_aliases[alias_fqn] = name
         all_declarations = unique_declarations
+        del seen_names  # free dedup lookup; no longer needed
 
         total_decls = len(all_declarations)
 
         # ------------------------------------------------------------------
         # Batch Print + Print Assumptions queries
         # ------------------------------------------------------------------
+        # Group declarations by import path, then query each group with a
+        # fresh coq-lsp process.  Each Require Import permanently loads
+        # the module; restarting between groups reclaims that memory.
         decl_data: dict[str, tuple[str, list[tuple[str, str]]]] = {}
         _query_fn = getattr(backend, "query_declaration_data", None)
         if _query_fn is not None:
-            if progress_callback is not None:
-                progress_callback("Querying declaration data...")
-            decl_names = [name for name, _kind, _constr_t, _vo in all_declarations]
-            name_to_import = {
-                name: CoqLspBackend._vo_to_logical_path(vo)
-                for name, _kind, _constr_t, vo in all_declarations
-            }
+            import_groups: dict[str, list[str]] = {}
+            for name, _kind, _constr_t, vo in all_declarations:
+                imp = CoqLspBackend._vo_to_logical_path(vo)
+                import_groups.setdefault(imp, []).append(name)
+
+            group_items = list(import_groups.items())
+            num_groups = len(group_items)
+            del import_groups  # free the dict; we iterate group_items
+
             try:
-                batch_result = _query_fn(decl_names, name_to_import=name_to_import)
-                # Validate result is a real dict (not a Mock artifact)
-                if isinstance(batch_result, dict):
-                    decl_data = batch_result
+                for grp_idx, (import_path, group_names) in enumerate(group_items, 1):
+                    if progress_callback is not None:
+                        progress_callback(
+                            f"Querying declaration data [{grp_idx}/{num_groups}]..."
+                        )
+                    name_to_import = {n: import_path for n in group_names}
+                    batch_result = _query_fn(
+                        group_names, name_to_import=name_to_import,
+                    )
+                    if isinstance(batch_result, dict):
+                        decl_data.update(batch_result)
+
+                    # Restart backend between groups to reclaim memory.
+                    if grp_idx < num_groups:
+                        backend.stop()
+                        backend.start()
             except ExtractionError:
                 _cleanup_db(db_path)
                 raise
             except Exception:
                 logger.debug("query_declaration_data not available, using per-declaration queries")
+
+            del group_items  # free group names list
 
         # ------------------------------------------------------------------
         # Pass 1: Per-declaration processing with batching

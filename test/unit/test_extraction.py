@@ -1731,6 +1731,76 @@ class TestFullRunIntegration:
             all_inserted.extend(batch)
         assert len(all_inserted) == 1
 
+    def test_query_phase_restarts_backend_between_import_groups(
+        self, tmp_path
+    ):
+        """Backend is restarted between import-path groups during batch
+        queries to reclaim coq-lsp memory (specification §4.12)."""
+        from Poule.extraction.pipeline import run_extraction
+
+        # Two .vo files from different modules → two import-path groups.
+        vo1 = Path("/fake/user-contrib/Pkg/Mod1.vo")
+        vo2 = Path("/fake/user-contrib/Pkg/Mod2.vo")
+
+        # Each .vo file yields one declaration.
+        def fake_list_declarations(vo_path):
+            if vo_path == vo1:
+                return [("Pkg.Mod1.foo", "Lemma", {"type_signature": "nat", "source": "coq-lsp"})]
+            if vo_path == vo2:
+                return [("Pkg.Mod2.bar", "Lemma", {"type_signature": "nat", "source": "coq-lsp"})]
+            return []
+
+        backend = _make_mock_backend()
+        backend.list_declarations.side_effect = fake_list_declarations
+        backend.query_declaration_data.side_effect = lambda names, **kw: {
+            n: ("stmt", []) for n in names
+        }
+
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"Pkg.Mod1.foo": 1, "Pkg.Mod2.bar": 2}
+
+        mock_r1 = Mock()
+        mock_r1.name = "Pkg.Mod1.foo"
+        mock_r1.dependency_names = []
+        mock_r2 = Mock()
+        mock_r2.name = "Pkg.Mod2.bar"
+        mock_r2.dependency_names = []
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=[vo1, vo2],
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                side_effect=[mock_r1, mock_r2],
+            ),
+        ):
+            run_extraction(targets=["stdlib"], db_path=tmp_path / "test.db")
+
+        # Collecting phase: 2 .vo files → 2 stop/start pairs (per-file restart).
+        # Query phase: 2 import groups → 1 inter-group stop/start pair.
+        # Total: 3 stop calls, 3 start calls (initial start is in run_extraction).
+        assert backend.stop.call_count >= 3, (
+            f"Expected >= 3 stop() calls (2 per-file + 1 inter-group), "
+            f"got {backend.stop.call_count}"
+        )
+        assert backend.start.call_count >= 3, (
+            f"Expected >= 3 start() calls (2 per-file + 1 inter-group), "
+            f"got {backend.start.call_count}"
+        )
+
+        # query_declaration_data was called twice (once per group).
+        assert backend.query_declaration_data.call_count == 2
+
     def test_pipeline_order_is_pass1_then_pass2_then_postprocess(
         self, tmp_path
     ):
