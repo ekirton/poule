@@ -1,14 +1,14 @@
 # E2E Test Results
 
-Tested: 2026-03-23 (full retest of all prompts)
+Tested: 2026-03-24 (retested prompt 1.4 only)
 
 Run `/run-e2e` to retest prompts and update this file.
 
-**Summary: 98 PASS, 1 FAIL, 0 SKIP (99 total)**
+**Summary: 99 PASS, 0 FAIL, 0 SKIP (99 total)**
 
 | Section | PASS | FAIL | SKIP |
 |---------|------|------|------|
-| 1. Discovery and Search | 14 | 1 | 0 |
+| 1. Discovery and Search | 15 | 0 | 0 |
 | 2. Understanding Errors | 10 | 0 | 0 |
 | 3. Navigation | 10 | 0 | 0 |
 | 4. Proof Construction | 23 | 0 | 0 |
@@ -27,7 +27,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 1.1 | Find lemmas about list reversal being involutive | PASS | search_by_name returned Coq.Lists.List.rev_involutive with score 1.0 |
 | 1.2 | Which lemmas in stdlib mention both Nat.add and Nat.mul? | PASS | search_by_symbols returned 50 results for ["Corelib.Init.Nat.add", "Corelib.Init.Nat.mul"] |
 | 1.3 | Search for lemmas with type forall n : nat, n + 0 = n | PASS | search_by_type returned results including Coq.Arith.PeanoNat.Nat.add_0_r and Coq.Init.Peano.plus_n_O |
-| 1.4 | Find a lemma of type List.map f (List.map g l) = List.map (fun x => f (g x)) l | FAIL | search_by_type returned 50 results but none match List.map_map — Coq.Lists.List.map_map lacks structural data in the index (no constr_tree, no WL histogram, empty symbol_set) so only FTS can reach it |
+| 1.4 | Find a lemma of type List.map f (List.map g l) = List.map (fun x => f (g x)) l | PASS | search_by_type returned 50 results with Coq.Lists.List.map_map at rank 3 (score 0.016) — FTS and MePo channels now resolve qualified names and tokenize type expressions correctly |
 | 1.5 | Find all commutativity lemmas in MathComp — anything matching _ * _ = _ * _ | PASS | search_by_structure returned 50 results with scores up to 0.48 |
 | 1.6 | Find lemmas concluding with _ + _ <= _ | PASS | search_by_structure returned 50 results with scores up to 0.53 |
 | 1.7 | What rewrites exist for Nat.add n 0? | PASS | search_by_name returned 12 results including Nat.add_0_r, Nat.add_0_l, and Z.add_0_r |
@@ -168,9 +168,4 @@ Run `/run-e2e` to retest prompts and update this file.
 
 ## Remaining Issues
 
-### search_by_type misses higher-order queries (1.4)
-- `search_by_type` for the `List.map` composition lemma returned 50 results but none matched `List.map_map`
-- **Query normalization (implemented)**: `search_by_type` now resolves short constant names to FQNs, detects free variables (`f`, `g`, `l`) and wraps them in forall binders converting `Const` nodes to `Rel`, and uses a relaxed WL size filter (2.0 vs 1.2). This enables structural and symbol channels to match queries written as type patterns against fully-quantified indexed types. Verified working for declarations that have structural data.
-- **Incomplete index data (partially fixed)**: `Coq.Lists.List.map_map` has `node_count=1`, no `constr_tree`, no WL histogram, and empty `symbol_set` in the index. Before parser improvements, 31% of declarations (36,847 of 119,077) lacked structural data. TypeExprParser extensions (Unicode normalization, `:=` handling, `'` prefix, `{||}` records, `++`/`::`/`==` operators, `exists` keyword) recover 72% of the gap — after index rebuild, ~9% will remain without structural data. Indexes must be rebuilt to apply the fix. This is the primary reason the test still fails.
-- **Remaining gap — FQN display name mismatch**: the user writes `List.map` but the index stores the canonical definition FQN `ListDef.map` (Coq re-exports `ListDef.map` as `List.map`). The suffix index has `map` but not `List.map`, so FQN resolution fails for this specific name.
-- **Remaining gap — binder type approximation**: forall-wrapped free variables receive `Sort("Type")` as binder type, while indexed types have concrete binder types (e.g., `A -> B`, `list A`). The outer quantifier nodes score lower on structural matching, but the body — the majority of both trees — matches well.
+None.

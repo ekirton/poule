@@ -126,8 +126,8 @@ Algorithm:
 4. `wl_histogram(tree, h=3)` → query histogram
 5. `wl_screen(histogram, query_node_count, ctx.wl_histograms, ctx.declaration_node_counts, n=500, size_ratio=2.0)` → candidates with WL scores
 6. Structural scoring subroutine (§4.7) on candidates, passing `auto_binder_count` → structural ranked list
-7. `extract_consts(tree)` → query symbols; run `mepo_select(symbols, ...)` → symbol ranked list
-8. `fts_query(type_expr)` → FTS5 query; `fts_search(query, limit=limit, reader)` → lexical ranked list
+7. `extract_consts(tree)` → raw query symbols; `resolve_query_symbols(ctx, symbols)` (§4.5.1) → resolved FQN set; run `mepo_select(resolved_set, ...)` → symbol ranked list
+8. Extract identifier tokens from `type_expr` (match `[a-zA-Z_][a-zA-Z0-9_.]*`, flatten dotted tokens by splitting on `.`, deduplicate preserving order, drop Coq keywords and single-character tokens), join with spaces → cleaned input; `fts_query(cleaned)` → FTS5 query; `fts_search(query, limit=limit, reader)` → lexical ranked list. This ensures `fts_query` applies Rule 3 (whitespace-split OR) rather than Rule 1 (dot-split AND) on type expressions.
 9. If `ctx.neural_encoder` is not null and `ctx.embedding_index` is not null: `neural_retrieve(ctx, type_expr, limit=50)` → neural ranked list
 10. `rrf_fuse([structural, symbol, lexical, neural?], k=60)` → final ranked list (neural omitted if unavailable)
 11. Take top `limit`, construct `SearchResult` objects
@@ -187,7 +187,8 @@ Resolution per symbol:
 1. **Exact match**: If the symbol is an exact key in `ctx.inverted_index`, use it directly (it is already an FQN).
 2. **Suffix match**: Otherwise, look up the symbol in `ctx.suffix_index`. If found, expand to all matching FQNs.
 3. **Prefix alias**: If neither exact nor suffix match succeeds, call `alias_prefix(symbol)` (§4.1.1). If the aliased form matches in the inverted index or suffix index, use those results.
-4. **Passthrough**: If the symbol matches none of the above, include it as-is. MePo handles unknown symbols gracefully (they simply match no declarations in the inverted index lookup).
+4. **Suffix expansion fallback**: If steps 1–3 all fail AND the symbol contains a dot (`.`), try expanding shorter suffixes of the symbol. Split on `.` and look up each proper suffix (from shortest to longest) in the inverted index and suffix index. Include all matching FQNs. This handles re-exported names where the user's qualifier does not appear in the canonical FQN path (e.g., `List.map` → suffix `map` → finds `Coq.Lists.ListDef.map` and others).
+5. **Passthrough**: If the symbol matches none of the above, include it as-is. MePo handles unknown symbols gracefully (they simply match no declarations in the inverted index lookup).
 
 > **Given** `symbols = ["Nat.add", "Nat.mul"]` and the index contains FQNs `Coq.Init.Nat.add` and `Coq.Init.Nat.mul`,
 > **When** `resolve_query_symbols` is called,
@@ -200,6 +201,10 @@ Resolution per symbol:
 > **Given** `symbols = ["add"]` where `"add"` matches `Coq.Init.Nat.add`, `Coq.NArith.BinNat.N.add`, and `Coq.ZArith.BinInt.Z.add`,
 > **When** `resolve_query_symbols` is called,
 > **Then** all three FQNs are included in the resolved set.
+
+> **Given** `symbols = ["List.map"]` where `"List.map"` is not in the inverted index or suffix index, but the suffix `"map"` matches `Coq.Lists.ListDef.map`, `Coq.Init.Datatypes.map`, and others in the suffix index,
+> **When** `resolve_query_symbols` is called,
+> **Then** suffix expansion fallback splits `"List.map"` → suffix `"map"` → all matching FQNs are included in the resolved set.
 
 ### 4.6 search_by_name
 

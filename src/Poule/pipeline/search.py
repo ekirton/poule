@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +29,38 @@ class NormalizationError(Exception):
     pass
 
 logger = logging.getLogger(__name__)
+
+# ---- FTS tokenization helpers for type expressions ----
+
+_IDENT_RE = re.compile(r'[a-zA-Z_][a-zA-Z0-9_.]*')
+_COQ_KEYWORDS = frozenset({
+    "forall", "fun", "match", "let", "in", "if", "then",
+    "else", "return", "as", "with", "end", "fix", "cofix",
+})
+
+
+def _clean_type_expr_for_fts(type_expr: str) -> str:
+    """Extract identifier tokens from a type expression for FTS search.
+
+    Splits qualified names on dots (``List.map`` → ``List``, ``map``),
+    filters Coq keywords and single-character tokens, deduplicates
+    preserving order.  The result contains no dots, so ``fts_query``
+    applies Rule 3 (whitespace-split OR) instead of Rule 1 (dot-split AND).
+    """
+    raw_tokens = _IDENT_RE.findall(type_expr)
+    flat: list[str] = []
+    for t in raw_tokens:
+        flat.extend(t.split("."))
+    seen: set[str] = set()
+    result: list[str] = []
+    for t in flat:
+        low = t.lower()
+        if low in _COQ_KEYWORDS or len(t) <= 1:
+            continue
+        if t not in seen:
+            seen.add(t)
+            result.append(t)
+    return " ".join(result) if result else type_expr
 
 
 @dataclass
@@ -136,7 +169,18 @@ def resolve_query_symbols(ctx: Any, symbols: list[str]) -> set[str]:
             if "." in sym:
                 resolved.update(_expand_suffixes(sym, ctx))
         else:
-            resolved.add(sym)
+            # Suffix expansion fallback for qualified names (spec §4.5.1
+            # step 4): when primary resolution fails and the symbol has
+            # dots, try shorter suffixes to find related index keys.
+            # e.g. "List.map" → suffix "map" → Coq.Lists.ListDef.map
+            if "." in sym:
+                expanded = _expand_suffixes(sym, ctx)
+                if expanded:
+                    resolved.update(expanded)
+                else:
+                    resolved.add(sym)  # passthrough
+            else:
+                resolved.add(sym)  # passthrough
     return resolved
 
 
@@ -519,8 +563,12 @@ def search_by_type(ctx: Any, type_expr: str, limit: int) -> list[Any]:
         auto_binder_count=auto_binder_count,
     )
 
-    # Step 3: Symbol channel via MePo
-    query_symbols = extract_consts(cse_tree)
+    # Step 3: Symbol channel via MePo — resolve extracted symbols to FQNs
+    # before passing to MePo (spec §4.4 step 7). This handles qualified
+    # names like "List.map" that extract_consts preserves literally but
+    # that aren't keys in the inverted index.
+    raw_query_symbols = extract_consts(cse_tree)
+    query_symbols = resolve_query_symbols(ctx, list(raw_query_symbols))
     mepo_results = mepo_select(
         query_symbols,
         ctx.inverted_index,
@@ -531,8 +579,12 @@ def search_by_type(ctx: Any, type_expr: str, limit: int) -> list[Any]:
         max_rounds=5,
     )
 
-    # Step 4: Lexical channel via FTS
-    query = fts_query(type_expr)
+    # Step 4: Lexical channel via FTS — extract identifier tokens from the
+    # type expression and flatten dots so fts_query applies Rule 3 (OR join)
+    # instead of Rule 1 (dot-split AND) which produces garbage for type
+    # expressions containing qualified names like "List.map".
+    fts_input = _clean_type_expr_for_fts(type_expr)
+    query = fts_query(fts_input)
     fts_results = fts_search(query, limit=limit, reader=ctx.reader)
     # Convert SearchResult objects to (name, score) pairs for RRF
     fts_pairs = [(r.name, r.score) for r in fts_results]

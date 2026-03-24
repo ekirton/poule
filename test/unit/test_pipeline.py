@@ -557,6 +557,44 @@ class TestResolveQuerySymbols:
         assert "Nat.add" in resolved
         assert "Nat.mul" in resolved
 
+    def test_qualified_name_suffix_expansion_fallback(self):
+        """When a qualified name like 'List.map' fails primary resolution
+        (not in inverted_index, not in suffix_index), suffix expansion
+        should find FQNs by trying shorter suffixes (spec §4.5.1 step 4).
+
+        'List.map' -> try suffix 'map' -> finds 'Coq.Lists.ListDef.map'
+        in suffix_index."""
+        from Poule.pipeline.search import resolve_query_symbols
+
+        ctx = _mock_context()
+        # Add a 'map'-related FQN that would be found via suffix expansion
+        ctx.inverted_index["Coq.Lists.ListDef.map"] = {4}
+        ctx.suffix_index = _build_suffix_index(ctx.inverted_index)
+        # 'List.map' is NOT in the suffix index (no re-export alias)
+        assert "List.map" not in ctx.suffix_index
+
+        resolved = resolve_query_symbols(ctx, ["List.map"])
+
+        # Must find 'Coq.Lists.ListDef.map' via suffix expansion of 'map'
+        assert "Coq.Lists.ListDef.map" in resolved
+        # Must NOT passthrough the unresolvable name
+        assert "List.map" not in resolved
+
+    def test_qualified_name_suffix_expansion_includes_all_matches(self):
+        """Suffix expansion for an unresolvable qualified name includes all
+        FQNs matching the suffix, not just the first."""
+        from Poule.pipeline.search import resolve_query_symbols
+
+        ctx = _mock_context()
+        ctx.inverted_index["Coq.Lists.ListDef.map"] = {4}
+        ctx.inverted_index["Coq.Init.Datatypes.map"] = {5}
+        ctx.suffix_index = _build_suffix_index(ctx.inverted_index)
+
+        resolved = resolve_query_symbols(ctx, ["List.map"])
+
+        assert "Coq.Lists.ListDef.map" in resolved
+        assert "Coq.Init.Datatypes.map" in resolved
+
 
 class TestAliasPrefix:
     """alias_prefix: bidirectional Coq ↔ Corelib prefix aliasing (§4.1.1)."""
@@ -977,6 +1015,140 @@ class TestSearchByTypeRealFusion:
             assert isinstance(decl_id, (int, str)), (
                 f"Expected decl_id to be int or str, got {type(decl_id).__name__}: {decl_id!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# 8c. search_by_type: MePo resolves extracted symbols (spec §4.4 step 7)
+# ---------------------------------------------------------------------------
+
+
+class TestSearchByTypeMePoResolution:
+    """search_by_type must resolve extracted symbols via resolve_query_symbols
+    before passing to mepo_select (spec §4.4 step 7)."""
+
+    @patch("Poule.pipeline.search.rrf_fuse")
+    @patch("Poule.pipeline.search.fts_search")
+    @patch("Poule.pipeline.search.fts_query")
+    @patch("Poule.pipeline.search.mepo_select")
+    @patch("Poule.pipeline.search.resolve_query_symbols")
+    @patch("Poule.pipeline.search.extract_consts")
+    @patch("Poule.pipeline.search.score_candidates")
+    @patch("Poule.pipeline.search.wl_screen")
+    @patch("Poule.pipeline.search.wl_histogram")
+    @patch("Poule.pipeline.search.cse_normalize")
+    @patch("Poule.pipeline.search.coq_normalize")
+    def test_mepo_receives_resolved_symbols(
+        self,
+        mock_coq_norm,
+        mock_cse_norm,
+        mock_wl_hist,
+        mock_wl_screen,
+        mock_score,
+        mock_extract,
+        mock_resolve,
+        mock_mepo,
+        mock_fts_query,
+        mock_fts_search,
+        mock_rrf,
+    ):
+        """extract_consts output is passed through resolve_query_symbols
+        before mepo_select, so qualified names like 'List.map' get resolved."""
+        parser = _mock_parser()
+        ctx = _mock_context(parser=parser)
+
+        cse_tree = MagicMock()
+        cse_tree.node_count = 10
+        mock_coq_norm.return_value = MagicMock()
+        mock_cse_norm.return_value = cse_tree
+        mock_wl_hist.return_value = {}
+        mock_wl_screen.return_value = []
+        mock_score.return_value = []
+
+        # extract_consts returns unresolved qualified names
+        mock_extract.return_value = {"List.map", "eq"}
+        # resolve_query_symbols resolves them to FQNs
+        mock_resolve.return_value = {"Coq.Lists.ListDef.map", "Coq.Init.Logic.eq"}
+        mock_mepo.return_value = []
+        mock_fts_query.return_value = "List OR map"
+        mock_fts_search.return_value = []
+        mock_rrf.return_value = []
+
+        search_by_type(ctx, "List.map f l = l", limit=20)
+
+        # resolve_query_symbols must be called with the raw extracted symbols
+        mock_resolve.assert_called_once()
+        raw_syms = mock_resolve.call_args[0][1]
+        assert set(raw_syms) == {"List.map", "eq"}
+
+        # mepo_select must receive the RESOLVED symbols, not the raw ones
+        mock_mepo.assert_called_once()
+        mepo_syms = mock_mepo.call_args[0][0]
+        assert "Coq.Lists.ListDef.map" in mepo_syms
+        assert "List.map" not in mepo_syms
+
+
+# ---------------------------------------------------------------------------
+# 8d. search_by_type: FTS query uses cleaned tokens (spec §4.4 step 8)
+# ---------------------------------------------------------------------------
+
+
+class TestSearchByTypeFtsTokenization:
+    """search_by_type must extract identifier tokens from the type expression
+    and flatten dots before passing to fts_query, so Rule 3 (OR) applies
+    instead of Rule 1 (dot-split AND)."""
+
+    @patch("Poule.pipeline.search.rrf_fuse")
+    @patch("Poule.pipeline.search.fts_search")
+    @patch("Poule.pipeline.search.fts_query")
+    @patch("Poule.pipeline.search.mepo_select")
+    @patch("Poule.pipeline.search.extract_consts")
+    @patch("Poule.pipeline.search.score_candidates")
+    @patch("Poule.pipeline.search.wl_screen")
+    @patch("Poule.pipeline.search.wl_histogram")
+    @patch("Poule.pipeline.search.cse_normalize")
+    @patch("Poule.pipeline.search.coq_normalize")
+    def test_fts_query_receives_cleaned_tokens_not_raw_expr(
+        self,
+        mock_coq_norm,
+        mock_cse_norm,
+        mock_wl_hist,
+        mock_wl_screen,
+        mock_score,
+        mock_extract,
+        mock_mepo,
+        mock_fts_query,
+        mock_fts_search,
+        mock_rrf,
+    ):
+        """For type expressions containing dots (e.g., 'List.map f l'),
+        fts_query must receive cleaned tokens (no dots), not the raw string."""
+        parser = _mock_parser()
+        ctx = _mock_context(parser=parser)
+
+        cse_tree = MagicMock()
+        cse_tree.node_count = 10
+        mock_coq_norm.return_value = MagicMock()
+        mock_cse_norm.return_value = cse_tree
+        mock_wl_hist.return_value = {}
+        mock_wl_screen.return_value = []
+        mock_score.return_value = []
+        mock_extract.return_value = set()
+        mock_mepo.return_value = []
+        mock_fts_query.return_value = "List OR map"
+        mock_fts_search.return_value = []
+        mock_rrf.return_value = []
+
+        type_expr = "List.map f (List.map g l) = List.map (fun x => f (g x)) l"
+        search_by_type(ctx, type_expr, limit=20)
+
+        # fts_query must NOT receive the raw type_expr (which contains dots)
+        fts_input = mock_fts_query.call_args[0][0]
+        assert "." not in fts_input, (
+            f"fts_query received dotted input: {fts_input!r}; "
+            f"expected cleaned tokens without dots"
+        )
+        # Must contain the significant identifier 'map'
+        assert "map" in fts_input.lower()
 
 
 # ---------------------------------------------------------------------------

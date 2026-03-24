@@ -20,6 +20,9 @@ Which lemmas in stdlib mention both Nat.add and Nat.mul?
 ```
 Search for lemmas with type forall n : nat, n + 0 = n
 ```
+```
+Find a lemma of type List.map f (List.map g l) = List.map (fun x => f (g x)) l
+```
 
 **Find lemmas matching a structural pattern:**
 ```
