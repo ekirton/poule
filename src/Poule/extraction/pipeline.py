@@ -892,9 +892,12 @@ def run_extraction(
                     # needed in Phase 2 (dependency resolution only uses
                     # name, dependency_names, and symbol_set).
                     r.tree = None
+                    r.kind = None
+                    r.module = None
                     r.statement = None
                     r.type_expr = None
                     r.wl_vector = None
+                    r.has_proof_body = None
                 batch = []
 
         # Flush remaining batch
@@ -904,9 +907,12 @@ def run_extraction(
                 name_to_id.update(ids)
             for r in batch:
                 r.tree = None
+                r.kind = None
+                r.module = None
                 r.statement = None
                 r.type_expr = None
                 r.wl_vector = None
+                r.has_proof_body = None
 
         # Free Pass 1 intermediates no longer needed.
         del all_declarations

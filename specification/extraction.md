@@ -260,7 +260,7 @@ For each declaration extracted from a `.vo` file:
 > **When** proof-body detection runs
 > **Then** `has_proof_body = 0` (conservative default)
 
-The declaration row (including `has_proof_body`), WL vector, and declaration data are co-inserted in the same batch transaction (batch size: 1000 declarations). After each batch is flushed to SQLite, the pipeline releases fields that are no longer needed (`tree`, `statement`, `type_expr`, `wl_vector`) from in-memory results. Only fields required by Pass 2 (`name`, `dependency_names`, `symbol_set`) are retained.
+The declaration row (including `has_proof_body`), WL vector, and declaration data are co-inserted in the same batch transaction (batch size: 1000 declarations). After each batch is flushed to SQLite, the pipeline releases all fields not required by Pass 2 from in-memory results. Only `name`, `dependency_names`, and `symbol_set` are retained; `tree`, `kind`, `module`, `statement`, `type_expr`, `wl_vector`, and `has_proof_body` are set to `None`.
 
 **Individual declaration failure**: When normalization or extraction fails for a single declaration, log the declaration name and error, then continue to the next declaration. The index is usable with partial coverage.
 
