@@ -306,9 +306,21 @@ MAINTAINS: After resolution, the `symbol_set` column in `declarations` and the `
 > **When** `Locate my_custom_def.` returns an error,
 > **Then** the symbol `my_custom_def` is stored as-is in the symbol set.
 
-**Declaration deduplication**: When multiple `.vo` files contain the same fully qualified declaration name (e.g., via module re-exports), the pipeline shall keep the first occurrence and skip subsequent duplicates. Duplicates are detected after collection and before Pass 1 processing.
+**Re-export detection and alias capture**: After collection and before Pass 1 processing, the pipeline shall detect re-exported declarations using the `declared_library` metadata from About (§4.1.1). For each collected declaration, if `declared_library` is available, the pipeline shall normalize it to the canonical module convention (`Stdlib.X.Y` → `Coq.X.Y`, `Corelib.X.Y` → `Coq.X.Y`, other prefixes unchanged) and compare it with the `.vo` file's canonical module (from `_vo_to_canonical_module`). When these differ, the declaration is a re-export: the pipeline shall skip it and record an alias mapping from the re-export FQN to the canonical FQN. The canonical FQN is `{normalized_declared_library}.{short_name}` where `short_name` is the last dot-separated component of the re-export FQN. All collected aliases are stored in the index via `writer.insert_re_export_aliases(aliases)` after Pass 1 completes.
 
-**Re-export alias capture**: During deduplication, when a duplicate declaration is found from a different `.vo` file, the pipeline shall derive a re-export alias. The alias FQN is computed by replacing the canonical declaration's module prefix with the re-export `.vo` file's module path. Specifically: given canonical FQN `M1.X.f` found again in module `M2.Y` (from a different `.vo`), the alias is `M2.Y.f` where `f` is the declaration's short name (the last dot-separated component of the canonical FQN). All collected aliases are stored in the index via `writer.insert_re_export_aliases(aliases)` after Pass 1 completes.
+**Declaration deduplication (fallback)**: When `declared_library` is unavailable (`None`, e.g., Coq ≤8.x), the pipeline shall fall back to FQN-matching deduplication: keep the first occurrence and skip subsequent duplicates with the same fully qualified name.
+
+> **Given** `ListDef.vo` yields declaration `Coq.Lists.ListDef.map` with `declared_library="Stdlib.Lists.ListDef"`, and `List.vo` yields declaration `Coq.Lists.List.map` with `declared_library="Stdlib.Lists.ListDef"`,
+> **When** the pipeline runs re-export detection,
+> **Then** `Coq.Lists.List.map` is skipped and `re_export_aliases["Coq.Lists.List.map"] == "Coq.Lists.ListDef.map"`.
+
+> **Given** `Nat.vo` yields declaration `Coq.Init.Nat.add` with `declared_library="Corelib.Init.Nat"`,
+> **When** the pipeline runs re-export detection,
+> **Then** `Coq.Init.Nat.add` is kept (normalized `declared_library` matches canonical module) and no alias is recorded.
+
+> **Given** a declaration with `declared_library=None` (Coq 8.x),
+> **When** the pipeline runs re-export detection,
+> **Then** the declaration is processed by fallback FQN-matching deduplication.
 
 ### 4.5 Pass 2 — Dependency Resolution
 

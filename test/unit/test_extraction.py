@@ -2631,16 +2631,23 @@ class TestReExportAliasCapture:
     Spec: extraction.md §4.4 "Re-export alias capture"."""
 
     def test_re_export_alias_captured(self, tmp_path):
-        """Canonical FQN Coq.Lists.ListDef.map from ListDef.vo, same name
-        found again from List.vo → alias Coq.Lists.List.map is stored."""
+        """ListDef.vo has canonical Coq.Lists.ListDef.map; List.vo re-exports
+        it as Coq.Lists.List.map (different FQN, same declared_library).
+        The re-export is detected via declared_library and an alias is stored."""
         from Poule.extraction.pipeline import run_extraction
 
         backend = _make_mock_backend()
-        # ListDef.vo has the canonical declaration
-        # List.vo has the re-export (same canonical FQN)
+        # list_declarations returns DIFFERENT FQNs from different .vo files
+        # (this matches real behavior: FQN = canonical_module + short_name)
         backend.list_declarations.side_effect = [
-            [("Coq.Lists.ListDef.map", "Definition", {"mock": "constr1"})],
-            [("Coq.Lists.ListDef.map", "Definition", {"mock": "constr2"})],
+            [("Coq.Lists.ListDef.map", "Definition", {
+                "declared_library": "Stdlib.Lists.ListDef",
+                "type_signature": "forall A B, (A -> B) -> list A -> list B",
+            })],
+            [("Coq.Lists.List.map", "Definition", {
+                "declared_library": "Stdlib.Lists.ListDef",
+                "type_signature": "forall A B, (A -> B) -> list A -> list B",
+            })],
         ]
         writer = _make_mock_writer()
         writer.batch_insert.return_value = {"Coq.Lists.ListDef.map": 1}
@@ -2657,8 +2664,8 @@ class TestReExportAliasCapture:
             patch(
                 "Poule.extraction.pipeline.discover_libraries",
                 return_value=[
-                    Path("/fake/lib/ListDef.vo"),
-                    Path("/fake/lib/List.vo"),
+                    Path("/fake/user-contrib/Stdlib/Lists/ListDef.vo"),
+                    Path("/fake/user-contrib/Stdlib/Lists/List.vo"),
                 ],
             ),
             patch(
@@ -2673,11 +2680,6 @@ class TestReExportAliasCapture:
                 "Poule.extraction.pipeline.process_declaration",
                 return_value=result_mock,
             ),
-            patch(
-                "Poule.extraction.pipeline.CoqLspBackend._vo_to_canonical_module",
-                # Called during dedup (first_module, dup_module) and processing
-                side_effect=["Coq.Lists.ListDef", "Coq.Lists.List", "Coq.Lists.ListDef"],
-            ),
         ):
             run_extraction(targets=["stdlib"], db_path=db_path)
 
@@ -2688,13 +2690,16 @@ class TestReExportAliasCapture:
         assert aliases["Coq.Lists.List.map"] == "Coq.Lists.ListDef.map"
 
     def test_no_alias_when_same_module(self, tmp_path):
-        """When duplicate comes from same module (same .vo), no alias."""
+        """When declared_library matches the .vo file's canonical module,
+        no alias is recorded — the declaration is not a re-export."""
         from Poule.extraction.pipeline import run_extraction
 
         backend = _make_mock_backend()
         backend.list_declarations.side_effect = [
-            [("Coq.Init.Nat.add", "Definition", {"mock": "c1"})],
-            [("Coq.Init.Nat.add", "Definition", {"mock": "c2"})],
+            [("Coq.Init.Nat.add", "Definition", {
+                "declared_library": "Corelib.Init.Nat",
+                "type_signature": "nat -> nat -> nat",
+            })],
         ]
         writer = _make_mock_writer()
         writer.batch_insert.return_value = {"Coq.Init.Nat.add": 1}
@@ -2711,8 +2716,7 @@ class TestReExportAliasCapture:
             patch(
                 "Poule.extraction.pipeline.discover_libraries",
                 return_value=[
-                    Path("/fake/lib/Nat.vo"),
-                    Path("/fake/lib/Nat2.vo"),
+                    Path("/fake/user-contrib/Stdlib/Init/Nat.vo"),
                 ],
             ),
             patch(
@@ -2727,11 +2731,6 @@ class TestReExportAliasCapture:
                 "Poule.extraction.pipeline.process_declaration",
                 return_value=result_mock,
             ),
-            patch(
-                "Poule.extraction.pipeline.CoqLspBackend._vo_to_canonical_module",
-                # Called during dedup (first_module, dup_module) and processing
-                side_effect=["Coq.Init.Nat", "Coq.Init.Nat", "Coq.Init.Nat"],
-            ),
         ):
             run_extraction(targets=["stdlib"], db_path=db_path)
 
@@ -2739,6 +2738,92 @@ class TestReExportAliasCapture:
         writer.insert_re_export_aliases.assert_called_once()
         aliases = writer.insert_re_export_aliases.call_args[0][0]
         assert len(aliases) == 0
+
+    def test_re_export_declared_library_none(self, tmp_path):
+        """When declared_library is None (Coq 8.x), fallback dedup runs
+        and no alias is captured for declarations with different FQNs."""
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend()
+        backend.list_declarations.side_effect = [
+            [("Coq.Init.Nat.add", "Definition", {"type_signature": "nat -> nat -> nat"})],
+            [("Coq.Init.Nat2.add", "Definition", {"type_signature": "nat -> nat -> nat"})],
+        ]
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"Coq.Init.Nat.add": 1, "Coq.Init.Nat2.add": 2}
+
+        result_mock = Mock()
+        result_mock.name = "Coq.Init.Nat.add"
+        result_mock.kind = "definition"
+        result_mock.symbol_set = []
+        result_mock.dependency_names = []
+
+        db_path = tmp_path / "index.db"
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=[
+                    Path("/fake/user-contrib/Stdlib/Init/Nat.vo"),
+                    Path("/fake/user-contrib/Stdlib/Init/Nat2.vo"),
+                ],
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                return_value=result_mock,
+            ),
+        ):
+            run_extraction(targets=["stdlib"], db_path=db_path)
+
+        # No aliases — declared_library is absent, different FQNs
+        writer.insert_re_export_aliases.assert_called_once()
+        aliases = writer.insert_re_export_aliases.call_args[0][0]
+        assert len(aliases) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 13b. _normalize_declared_library — §4.4
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestNormalizeDeclaredLibrary:
+    """_normalize_declared_library converts declared_library strings to
+    canonical module format matching _vo_to_canonical_module output.
+
+    Spec: extraction.md §4.4 re-export detection normalization."""
+
+    def test_stdlib_prefix(self):
+        from Poule.extraction.pipeline import _normalize_declared_library
+
+        assert _normalize_declared_library("Stdlib.Numbers.NatInt.NZAdd") == "Coq.Numbers.NatInt.NZAdd"
+
+    def test_corelib_prefix(self):
+        from Poule.extraction.pipeline import _normalize_declared_library
+
+        assert _normalize_declared_library("Corelib.Init.Nat") == "Coq.Init.Nat"
+
+    def test_non_stdlib_unchanged(self):
+        from Poule.extraction.pipeline import _normalize_declared_library
+
+        assert _normalize_declared_library("mathcomp.ssreflect.ssrbool") == "mathcomp.ssreflect.ssrbool"
+
+    def test_bare_stdlib(self):
+        from Poule.extraction.pipeline import _normalize_declared_library
+
+        assert _normalize_declared_library("Stdlib") == "Coq"
+
+    def test_bare_corelib(self):
+        from Poule.extraction.pipeline import _normalize_declared_library
+
+        assert _normalize_declared_library("Corelib") == "Coq"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

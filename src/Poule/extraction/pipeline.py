@@ -716,6 +716,27 @@ def discover_libraries(target: str) -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
+# Declared-library normalization
+# ---------------------------------------------------------------------------
+
+def _normalize_declared_library(lib: str) -> str:
+    """Convert a ``declared_library`` string to canonical module format.
+
+    The ``About`` command reports ``Stdlib.X.Y`` or ``Corelib.X.Y`` for
+    stdlib declarations, while ``_vo_to_canonical_module`` produces
+    ``Coq.X.Y``.  This function normalizes to the latter convention so
+    the two can be compared during re-export detection (spec §4.4).
+    """
+    if lib.startswith("Stdlib."):
+        return "Coq." + lib[len("Stdlib."):]
+    if lib.startswith("Corelib."):
+        return "Coq." + lib[len("Corelib."):]
+    if lib in ("Stdlib", "Corelib"):
+        return "Coq"
+    return lib
+
+
+# ---------------------------------------------------------------------------
 # Main extraction pipeline
 # ---------------------------------------------------------------------------
 
@@ -810,27 +831,32 @@ def run_extraction(
             _cleanup_db(db_path)
             raise
 
-        # Deduplicate declarations by name (keep first occurrence).
-        # The same name can appear in multiple .vo files via re-exports.
-        # Capture re-export aliases: when a duplicate comes from a different
-        # module, record the re-export module path + short name as an alias.
+        # Detect re-exports via declared_library metadata (spec §4.4).
+        # When a declaration's declared_library differs from the .vo file's
+        # canonical module, the declaration is a re-export — skip it and
+        # record an alias from the re-export FQN to the canonical FQN.
+        # Fallback: FQN-matching dedup for Coq 8.x (declared_library=None).
         seen_names: dict[str, Path] = {}  # name -> first .vo path
         unique_declarations: list[tuple[str, str, Any, Path]] = []
         re_export_aliases: dict[str, str] = {}
         for decl in all_declarations:
-            name, _kind, _constr_t, vo_path = decl
+            name, _kind, constr_t, vo_path = decl
+            declared_lib = constr_t.get("declared_library") if isinstance(constr_t, dict) else None
+
+            if declared_lib is not None:
+                canonical_module = CoqLspBackend._vo_to_canonical_module(vo_path)
+                normalized_lib = _normalize_declared_library(declared_lib)
+                if normalized_lib != canonical_module:
+                    # Re-export detected — record alias, skip declaration
+                    short_name = name.rsplit(".", 1)[-1]
+                    canonical_fqn = f"{normalized_lib}.{short_name}"
+                    re_export_aliases[name] = canonical_fqn
+                    continue
+
+            # Not a re-export (or declared_library unavailable): normal dedup
             if name not in seen_names:
                 seen_names[name] = vo_path
                 unique_declarations.append(decl)
-            else:
-                # Duplicate — derive re-export alias if from a different module
-                first_module = CoqLspBackend._vo_to_canonical_module(seen_names[name])
-                dup_module = CoqLspBackend._vo_to_canonical_module(vo_path)
-                if dup_module != first_module:
-                    short_name = name.rsplit(".", 1)[-1]
-                    alias_fqn = f"{dup_module}.{short_name}"
-                    if alias_fqn != name:
-                        re_export_aliases[alias_fqn] = name
         all_declarations = unique_declarations
         del seen_names  # free dedup lookup; no longer needed
 
