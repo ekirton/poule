@@ -29,6 +29,16 @@ Each layer answers "what" for the layer below and "how" for the layer above. A s
 
 Use `/diagnose` to investigate a bug and determine which SDD layer to fix first. Use `/sdd <layer> "description"` to execute a fix from that layer downward. Use `/requirements`, `/features`, `/architecture`, `/specification`, `/tasks`, `/tests`, or `/implementation` to enter a single phase. Use `/free` to disable enforcement.
 
+# Commit Messages
+
+Each commit is preserved on merge, so every message must be meaningful on its own.
+
+- Use imperative mood: "Fix extraction crash on empty input", not "Fixed" or "Fixes".
+- Subject line under 72 characters. Lead with what changed and why, not how.
+- If the commit addresses a specific task or feature, reference it (e.g., "Fix #42").
+- One logical change per commit. Do not bundle unrelated changes.
+- Never use generic messages like "wip", "fix", "update", or "changes".
+
 # Pull Request Process
 
 Do not push to a remote branch after every commit. Push only when the branch is ready to merge — the user makes many commits before a branch is ready.
@@ -37,9 +47,9 @@ Do not push to a remote branch after every commit. Push only when the branch is 
 
 When the user says the branch is ready:
 
-1. Review the commit log and set a descriptive PR title: `git log --oneline origin/main..HEAD`, then `gh pr edit <number> --title "..."` — the PR title becomes the squash commit message on `main`.
+1. Review the commit log and set a descriptive PR title: `git log --oneline origin/main..HEAD`, then `gh pr edit <number> --title "..."`.
 2. Push the branch and open a PR: `git push origin <branch> && gh pr create`
-3. Enable auto-merge so it merges once CI passes: `gh pr merge <number> --auto --squash`
+3. Enable auto-merge so it merges once CI passes: `gh pr merge <number> --auto --rebase`
 
 If the branch is out of date with `main`, rebase before pushing: `git rebase origin/main`.
 
