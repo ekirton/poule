@@ -1959,6 +1959,118 @@ class TestBatchedListDeclarations:
         assert constr_t["declared_library"] == "Stdlib.Numbers.NatInt.NZAdd"
         assert constr_t["declared_line"] == 59
 
+    def test_rss_check_called_between_about_batches(self):
+        """rss_check callback is invoked between About batches (spec §4.12)."""
+        backend = self._make_backend()
+
+        # Generate 150 search results → 2 About batches of 100 each
+        search_messages = [
+            _make_sentence_message(f"decl_{i} : nat")
+            for i in range(150)
+        ]
+        search_goals = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=1, messages=search_messages
+        )
+
+        def fake_vernac_batch(commands):
+            # Return one result per command (first is Require Import)
+            return [
+                [_make_sentence_message(f"{cmd.split()[1]} is a definition")]
+                if cmd.startswith("About")
+                else []
+                for cmd in commands
+            ]
+
+        rss_check = Mock()
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=search_goals),
+            patch.object(backend, "_run_vernac_batch", side_effect=fake_vernac_batch),
+        ):
+            result = backend.list_declarations(
+                Path("/coq/user-contrib/Stdlib/Init/Nat.vo"),
+                rss_check=rss_check,
+            )
+
+        assert len(result) == 150
+        # rss_check: 1 call after Search + 1 call between batch 1 and batch 2
+        # (no call after final batch)
+        assert rss_check.call_count == 2
+
+    def test_rss_check_after_search_before_about(self):
+        """rss_check is called after Search completes, before About batches."""
+        backend = self._make_backend()
+
+        search_messages = [
+            _make_sentence_message("Nat.add : nat -> nat -> nat"),
+        ]
+        search_goals = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=1, messages=search_messages
+        )
+
+        about_batch = [
+            [],  # Require Import result (discarded)
+            [_make_sentence_message("Nat.add is a definition")],
+        ]
+
+        call_order = []
+        rss_check = Mock(side_effect=lambda: call_order.append("rss_check"))
+
+        original_batch = backend._run_vernac_batch
+
+        def track_batch(commands):
+            call_order.append("about_batch")
+            return about_batch
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=search_goals),
+            patch.object(backend, "_run_vernac_batch", side_effect=track_batch),
+        ):
+            result = backend.list_declarations(
+                Path("/coq/user-contrib/Stdlib/Init/Nat.vo"),
+                rss_check=rss_check,
+            )
+
+        assert len(result) == 1
+        # rss_check should be called before the about batch
+        assert call_order == ["rss_check", "about_batch"]
+
+    def test_rss_check_none_is_safe(self):
+        """list_declarations works without rss_check (default None)."""
+        backend = self._make_backend()
+
+        search_messages = [
+            _make_sentence_message("Nat.add : nat -> nat -> nat"),
+        ]
+        search_goals = _make_goals_result(
+            "file:///tmp/wily_query_0.v", line=1, messages=search_messages
+        )
+
+        about_batch = [
+            [],  # Require Import result (discarded)
+            [_make_sentence_message("Nat.add is a definition")],
+        ]
+
+        with (
+            patch.object(backend, "_open_document"),
+            patch.object(backend, "_close_document"),
+            patch.object(backend, "_wait_for_diagnostics", return_value=[]),
+            patch.object(backend, "_send_request", return_value=search_goals),
+            patch.object(backend, "_run_vernac_batch", return_value=about_batch),
+        ):
+            # No rss_check argument — default None
+            result = backend.list_declarations(
+                Path("/coq/user-contrib/Stdlib/Init/Nat.vo")
+            )
+
+        assert len(result) == 1
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 18. query_declaration_data (batched Print + Print Assumptions)

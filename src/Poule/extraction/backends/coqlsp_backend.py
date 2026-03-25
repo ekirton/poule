@@ -16,6 +16,7 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from Poule.extraction.errors import BackendCrashError, ExtractionError
@@ -784,7 +785,7 @@ class CoqLspBackend:
         )
 
     def list_declarations(
-        self, vo_path: Path
+        self, vo_path: Path, *, rss_check: Callable[[], None] | None = None,
     ) -> list[tuple[str, str, Any]]:
         """List declarations from a compiled ``.vo`` file.
 
@@ -813,9 +814,16 @@ class CoqLspBackend:
         if not search_results:
             return []
 
+        # Check RSS after Search (the Require Import may have loaded a
+        # large transitive dependency tree) before starting About batches.
+        if rss_check is not None:
+            rss_check()
+
         # Batch About queries for kind detection + metadata
         names = [name for name, _type_sig in search_results]
-        about_results = self._batch_get_about_metadata(names, import_path=import_path)
+        about_results = self._batch_get_about_metadata(
+            names, import_path=import_path, rss_check=rss_check,
+        )
 
         declarations: list[tuple[str, str, Any]] = []
         for (short_name, type_sig), about in zip(search_results, about_results):
@@ -834,6 +842,7 @@ class CoqLspBackend:
 
     def _batch_get_about_metadata(
         self, names: list[str], *, import_path: str | None = None,
+        rss_check: Callable[[], None] | None = None,
     ) -> list[AboutResult]:
         """Batch About queries and parse kind + metadata for declaration names.
 
@@ -856,6 +865,10 @@ class CoqLspBackend:
 
             for name, messages in zip(batch_names, all_messages):
                 results.append(self._parse_about_kind(name, messages))
+
+            # Check RSS between batches (skip after final batch).
+            if rss_check is not None and i + batch_size < len(names):
+                rss_check()
 
         return results
 

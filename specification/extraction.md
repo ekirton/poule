@@ -31,10 +31,10 @@ Define the extraction pipeline that reads compiled `.vo` files via coq-lsp, conv
 
 The system shall define a `Backend` protocol with operations:
 
-#### list_declarations(vo_path)
+#### list_declarations(vo_path, *, rss_check=None)
 
-- REQUIRES: `vo_path` is a path to a compiled `.vo` file.
-- ENSURES: Returns a list of `(name, kind, constr_t)` tuples for all declarations in the file. Each `name` shall be a fully qualified canonical name (e.g., `Coq.Arith.PeanoNat.Nat.add_comm`), matching the format required by the `declarations.name` field (see [index-entities.md](../doc/architecture/data-models/index-entities.md)). The `constr_t` value is backend-dependent: backends that provide kernel terms return a `ConstrNode`; backends that provide only metadata (e.g., coq-lsp Search output) return a dict containing at minimum `{"type_signature": str, "source": str}`.
+- REQUIRES: `vo_path` is a path to a compiled `.vo` file. `rss_check`, when provided, is a callable taking no arguments that may stop and restart the backend to reclaim memory.
+- ENSURES: Returns a list of `(name, kind, constr_t)` tuples for all declarations in the file. Each `name` shall be a fully qualified canonical name (e.g., `Coq.Arith.PeanoNat.Nat.add_comm`), matching the format required by the `declarations.name` field (see [index-entities.md](../doc/architecture/data-models/index-entities.md)). The `constr_t` value is backend-dependent: backends that provide kernel terms return a `ConstrNode`; backends that provide only metadata (e.g., coq-lsp Search output) return a dict containing at minimum `{"type_signature": str, "source": str}`. When `rss_check` is provided, the backend shall invoke it after the initial Search query and between About batches (§4.12).
 - MAINTAINS: The `kind` value for each declaration is determined by the kind detection mechanism (§4.1.1).
 
 #### 4.1.1 Kind Detection
@@ -505,7 +505,9 @@ Each message identifies the current stage name. Messages are written to stderr s
 
 **RSS monitoring:** The pipeline shall monitor the coq-lsp child process's resident set size (RSS) by reading `VmRSS` from `/proc/<pid>/status`. The RSS restart threshold defaults to 5 GiB and is overridable via the `POULE_LSP_RSS_LIMIT` environment variable (in bytes). When RSS exceeds the threshold, the pipeline stops and restarts the backend to reclaim memory. When RSS is below the threshold, the pipeline skips the restart to avoid unnecessary overhead.
 
-**Per-file restart:** After processing each `.vo` file during declaration collection, the pipeline shall check the backend's RSS. If RSS exceeds the restart threshold, the backend is stopped and restarted before the next file. Each `list_declarations` call creates its own synthetic document, so restarts between files lose no state.
+**Mid-file restart (declaration collection):** During `list_declarations`, the pipeline shall pass an RSS check callback to the backend. The backend shall invoke this callback after the initial `Search` query completes (before About batches begin) and between each About batch (≤100 commands per batch). Search results are captured in a Python list before About batches, and each About batch creates its own synthetic document starting with `Require Import`, so restarts at either point lose no state. This prevents modules with large transitive dependency trees from pushing coq-lsp past the RSS threshold during a single `list_declarations` call.
+
+**Per-file restart:** After processing each `.vo` file during declaration collection, the pipeline shall check the backend's RSS. If RSS exceeds the restart threshold, the backend is stopped and restarted before the next file. Each `list_declarations` call creates its own synthetic document, so restarts between files lose no state. This check serves as a second safety net after the mid-file checks.
 
 **Per-batch restart (batched queries):** During batched Print + Print Assumptions queries, the pipeline shall check the backend's RSS after each batch of declarations within an import-path group. Each batch (≤50 declarations) creates its own synthetic document starting with `Require Import <import_path>.`, so batches are self-contained and restarts between them lose no state. The backend shall not be restarted after the final batch of the final group, since Pass 1 processing requires a live backend.
 
@@ -544,7 +546,7 @@ Error hierarchy:
 - The entire process runs without GPU, network access, or external API keys.
 - Batch size: 1000 declarations per transaction.
 - Progress reporting at per-declaration granularity.
-- **Backend memory:** coq-lsp RSS is monitored after each `.vo` file, after each batch of ≤50 declarations during querying, and every 50 declarations during Pass 1; the process is restarted only when RSS exceeds the threshold (§4.12). Peak backend memory is bounded by the threshold, not cumulative across the library.
+- **Backend memory:** coq-lsp RSS is monitored mid-file (after Search and between About batches during declaration collection), after each `.vo` file, after each batch of ≤50 declarations during querying, and every 50 declarations during Pass 1; the process is restarted only when RSS exceeds the threshold (§4.12). Peak backend memory is bounded by the threshold, not cumulative across the library.
 - **Kind detection overhead (coq-lsp):** About queries are batched into shared documents (≤100 commands each), and Print + Print Assumptions queries are batched similarly (≤50 declarations = ≤100 lines per document), reducing document lifecycle overhead by 3–10x compared to per-declaration queries. Each Print batch document shall begin with `Require Import <import_path>.` so that declaration names are in scope; names shall be grouped by source module so each group shares a single import preamble.
 
 ## 7. Examples

@@ -33,6 +33,22 @@ _LSP_RSS_RESTART_THRESHOLD = int(
 )
 
 
+def _make_rss_check(backend: Any, threshold: int) -> Callable[[], None]:
+    """Return a callback that restarts *backend* when RSS exceeds *threshold*."""
+
+    def check() -> None:
+        rss = backend._get_child_rss_bytes()
+        if rss > threshold:
+            logger.debug(
+                "Restarting coq-lsp mid-file (RSS=%.0f MiB)",
+                rss / (1024 * 1024),
+            )
+            backend.stop()
+            backend.start()
+
+    return check
+
+
 # Module-level singleton for text-based type parsing
 _type_parser_instance = None
 
@@ -808,13 +824,14 @@ def run_extraction(
         # process.  Restart coq-lsp when RSS exceeds the threshold to
         # reclaim memory without restarting after every lightweight file.
         all_declarations: list[tuple[str, str, Any, Path]] = []
+        rss_check = _make_rss_check(backend, _LSP_RSS_RESTART_THRESHOLD)
         try:
             for idx, vo_path in enumerate(all_vo_files, 1):
                 if progress_callback is not None:
                     progress_callback(
                         f"Collecting declarations [{idx}/{len(all_vo_files)}]"
                     )
-                raw_decls = backend.list_declarations(vo_path)
+                raw_decls = backend.list_declarations(vo_path, rss_check=rss_check)
                 for name, kind, constr_t in raw_decls:
                     all_declarations.append((name, kind, constr_t, vo_path))
                 # Restart when RSS exceeds threshold to reclaim memory.

@@ -1744,7 +1744,7 @@ class TestFullRunIntegration:
         vo2 = Path("/fake/user-contrib/Pkg/Mod2.vo")
 
         # Each .vo file yields one declaration.
-        def fake_list_declarations(vo_path):
+        def fake_list_declarations(vo_path, **kwargs):
             if vo_path == vo1:
                 return [("Pkg.Mod1.foo", "Lemma", {"type_signature": "nat", "source": "coq-lsp"})]
             if vo_path == vo2:
@@ -1808,7 +1808,7 @@ class TestFullRunIntegration:
         vo1 = Path("/fake/user-contrib/Pkg/Mod1.vo")
         vo2 = Path("/fake/user-contrib/Pkg/Mod2.vo")
 
-        def fake_list_declarations(vo_path):
+        def fake_list_declarations(vo_path, **kwargs):
             if vo_path == vo1:
                 return [("Pkg.Mod1.foo", "Lemma", {"type_signature": "nat", "source": "coq-lsp"})]
             if vo_path == vo2:
@@ -1872,7 +1872,7 @@ class TestFullRunIntegration:
         vo = Path("/fake/user-contrib/Pkg/BigMod.vo")
         decl_names = [f"Pkg.BigMod.decl_{i}" for i in range(60)]
 
-        def fake_list_declarations(vo_path):
+        def fake_list_declarations(vo_path, **kwargs):
             return [
                 (name, "Lemma", {"type_signature": "nat", "source": "coq-lsp"})
                 for name in decl_names
@@ -1944,7 +1944,7 @@ class TestFullRunIntegration:
         vo = Path("/fake/user-contrib/Pkg/Huge.vo")
         decl_names = [f"Pkg.Huge.d{i}" for i in range(num_decls)]
 
-        def fake_list_declarations(vo_path):
+        def fake_list_declarations(vo_path, **kwargs):
             return [
                 (n, "Lemma", {"type_signature": "nat", "source": "coq-lsp"})
                 for n in decl_names
@@ -2026,6 +2026,59 @@ class TestFullRunIntegration:
             f"Expected >= 1 restart (stop+start) during Pass 1, "
             f"got {restart_pairs}. Events: {pass1_restarts}"
         )
+
+    def test_collection_passes_rss_check_to_list_declarations(
+        self, tmp_path
+    ):
+        """Pipeline passes an rss_check callback to list_declarations
+        during declaration collection (spec §4.12)."""
+        from Poule.extraction.pipeline import run_extraction
+
+        vo = Path("/fake/user-contrib/Pkg/Mod.vo")
+
+        captured_kwargs = []
+
+        def capturing_list_declarations(vo_path, **kwargs):
+            captured_kwargs.append(kwargs)
+            return [("Pkg.Mod.foo", "Lemma", {"type_signature": "nat", "source": "coq-lsp"})]
+
+        backend = _make_mock_backend()
+        backend.list_declarations.side_effect = capturing_list_declarations
+        backend.query_declaration_data.side_effect = lambda names, **kw: {
+            n: ("stmt", []) for n in names
+        }
+
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"Pkg.Mod.foo": 1}
+
+        mock_r = Mock()
+        mock_r.name = "Pkg.Mod.foo"
+        mock_r.dependency_names = []
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=[vo],
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                return_value=mock_r,
+            ),
+        ):
+            run_extraction(targets=["stdlib"], db_path=tmp_path / "test.db")
+
+        # list_declarations should have been called with rss_check kwarg.
+        assert len(captured_kwargs) == 1
+        assert "rss_check" in captured_kwargs[0]
+        assert callable(captured_kwargs[0]["rss_check"])
 
     def test_pipeline_order_is_pass1_then_pass2_then_postprocess(
         self, tmp_path

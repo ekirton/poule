@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -14,13 +15,18 @@ class CoqBackend(Protocol):
     compiled ``.vo`` files and access kernel terms.
     """
 
-    def list_declarations(self, vo_path: Path) -> list[tuple[str, str, Any]]:
+    def list_declarations(
+        self, vo_path: Path, *, rss_check: Callable[[], None] | None = None,
+    ) -> list[tuple[str, str, Any]]:
         """List all declarations in a compiled ``.vo`` file.
 
         Parameters
         ----------
         vo_path:
             Path to a compiled ``.vo`` file.
+        rss_check:
+            Optional callback invoked between internal batches to allow
+            the caller to restart the backend when RSS is too high.
 
         Returns
         -------

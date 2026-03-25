@@ -371,7 +371,7 @@ class SerAPIBackend:
 
     # -- Public API (Backend protocol) --------------------------------------
 
-    def list_declarations(self, vo_path: Path) -> list[tuple[str, str, Any]]:
+    def list_declarations(self, vo_path: Path, **kwargs: Any) -> list[tuple[str, str, Any]]:
         """Load a ``.vo`` file and return its declarations.
 
         Returns a list of ``(name, kind, constr_t)`` tuples.
