@@ -262,6 +262,18 @@ After `extract_symbols(tree)` produces a raw symbol set of short names, a resolu
 
 After resolution, the `symbol_set` column in `declarations` and the `symbol_freq` table both use FQNs as keys. The MePo inverted index built from `symbol_set` is therefore keyed by FQN, ensuring that query-time symbol resolution (see [retrieval-pipeline.md](retrieval-pipeline.md)) can match user-provided names at any qualification level.
 
+## Backend Memory Management
+
+Each `Require Import` permanently loads a module and its transitive dependencies into the coq-lsp process. Memory can only be reclaimed by restarting the process. The pipeline monitors the coq-lsp child process's RSS (via `/proc/<pid>/status`) and restarts it when RSS exceeds a configurable threshold (default 5 GiB, overridable via `POULE_LSP_RSS_LIMIT`).
+
+RSS checks occur at two points in the pipeline:
+
+1. **Declaration collection** — after processing each `.vo` file. If RSS exceeds the threshold, the backend is stopped and restarted before the next file. Each `list_declarations` call is self-contained (creates its own synthetic document with `Require Import`), so a restart between files loses no state.
+
+2. **Batched queries** — after each batch of ≤50 declarations within an import-path group. Each batch creates its own synthetic document starting with `Require Import <import_path>.`, so batches are self-contained and restarts between them lose no state. This is critical for large modules (e.g., CoqInterval with 20K+ declarations) where a single import group can exhaust memory before the group completes.
+
+The threshold-based approach avoids unnecessary restart overhead for lightweight modules while still bounding peak memory for heavy ones. Peak backend memory is bounded by the single largest batch, not cumulative across modules.
+
 ## Error Handling
 
 Extraction of individual declarations may fail (e.g., unsupported term constructors, serialization errors). Failures are logged with the declaration name and error, but do not abort the indexing run. The index is usable with partial coverage; missing declarations are a degraded-quality outcome, not a fatal error.

@@ -1859,6 +1859,79 @@ class TestFullRunIntegration:
             f"got {backend.stop.call_count}"
         )
 
+    def test_query_phase_restarts_between_batches_within_single_group(
+        self, tmp_path
+    ):
+        """When a single import group has >50 declarations, the pipeline
+        splits it into batch-sized chunks and checks RSS between them.
+        With high RSS, the backend is restarted mid-group (spec §4.12)."""
+        from Poule.extraction.pipeline import run_extraction
+
+        # Single .vo file → single import group, but 60 declarations
+        # (> batch_size of 50) → should produce 2 batches.
+        vo = Path("/fake/user-contrib/Pkg/BigMod.vo")
+        decl_names = [f"Pkg.BigMod.decl_{i}" for i in range(60)]
+
+        def fake_list_declarations(vo_path):
+            return [
+                (name, "Lemma", {"type_signature": "nat", "source": "coq-lsp"})
+                for name in decl_names
+            ]
+
+        backend = _make_mock_backend()
+        backend.list_declarations.side_effect = fake_list_declarations
+        backend.query_declaration_data.side_effect = lambda names, **kw: {
+            n: ("stmt", []) for n in names
+        }
+        # High RSS to trigger restarts between batches.
+        backend._get_child_rss_bytes.return_value = 10 * 1024 * 1024 * 1024
+
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {n: i for i, n in enumerate(decl_names)}
+
+        mock_results = []
+        for name in decl_names:
+            r = Mock()
+            r.name = name
+            r.dependency_names = []
+            mock_results.append(r)
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=[vo],
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                side_effect=mock_results,
+            ),
+        ):
+            run_extraction(targets=["stdlib"], db_path=tmp_path / "test.db")
+
+        # query_declaration_data should be called multiple times for the
+        # single group (once per batch chunk), not just once.
+        assert backend.query_declaration_data.call_count >= 2, (
+            f"Expected >= 2 query_declaration_data calls for 60 decls "
+            f"(batch_size=50), got {backend.query_declaration_data.call_count}"
+        )
+
+        # With high RSS: at least one mid-group restart should occur.
+        # Collection phase: 1 restart (after the single .vo file).
+        # Query phase: at least 1 restart between batch chunks.
+        # Total: >= 2 stop calls (excluding final cleanup).
+        assert backend.stop.call_count >= 2, (
+            f"Expected >= 2 stop() calls (collection + intra-group restart), "
+            f"got {backend.stop.call_count}"
+        )
+
     def test_pipeline_order_is_pass1_then_pass2_then_postprocess(
         self, tmp_path
     ):
