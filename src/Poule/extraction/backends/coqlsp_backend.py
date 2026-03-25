@@ -317,6 +317,19 @@ class CoqLspBackend:
                 self._stderr_file = None
             self._notification_buffer.clear()
 
+    def _get_child_rss_bytes(self) -> int:
+        """Return the coq-lsp child process RSS in bytes, or 0 on failure."""
+        if self._proc is None or self._proc.pid is None:
+            return 0
+        try:
+            with open(f"/proc/{self._proc.pid}/status") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1]) * 1024  # kB → bytes
+        except (OSError, ValueError):
+            pass
+        return 0
+
     def __enter__(self) -> CoqLspBackend:
         self.start()
         return self

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import pickle
 import random
 import re
@@ -23,6 +24,13 @@ from .version_detection import detect_library_version, detect_mathcomp_version
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 1000
+
+# Maximum RSS (bytes) before restarting coq-lsp to reclaim memory.
+# Modules that stay under this threshold skip the restart overhead.
+# Override with POULE_LSP_RSS_LIMIT env var (in bytes).
+_LSP_RSS_RESTART_THRESHOLD = int(
+    os.environ.get("POULE_LSP_RSS_LIMIT", 5 * 1024 * 1024 * 1024)  # 5 GiB
+)
 
 
 # Module-level singleton for text-based type parsing
@@ -767,9 +775,9 @@ def run_extraction(
         coq_version = backend.detect_version()
 
         # Collect all declarations across all .vo files.
-        # Restart coq-lsp after every .vo file: each Require Import
-        # permanently loads the module into the Coq process, and
-        # restarting is the only way to reclaim that memory.
+        # Each Require Import permanently loads the module into the Coq
+        # process.  Restart coq-lsp when RSS exceeds the threshold to
+        # reclaim memory without restarting after every lightweight file.
         all_declarations: list[tuple[str, str, Any, Path]] = []
         try:
             for idx, vo_path in enumerate(all_vo_files, 1):
@@ -780,9 +788,15 @@ def run_extraction(
                 raw_decls = backend.list_declarations(vo_path)
                 for name, kind, constr_t in raw_decls:
                     all_declarations.append((name, kind, constr_t, vo_path))
-                # Restart after each file to reclaim coq-lsp memory.
-                backend.stop()
-                backend.start()
+                # Restart when RSS exceeds threshold to reclaim memory.
+                rss = backend._get_child_rss_bytes()
+                if rss > _LSP_RSS_RESTART_THRESHOLD:
+                    logger.debug(
+                        "Restarting coq-lsp after file %d/%d (RSS=%.0f MiB)",
+                        idx, len(all_vo_files), rss / (1024 * 1024),
+                    )
+                    backend.stop()
+                    backend.start()
         except ExtractionError:
             # Backend crash — clean up and re-raise
             _cleanup_db(db_path)
@@ -817,9 +831,9 @@ def run_extraction(
         # ------------------------------------------------------------------
         # Batch Print + Print Assumptions queries
         # ------------------------------------------------------------------
-        # Group declarations by import path, then query each group with a
-        # fresh coq-lsp process.  Each Require Import permanently loads
-        # the module; restarting between groups reclaims that memory.
+        # Group declarations by import path.  Each Require Import
+        # permanently loads the module; restart coq-lsp only when RSS
+        # exceeds the threshold to reclaim memory.
         decl_data: dict[str, tuple[str, list[tuple[str, str]]]] = {}
         _query_fn = getattr(backend, "query_declaration_data", None)
         if _query_fn is not None:
@@ -845,10 +859,17 @@ def run_extraction(
                     if isinstance(batch_result, dict):
                         decl_data.update(batch_result)
 
-                    # Restart backend between groups to reclaim memory.
+                    # Restart backend when RSS exceeds threshold.
                     if grp_idx < num_groups:
-                        backend.stop()
-                        backend.start()
+                        rss = backend._get_child_rss_bytes()
+                        if rss > _LSP_RSS_RESTART_THRESHOLD:
+                            logger.debug(
+                                "Restarting coq-lsp after group %d/%d "
+                                "(RSS=%.0f MiB)",
+                                grp_idx, num_groups, rss / (1024 * 1024),
+                            )
+                            backend.stop()
+                            backend.start()
             except ExtractionError:
                 _cleanup_db(db_path)
                 raise
