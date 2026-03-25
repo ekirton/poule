@@ -711,3 +711,262 @@ class TestBooleanOperators:
         parser = TypeExprParser()
         result = parser.parse("forall n m : nat, Nat.odd n && Nat.odd m = true")
         assert isinstance(result, Prod)
+
+
+# -----------------------------------------------------------------------
+# Bug fix tests: NULL constr_tree from TypeExprParser failures
+# -----------------------------------------------------------------------
+
+
+class TestLambdaCommaSeparator:
+    """Lambda with comma separator from λ display form.
+
+    Coq displays λ x : A, body with comma. After Unicode preprocessing
+    (λ → fun), the parser must accept comma as body separator.
+    Spec: §4.2 (Preprocessing), §4.4 (fun (x : T), body row).
+    """
+
+    def setup_method(self):
+        self.parser = TypeExprParser()
+
+    def test_fun_comma_typed(self):
+        """fun x : nat, x — typed binder with comma separator."""
+        result = self.parser.parse("fun x : nat, x")
+        assert result == Lambda("x", Const("nat"), Rel(1))
+
+    def test_fun_comma_untyped(self):
+        """fun x, x — untyped binder with comma separator."""
+        result = self.parser.parse("fun x, x")
+        assert result == Lambda("x", Sort("Type"), Rel(1))
+
+    def test_fun_comma_parenthesized(self):
+        """fun (x : nat), x — parenthesized binder with comma."""
+        result = self.parser.parse("fun (x : nat), x")
+        assert result == Lambda("x", Const("nat"), Rel(1))
+
+    def test_fun_comma_multi_binder(self):
+        """fun (x y : nat), x — grouped binders with comma."""
+        result = self.parser.parse("fun (x y : nat), x")
+        assert result == Lambda(
+            "x", Const("nat"),
+            Lambda("y", Const("nat"), Rel(2)),
+        )
+
+    def test_fun_darrow_still_works(self):
+        """fun x => x — standard => separator unchanged."""
+        result = self.parser.parse("fun x => x")
+        assert result == Lambda("x", Sort("Type"), Rel(1))
+
+    def test_lambda_in_forall_type(self):
+        """forall {A : Type}, Surj eq (fun x : A, x) — real stdpp pattern."""
+        result = self.parser.parse(
+            "forall {A : Type}, Surj eq (fun x : A, x)"
+        )
+        assert isinstance(result, Prod)
+
+
+class TestKeywordsAsPrimaryStarts:
+    """FORALL, EXISTS, FUN recognized as primary expression starters.
+
+    These keywords must be in _PRIMARY_STARTS so infix operators
+    followed by them are parsed correctly (not consumed as trailing ids).
+    Spec: §4.3 (Grammar and Precedence).
+    """
+
+    def setup_method(self):
+        self.parser = TypeExprParser()
+
+    def test_iff_forall_rhs(self):
+        """P <-> forall x : nat, Q x — forall after infix."""
+        result = self.parser.parse("P <-> forall x : nat, Q x")
+        assert isinstance(result, App)
+        assert result.func == Const("<->")
+
+    def test_iff_exists_rhs(self):
+        """P <-> exists x : nat, Q x — exists after infix."""
+        result = self.parser.parse("P <-> exists x : nat, Q x")
+        assert isinstance(result, App)
+        assert result.func == Const("<->")
+
+    def test_paren_forall_iff_forall(self):
+        """(forall x, P x) <-> forall x, Q x — both sides."""
+        result = self.parser.parse(
+            "(forall x : nat, P x) <-> forall x : nat, Q x"
+        )
+        assert isinstance(result, App)
+        assert result.func == Const("<->")
+
+    def test_arrow_to_forall(self):
+        """A -> forall x : nat, P x — arrow then forall."""
+        result = self.parser.parse("A -> forall x : nat, P x")
+        assert isinstance(result, Prod)  # A -> (forall ...)
+        assert result.name == "_"
+
+    def test_eq_fun_rhs(self):
+        """f = fun x => x — fun after infix."""
+        result = self.parser.parse("f = fun x => x")
+        assert isinstance(result, App)
+        assert result.func == Const("=")
+
+    def test_forall_as_app_argument(self):
+        """f (forall x : nat, x) — forall in application position."""
+        result = self.parser.parse("f (forall x : nat, x)")
+        assert isinstance(result, App)
+        assert result.func == Const("f")
+
+
+class TestTypeAnnotationInParens:
+    """Type annotation (expr : Type) in parenthesized expressions.
+
+    Coq uses (expr : Type) for inline type annotations in type signatures.
+    The parser keeps the type and discards the expression.
+    Spec: §4.4 ((expr : Type) row).
+    """
+
+    def setup_method(self):
+        self.parser = TypeExprParser()
+
+    def test_simple_annotation(self):
+        """(x : nat) — keep the type."""
+        result = self.parser.parse("(x : nat)")
+        assert result == Const("nat")
+
+    def test_arrow_annotation(self):
+        """(x : nat -> Prop) — type with arrow."""
+        result = self.parser.parse("(x : nat -> Prop)")
+        assert result == Prod("_", Const("nat"), Sort("Prop"))
+
+    def test_annotation_in_application(self):
+        """f (x : nat) — annotation as function argument."""
+        result = self.parser.parse("f (x : nat)")
+        assert result == App(Const("f"), [Const("nat")])
+
+    def test_named_arg_still_works(self):
+        """(S := nat) — COLONEQ not affected."""
+        result = self.parser.parse("(S := nat)")
+        assert result == Const("nat")
+
+    def test_nested_annotation(self):
+        """(a : (b : T)) — nested annotations."""
+        result = self.parser.parse("(a : (b : T))")
+        assert result == Const("T")
+
+
+class TestTolerantBracketParsing:
+    """Tolerant bracket matching for custom notations.
+
+    When inner expression can't be fully parsed up to ], skip to
+    matching ] with depth tracking (like brace handler).
+    Spec: §4.4 ([expr] row).
+    """
+
+    def setup_method(self):
+        self.parser = TypeExprParser()
+
+    def test_simple_bracket(self):
+        """[x] — normal bracket unchanged."""
+        result = self.parser.parse("[x]")
+        assert result == Const("x")
+
+    def test_empty_bracket(self):
+        """[] — empty bracket unchanged."""
+        result = self.parser.parse("[]")
+        assert result == Const("_nil_")
+
+    def test_bracket_with_coloneq(self):
+        """[s := x] — inner parse stops at :=, skip to ]."""
+        result = self.parser.parse("[s := x]")
+        assert result == Const("s")  # partial inner before :=
+
+    def test_unclosed_bracket_still_errors(self):
+        """[x — truly unclosed bracket raises ParseError."""
+        with pytest.raises(ParseError):
+            self.parser.parse("[x")
+
+
+class TestUnderscoreBinder:
+    """Underscore _ as binder name in forall/fun.
+
+    _ is a valid binder name in Coq. The parser must accept UNDERSCORE
+    tokens as binder names alongside IDENTs.
+    Spec: §4.4 (fun _ : T => body row), §4.6 (binder names).
+    """
+
+    def setup_method(self):
+        self.parser = TypeExprParser()
+
+    def test_fun_underscore_typed(self):
+        """fun _ : nat => nat — underscore binder with type."""
+        result = self.parser.parse("fun _ : nat => nat")
+        assert result == Lambda("_", Const("nat"), Const("nat"))
+
+    def test_fun_underscore_comma(self):
+        """fun _ : nat, nat — underscore binder with comma separator."""
+        result = self.parser.parse("fun _ : nat, nat")
+        assert result == Lambda("_", Const("nat"), Const("nat"))
+
+    def test_fun_underscore_parenthesized(self):
+        """fun (_ : nat) => nat — underscore in parenthesized group."""
+        result = self.parser.parse("fun (_ : nat) => nat")
+        assert result == Lambda("_", Const("nat"), Const("nat"))
+
+    def test_forall_underscore(self):
+        """forall _ : nat, Prop — underscore in forall."""
+        result = self.parser.parse("forall _ : nat, Prop")
+        assert result == Prod("_", Const("nat"), Sort("Prop"))
+
+    def test_fun_multi_underscore(self):
+        """fun (_ x : nat) => x — underscore mixed with named binder."""
+        result = self.parser.parse("fun (_ x : nat) => x")
+        assert result == Lambda(
+            "_", Const("nat"),
+            Lambda("x", Const("nat"), Rel(1)),
+        )
+
+
+class TestPercentColonNotation:
+    """MathComp %: notation prefix (e.g., x%:M).
+
+    The %: sequence is skipped as a unit during tokenization,
+    leaving just the trailing identifier.
+    Spec: §4.2 (Preprocessing).
+    """
+
+    def setup_method(self):
+        self.parser = TypeExprParser()
+
+    def test_percent_colon_skipped(self):
+        """Tokenizer skips %: as a unit."""
+        tokens = tokenize("x%:M")
+        idents = [t.value for t in tokens if t.kind == TokenKind.IDENT]
+        assert idents == ["x", "M"]
+        # No stray COLON
+        assert not any(t.kind == TokenKind.COLON for t in tokens)
+
+    def test_parse_with_percent_colon(self):
+        """f x%:M — parses without error."""
+        result = self.parser.parse("f x%:M")
+        assert isinstance(result, App)
+
+
+class TestTolerantParenParsing:
+    """Tolerant paren matching for MathComp notations like :&:.
+
+    When inner expression can't be fully parsed up to ), skip to
+    matching ) with depth tracking.
+    Spec: §4.4 ((expr ...) row).
+    """
+
+    def setup_method(self):
+        self.parser = TypeExprParser()
+
+    def test_colon_infix_in_parens(self):
+        """(A :&: B) — MathComp intersection notation."""
+        result = self.parser.parse("(A :&: B)")
+        # Should not raise; returns partially-parsed inner
+        assert result is not None
+
+    def test_unclosed_paren_still_errors(self):
+        """(x — truly unclosed paren raises ParseError."""
+        with pytest.raises(ParseError):
+            self.parser.parse("(x")

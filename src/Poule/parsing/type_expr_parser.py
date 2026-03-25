@@ -108,6 +108,9 @@ _PRIMARY_STARTS = frozenset({
     TokenKind.LBRACE,
     TokenKind.LBRACKET,
     TokenKind.LRECORD,
+    TokenKind.FORALL,
+    TokenKind.EXISTS,
+    TokenKind.FUN,
 })
 
 # Regex for scope annotations: )%ident or trailing %ident
@@ -312,6 +315,10 @@ def tokenize(text: str) -> list[Token]:
             continue
 
         # Standalone ?, !, ~, `, #, ;, ., $, % — skip
+        # %: is a MathComp notation prefix (e.g., x%:M) — skip both chars
+        if ch == "%" and i + 1 < n and text[i + 1] == ":":
+            i += 2
+            continue
         if ch in ("?", "!", "`", "#", "~", ";", ".", "$", "%"):
             i += 1
             continue
@@ -530,11 +537,26 @@ class TypeExprParser:
             while tokens[pos].kind == TokenKind.COMMA:
                 pos += 1
                 pos, _ = self._expr(tokens, pos, binders, 0)
-            if tokens[pos].kind != TokenKind.RPAREN:
+            # Type annotation: (expr : Type) — keep the type for indexing
+            if tokens[pos].kind == TokenKind.COLON:
+                pos += 1  # consume ':'
+                pos, inner = self._expr(tokens, pos, binders, 0)
+            if tokens[pos].kind == TokenKind.RPAREN:
+                return pos + 1, inner
+            # Paren content couldn't be fully parsed (e.g., MathComp
+            # colon-infix notation :&:) — skip to matching )
+            depth = 1
+            while depth > 0 and tokens[pos].kind != TokenKind.EOF:
+                if tokens[pos].kind == TokenKind.LPAREN:
+                    depth += 1
+                elif tokens[pos].kind == TokenKind.RPAREN:
+                    depth -= 1
+                pos += 1
+            if depth > 0:
                 raise ParseError(
                     f"Expected ')' at position {tokens[pos].pos}"
                 )
-            return pos + 1, inner
+            return pos, inner
 
         if tok.kind == TokenKind.LBRACE:
             pos += 1
@@ -580,11 +602,22 @@ class TypeExprParser:
             if tokens[pos].kind == TokenKind.RBRACKET:
                 return pos + 1, Const("_nil_")
             pos, inner = self._expr(tokens, pos, binders, 0)
-            if tokens[pos].kind != TokenKind.RBRACKET:
+            if tokens[pos].kind == TokenKind.RBRACKET:
+                return pos + 1, inner
+            # Bracket content couldn't be fully parsed (e.g., custom
+            # notation <[k:=v]>) — skip to matching ]
+            depth = 1
+            while depth > 0 and tokens[pos].kind != TokenKind.EOF:
+                if tokens[pos].kind == TokenKind.LBRACKET:
+                    depth += 1
+                elif tokens[pos].kind == TokenKind.RBRACKET:
+                    depth -= 1
+                pos += 1
+            if depth > 0:
                 raise ParseError(
                     f"Expected ']' at position {tokens[pos].pos}"
                 )
-            return pos + 1, inner
+            return pos, inner
 
         if tok.kind == TokenKind.FORALL:
             return self._parse_forall(tokens, pos, binders)
@@ -646,7 +679,7 @@ class TypeExprParser:
                 # Parenthesized group: (x y ... : T)
                 pos += 1
                 names: list[str] = []
-                while tokens[pos].kind == TokenKind.IDENT:
+                while tokens[pos].kind in (TokenKind.IDENT, TokenKind.UNDERSCORE):
                     names.append(tokens[pos].value)
                     pos += 1
                 if not names:
@@ -673,7 +706,7 @@ class TypeExprParser:
                 # Implicit group: {x y ... : T}
                 pos += 1
                 names = []
-                while tokens[pos].kind == TokenKind.IDENT:
+                while tokens[pos].kind in (TokenKind.IDENT, TokenKind.UNDERSCORE):
                     names.append(tokens[pos].value)
                     pos += 1
                 if not names:
@@ -700,7 +733,7 @@ class TypeExprParser:
                 # Maximal implicit group: [x y ... : T]
                 pos += 1
                 names = []
-                while tokens[pos].kind == TokenKind.IDENT:
+                while tokens[pos].kind in (TokenKind.IDENT, TokenKind.UNDERSCORE):
                     names.append(tokens[pos].value)
                     pos += 1
                 if not names:
@@ -723,10 +756,10 @@ class TypeExprParser:
                     current_binders.append(name)
                 continue
 
-            if tok.kind == TokenKind.IDENT:
+            if tok.kind in (TokenKind.IDENT, TokenKind.UNDERSCORE):
                 # Unparenthesized binder(s): x y ... : T  (or untyped for fun)
                 names = []
-                while tokens[pos].kind == TokenKind.IDENT:
+                while tokens[pos].kind in (TokenKind.IDENT, TokenKind.UNDERSCORE):
                     names.append(tokens[pos].value)
                     pos += 1
                 if tokens[pos].kind == TokenKind.COLON:
@@ -798,11 +831,11 @@ class TypeExprParser:
                 f"Expected binder after 'fun' at position {tokens[pos].pos}"
             )
 
-        if tokens[pos].kind != TokenKind.DARROW:
+        if tokens[pos].kind not in (TokenKind.DARROW, TokenKind.COMMA):
             raise ParseError(
-                f"Expected '=>' at position {tokens[pos].pos}"
+                f"Expected '=>' or ',' at position {tokens[pos].pos}"
             )
-        pos += 1  # consume '=>'
+        pos += 1  # consume '=>' or ','
 
         # Build binder stack for body
         body_binders = binders + [name for name, _ in pairs]

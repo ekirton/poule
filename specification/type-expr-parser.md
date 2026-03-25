@@ -84,11 +84,11 @@ Multi-character operators (`<->`, `==>`, `->`, `=>`, `:=`, `::`, `++`, `==`, `<=
 
 Before tokenization, the input string shall be preprocessed in two steps:
 
-1. **Unicode normalization**: Unicode math symbols shall be replaced with ASCII equivalents: `∀`→`forall `, `∃`→`exists `, `→`→`-> `, `⇒`→`=> `, `↔`→`<-> `, `≤`→`<= `, `≥`→`>= `, `≠`→`<> `, `∧`→`/\ `, `∨`→`\/ `, `¬`→`~ `, `λ`→`fun `. Non-ASCII characters not in this map shall be silently skipped during tokenization.
+1. **Unicode normalization**: Unicode math symbols shall be replaced with ASCII equivalents: `∀`→`forall `, `∃`→`exists `, `→`→`-> `, `⇒`→`=> `, `↔`→`<-> `, `≤`→`<= `, `≥`→`>= `, `≠`→`<> `, `∧`→`/\ `, `∨`→`\/ `, `¬`→`~ `, `λ`→`fun `. Non-ASCII characters not in this map shall be silently skipped during tokenization. The `λ` → `fun ` preprocessing converts the Coq display format `λ x : A, body` into `fun x : A, body` where the comma serves as the body separator rather than `=>`. The parser shall accept both `,` and `=>` as the body separator for `fun` expressions.
 
 2. **Scope stripping**: Coq scope annotations (substrings matching `%[a-zA-Z_][a-zA-Z0-9_]*`) shall be removed. For example, `(n + m)%nat` becomes `(n + m)`.
 
-The characters `@`, `?` (standalone), `!`, `~`, `` ` ``, `#`, `;`, `.` (standalone), `$`, and `%` (standalone, not matching scope pattern) shall be skipped during tokenization. String literals (`"..."`) shall be skipped entirely.
+The characters `@`, `?` (standalone), `!`, `~`, `` ` ``, `#`, `;`, `.` (standalone), `$`, and `%` (standalone, not matching scope pattern) shall be skipped during tokenization. The two-character sequence `%:` (MathComp notation prefix, e.g., `x%:M` for scalar matrix) shall be skipped as a unit. String literals (`"..."`) shall be skipped entirely.
 
 Coq control-flow keywords (`if`, `then`, `else`, `match`, `with`, `end`, `return`, `as`, `fix`, `cofix`) shall be tokenized as `IDENT` — they appear in type signatures but their control-flow semantics are not relevant for indexing. The keyword `let` is also tokenized as `IDENT` but receives special handling in the parser (see §4.4).
 
@@ -114,7 +114,7 @@ The parser shall use Pratt (top-down operator precedence) parsing with the follo
 | 15 | `==>` | left |
 | 10 | `->` | right |
 
-Function application (juxtaposition) binds tighter than all infix operators. The parser shall greedily consume adjacent primary expressions as application arguments.
+Function application (juxtaposition) binds tighter than all infix operators. The parser shall greedily consume adjacent primary expressions as application arguments. The `forall`, `exists`, and `fun` keywords are valid primary expression starters and shall be included in the token set that can begin a primary expression, ensuring correct application parsing and preventing the trailing-operator heuristic from misfiring when these keywords follow an infix operator.
 
 ### 4.4 ConstrNode Production Rules
 
@@ -125,7 +125,9 @@ Function application (juxtaposition) binds tighter than all infix operators. The
 | `forall {x : T}, body` | `Prod("x", T, body)` | Implicit binder — same ConstrNode as explicit |
 | `A -> B` | `Prod("_", A, B)` | Non-dependent arrow; `"_"` binder pushed for correct de Bruijn offsets |
 | `fun (x : T) => body` | `Lambda("x", T, body)` | `x` pushed to binder stack for body |
+| `fun (x : T), body` | `Lambda("x", T, body)` | Comma separator (from `λ` display form); same ConstrNode as `=>` |
 | `fun x => body` | `Lambda("x", Sort("Type"), body)` | Untyped binder defaults to `Sort("Type")` |
+| `fun _ : T => body` | `Lambda("_", T, body)` | Underscore binder; `_` is valid in all binder forms |
 | `f x y` | `App(f, [x, y])` | Multi-argument application |
 | `n + m` | `App(Const("+"), [n, m])` | Infix desugared to application |
 | Bound name `x` | `Rel(n)` | `n` = 1-based distance from top of binder stack |
@@ -143,7 +145,10 @@ Function application (juxtaposition) binds tighter than all infix operators. The
 | `{| field := val; ... |}` | `Const("_record_")` | Record literal — skipped as opaque constant |
 | `match ... with ... end` | `Const("_match_")` | Match expression — skipped with depth tracking |
 | `(expr)` | `expr` | Parentheses for grouping only |
+| `(expr : Type)` | `Type` | Type annotation — keep the type for indexing, discard the expression |
+| `(expr ...)` | `expr` | Parens; tolerant — skips to matching `)` on parse failure |
 | `{expr}` | `expr` | Braces for grouping; tolerant — skips to `}` on parse failure |
+| `[expr]` | `expr` | Brackets; tolerant — skips to matching `]` on parse failure |
 
 ### 4.5 De Bruijn Index Resolution
 
@@ -172,7 +177,7 @@ Binder groups for `forall` and `fun` shall be parsed in three forms:
 3. **Maximal implicit**: `[name1 name2 ... : Type]` — maximal implicit binder group (produces same ConstrNode as explicit and implicit)
 4. **Unparenthesized**: `name1 name2 ... : Type` — typed binder group without delimiters (only one group before the separator `,` or `=>`)
 
-For grouped binders like `(x y : T)`, the type `T` is shared by all names in the group. The names are not in scope during parsing of `T` (they are added after the group is complete). Subsequent binder groups DO have access to previously bound names.
+Binder names may be identifiers or the standalone underscore `_`. In all four forms, `_` shall be accepted as a valid binder name (producing a `"_"` string in the binder pair). For grouped binders like `(x y : T)`, the type `T` is shared by all names in the group. The names are not in scope during parsing of `T` (they are added after the group is complete). Subsequent binder groups DO have access to previously bound names.
 
 > **Given** `forall (x : nat) (y : x = 0), y`,
 > **When** parsing,
