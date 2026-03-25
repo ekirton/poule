@@ -642,9 +642,10 @@ class TestSearchBySymbols:
     @patch("Poule.pipeline.search.mepo_select")
     def test_calls_mepo_select_with_correct_args(self, mock_mepo):
         ctx = _mock_context()
-        mock_mepo.return_value = [
-            _mock_search_result(1, 0.8),
-            _mock_search_result(2, 0.6),
+        mock_mepo.return_value = [(1, 0.8), (2, 0.6)]
+        ctx.reader.get_declarations_by_ids.return_value = [
+            {"id": 1, "name": "D.1", "module": "M", "kind": "lemma", "statement": "", "type_expr": ""},
+            {"id": 2, "name": "D.2", "module": "M", "kind": "lemma", "statement": "", "type_expr": ""},
         ]
         symbols = ["Coq.Init.Nat.add", "Coq.Init.Datatypes.nat"]
 
@@ -662,8 +663,9 @@ class TestSearchBySymbols:
     def test_short_names_resolved_before_mepo(self, mock_mepo):
         """Short names like 'Nat.add' are resolved to FQNs before passing to mepo_select (spec §4.5)."""
         ctx = _mock_context()
-        mock_mepo.return_value = [
-            _mock_search_result(1, 0.8),
+        mock_mepo.return_value = [(1, 0.8)]
+        ctx.reader.get_declarations_by_ids.return_value = [
+            {"id": 1, "name": "D.1", "module": "M", "kind": "lemma", "statement": "", "type_expr": ""},
         ]
 
         results = search_by_symbols(ctx, ["Nat.add", "Nat.mul"], limit=10)
@@ -677,8 +679,10 @@ class TestSearchBySymbols:
     @patch("Poule.pipeline.search.mepo_select")
     def test_limits_results(self, mock_mepo):
         ctx = _mock_context()
-        mock_mepo.return_value = [
-            _mock_search_result(i, 1.0 - i * 0.1) for i in range(20)
+        mock_mepo.return_value = [(i, 1.0 - i * 0.1) for i in range(20)]
+        ctx.reader.get_declarations_by_ids.return_value = [
+            {"id": i, "name": f"D.{i}", "module": "M", "kind": "lemma", "statement": "", "type_expr": ""}
+            for i in range(20)
         ]
 
         results = search_by_symbols(ctx, ["Coq.Init.Nat.add"], limit=5)
@@ -1400,8 +1404,10 @@ class TestResultsLimited:
     @patch("Poule.pipeline.search.mepo_select")
     def test_search_by_symbols_respects_limit(self, mock_mepo):
         ctx = _mock_context()
-        mock_mepo.return_value = [
-            _mock_search_result(i, 1.0 - i * 0.05) for i in range(20)
+        mock_mepo.return_value = [(i, 1.0 - i * 0.05) for i in range(20)]
+        ctx.reader.get_declarations_by_ids.return_value = [
+            {"id": i, "name": f"D.{i}", "module": "M", "kind": "lemma", "statement": "", "type_expr": ""}
+            for i in range(20)
         ]
 
         results = search_by_symbols(ctx, ["Coq.Init.Nat.add"], limit=3)
@@ -1469,10 +1475,11 @@ class TestResultsSortedDescending:
     def test_symbols_results_sorted_descending(self, mock_mepo):
         ctx = _mock_context()
         # Return in non-sorted order
-        mock_mepo.return_value = [
-            _mock_search_result(1, 0.3),
-            _mock_search_result(2, 0.9),
-            _mock_search_result(3, 0.6),
+        mock_mepo.return_value = [(1, 0.3), (2, 0.9), (3, 0.6)]
+        ctx.reader.get_declarations_by_ids.return_value = [
+            {"id": 1, "name": "D.1", "module": "M", "kind": "lemma", "statement": "", "type_expr": ""},
+            {"id": 2, "name": "D.2", "module": "M", "kind": "lemma", "statement": "", "type_expr": ""},
+            {"id": 3, "name": "D.3", "module": "M", "kind": "lemma", "statement": "", "type_expr": ""},
         ]
 
         results = search_by_symbols(ctx, ["Coq.Init.Nat.add"], limit=10)
@@ -2514,3 +2521,136 @@ class TestScoreCandidatesWithAutoBinders:
         # collapse_match and ted use original trees
         mock_collapse.assert_called_once_with(query_tree, candidate_tree)
         mock_ted.assert_called_once_with(query_tree, candidate_tree)
+
+
+# ---------------------------------------------------------------------------
+# 23. search_by_structure and search_by_symbols return SearchResult objects
+# ---------------------------------------------------------------------------
+
+from Poule.models.responses import SearchResult
+
+
+def _decl_row(decl_id, name, module="Test.Module", kind="lemma"):
+    """Return a declaration dict as produced by IndexReader.get_declarations_by_ids."""
+    return {
+        "id": decl_id,
+        "name": name,
+        "module": module,
+        "kind": kind,
+        "statement": f"{name} : nat -> nat",
+        "type_expr": "nat -> nat",
+    }
+
+
+class TestSearchReturnsSearchResult:
+    """All search functions must return SearchResult objects (spec §4.3 step 8,
+    §4.5 step 3, §4.4 step 11), not raw tuples or _ScoredResult."""
+
+    @patch("Poule.pipeline.search.score_candidates")
+    @patch("Poule.pipeline.search.wl_screen")
+    @patch("Poule.pipeline.search.wl_histogram")
+    @patch("Poule.pipeline.search.cse_normalize")
+    @patch("Poule.pipeline.search.coq_normalize")
+    def test_search_by_structure_returns_search_result(
+        self, mock_coq, mock_cse, mock_wl_hist, mock_wl_screen, mock_score
+    ):
+        """search_by_structure must return SearchResult, not _ScoredResult."""
+        parser = _mock_parser()
+        ctx = _mock_context(parser=parser)
+        # Mock reader to return declaration data
+        ctx.reader.get_declarations_by_ids.return_value = [
+            _decl_row(1, "Coq.Init.Nat.add_0_r"),
+            _decl_row(2, "Coq.Init.Nat.add_comm"),
+        ]
+
+        cse_tree = MagicMock()
+        cse_tree.node_count = 10
+        mock_coq.return_value = MagicMock()
+        mock_cse.return_value = cse_tree
+        mock_wl_hist.return_value = {}
+        mock_wl_screen.return_value = [(1, 0.9), (2, 0.7)]
+        # score_candidates returns (decl_id, score) tuples — not SearchResult
+        mock_score.return_value = [(1, 0.85), (2, 0.65)]
+
+        results = search_by_structure(ctx, "forall n, n = n", limit=10)
+
+        assert len(results) == 2
+        for r in results:
+            assert isinstance(r, SearchResult), (
+                f"Expected SearchResult, got {type(r).__name__}"
+            )
+            assert r.name  # non-empty
+            assert r.module  # non-empty
+            assert isinstance(r.score, float)
+
+    @patch("Poule.pipeline.search.mepo_select")
+    def test_search_by_symbols_returns_search_result(self, mock_mepo):
+        """search_by_symbols must return SearchResult, not raw tuples."""
+        ctx = _mock_context()
+        # mepo_select returns (decl_id, score) tuples — the real return type
+        mock_mepo.return_value = [(1, 0.95), (2, 0.80)]
+        ctx.reader.get_declarations_by_ids.return_value = [
+            _decl_row(1, "Coq.Init.Nat.add_0_r"),
+            _decl_row(2, "Coq.Init.Nat.add_comm"),
+        ]
+
+        results = search_by_symbols(ctx, ["Coq.Init.Nat.add"], limit=10)
+
+        assert len(results) == 2
+        for r in results:
+            assert isinstance(r, SearchResult), (
+                f"Expected SearchResult, got {type(r).__name__}"
+            )
+            assert r.name
+            assert r.module
+
+    @patch("Poule.pipeline.search.mepo_select")
+    def test_search_by_symbols_result_fields_populated(self, mock_mepo):
+        """SearchResult fields come from the declaration row, score from MePo."""
+        ctx = _mock_context()
+        mock_mepo.return_value = [(1, 0.95)]
+        ctx.reader.get_declarations_by_ids.return_value = [
+            _decl_row(1, "Coq.Init.Nat.add_0_r", module="Coq.Init.Nat", kind="lemma"),
+        ]
+
+        results = search_by_symbols(ctx, ["Coq.Init.Nat.add"], limit=10)
+
+        assert len(results) == 1
+        r = results[0]
+        assert r.name == "Coq.Init.Nat.add_0_r"
+        assert r.module == "Coq.Init.Nat"
+        assert r.kind == "lemma"
+        assert r.score == 0.95
+
+    @patch("Poule.pipeline.search.score_candidates")
+    @patch("Poule.pipeline.search.wl_screen")
+    @patch("Poule.pipeline.search.wl_histogram")
+    @patch("Poule.pipeline.search.cse_normalize")
+    @patch("Poule.pipeline.search.coq_normalize")
+    def test_search_by_structure_result_fields_populated(
+        self, mock_coq, mock_cse, mock_wl_hist, mock_wl_screen, mock_score
+    ):
+        """SearchResult fields come from the declaration row, score from scoring."""
+        parser = _mock_parser()
+        ctx = _mock_context(parser=parser)
+        ctx.reader.get_declarations_by_ids.return_value = [
+            _decl_row(1, "Coq.Arith.PeanoNat.Nat.add_comm",
+                       module="Coq.Arith.PeanoNat", kind="theorem"),
+        ]
+
+        cse_tree = MagicMock()
+        cse_tree.node_count = 10
+        mock_coq.return_value = MagicMock()
+        mock_cse.return_value = cse_tree
+        mock_wl_hist.return_value = {}
+        mock_wl_screen.return_value = [(1, 0.9)]
+        mock_score.return_value = [(1, 0.85)]
+
+        results = search_by_structure(ctx, "_ * _ = _ * _", limit=10)
+
+        assert len(results) == 1
+        r = results[0]
+        assert r.name == "Coq.Arith.PeanoNat.Nat.add_comm"
+        assert r.module == "Coq.Arith.PeanoNat"
+        assert r.kind == "theorem"
+        assert r.score == 0.85

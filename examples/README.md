@@ -12,25 +12,6 @@ The single most common pain point across all proof assistant communities.
 ```
 Find lemmas about list reversal being involutive
 ```
-```
-Which lemmas in stdlib mention both Nat.add and Nat.mul?
-```
-
-**Find lemmas by type signature (Hoogle-style):**
-```
-Search for lemmas with type forall n : nat, n + 0 = n
-```
-```
-Find a lemma of type List.map f (List.map g l) = List.map (fun x => f (g x)) l
-```
-
-**Find lemmas matching a structural pattern:**
-```
-Find all commutativity lemmas in MathComp — anything matching _ * _ = _ * _
-```
-```
-Find lemmas concluding with _ + _ <= _
-```
 
 **Find rewrites for a specific term:**
 ```

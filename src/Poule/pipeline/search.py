@@ -200,8 +200,9 @@ def search_by_symbols(ctx: Any, symbols: list[str], limit: int) -> list[Any]:
         c=2.4,
         max_rounds=5,
     )
-    results = sorted(results, key=lambda r: r.score if hasattr(r, 'score') else r[1], reverse=True)
-    return results[:limit]
+    results = sorted(results, key=lambda r: r[1], reverse=True)
+    # Step 3: Construct SearchResult objects (spec §4.5 step 3)
+    return _resolve_scored_results(results[:limit], ctx.reader)
 
 
 def _ensure_parser(ctx: Any) -> None:
@@ -462,8 +463,45 @@ def search_by_structure(ctx: Any, expression: str, limit: int) -> list[Any]:
     scored.sort(key=lambda x: x[1], reverse=True)
     scored = scored[:limit]
 
-    # Step 8: Construct result objects
-    results = [_ScoredResult(decl_id=decl_id, score=score) for decl_id, score in scored]
+    # Step 8: Construct SearchResult objects (spec §4.3 step 8)
+    return _resolve_scored_results(scored, ctx.reader)
+
+
+def _resolve_scored_results(
+    scored_pairs: list[tuple[int, float]], reader: Any,
+) -> list[SearchResult]:
+    """Resolve (decl_id, score) pairs into SearchResult objects.
+
+    Batch-fetches declaration metadata from the reader and constructs
+    SearchResult objects.  Used by search_by_structure and search_by_symbols.
+    """
+    if not scored_pairs:
+        return []
+
+    ids = [decl_id for decl_id, _ in scored_pairs]
+    decl_map: dict[int, dict] = {}
+    try:
+        rows = reader.get_declarations_by_ids(ids)
+        if isinstance(rows, list):
+            for d in rows:
+                if isinstance(d, dict) and "id" in d:
+                    decl_map[d["id"]] = d
+    except (TypeError, KeyError):
+        pass
+
+    results: list[SearchResult] = []
+    for decl_id, score in scored_pairs:
+        decl = decl_map.get(decl_id)
+        if decl is None:
+            continue
+        results.append(SearchResult(
+            name=decl.get("name", ""),
+            statement=decl.get("statement", ""),
+            type=decl.get("type_expr", ""),
+            module=decl.get("module", ""),
+            kind=decl.get("kind", ""),
+            score=score,
+        ))
     return results
 
 
