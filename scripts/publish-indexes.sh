@@ -130,6 +130,19 @@ else
     echo "index.db is up to date."
 fi
 
+# --- Build FAISS sidecar from merged index ---
+FAISS_PATH="${INDEX_DB%.db}.faiss"
+echo "Building FAISS sidecar..."
+python -c "
+from pathlib import Path
+from Poule.neural.embeddings import build_faiss_index
+p = build_faiss_index(Path('${INDEX_DB}'))
+if p:
+    print(f'  FAISS sidecar written: {p}')
+else:
+    print('  No embeddings in merged index — skipping FAISS sidecar.')
+"
+
 if [[ -n "$MODEL_PATH" && ! -f "$MODEL_PATH" ]]; then
     echo "Error: ${MODEL_PATH} does not exist." >&2
     exit 1
@@ -313,6 +326,14 @@ merged_upload_dir=$(mktemp -d /tmp/poule-publish-merged.XXXXXX)
 cp "${INDEX_DB}" "$merged_upload_dir/index.db"
 cp "$merged_manifest_tmp" "$merged_upload_dir/manifest.json"
 merged_assets=("$merged_upload_dir/index.db" "$merged_upload_dir/manifest.json")
+
+# Include FAISS sidecar if it exists alongside index.db
+FAISS_PATH="${INDEX_DB%.db}.faiss"
+if [[ -f "$FAISS_PATH" ]]; then
+    cp "$FAISS_PATH" "$merged_upload_dir/index.faiss"
+    merged_assets+=("$merged_upload_dir/index.faiss")
+    echo "Including FAISS sidecar: index.faiss"
+fi
 
 if [[ -n "$MODEL_PATH" ]]; then
     cp "$MODEL_PATH" "$merged_upload_dir/neural-premise-selector.onnx"

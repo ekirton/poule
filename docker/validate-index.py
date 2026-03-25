@@ -44,6 +44,13 @@ def main():
     print("Downloading index.db...")
     download(assets["index.db"], "/data/index.db")
 
+    # ── Download FAISS sidecar (optional) ─────────────────────────────────────
+    if "index.faiss" in assets:
+        print("Downloading index.faiss...")
+        download(assets["index.faiss"], "/data/index.faiss")
+    else:
+        print("No index.faiss in release (neural embeddings not yet computed).")
+
     # ── SHA-256 verification ──────────────────────────────────────────────────
     expected = manifest["index"]["sha256"]
     sha = hashlib.sha256(open("/data/index.db", "rb").read()).hexdigest()

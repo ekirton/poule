@@ -55,6 +55,11 @@ CREATE TABLE index_meta (
     value TEXT NOT NULL
 );
 
+CREATE TABLE embeddings (
+    decl_id INTEGER PRIMARY KEY REFERENCES declarations(id) ON DELETE CASCADE,
+    vector BLOB NOT NULL
+);
+
 CREATE VIRTUAL TABLE declarations_fts USING fts5(
     name, statement, module,
     content=declarations, content_rowid=id,

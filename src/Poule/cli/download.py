@@ -264,6 +264,19 @@ def download_index(
     merged_dest = libraries_dir / "index.db"
     merge_indexes(sources, merged_dest)
 
+    # 7b. Download FAISS sidecar from merged release if available
+    try:
+        merged_release = _find_release(TAG_MERGED)
+        faiss_asset = _find_asset(merged_release, "index.faiss")
+        faiss_dest = libraries_dir / "index.faiss"
+        faiss_url = faiss_asset["browser_download_url"]
+        tmp = _download_file(faiss_url, faiss_dest, "index.faiss")
+        os.replace(tmp, faiss_dest)
+        click.echo(f"  index.faiss -> {faiss_dest}", err=True)
+    except Exception:
+        # No FAISS sidecar in release — neural channel will use SQLite fallback
+        pass
+
     # 8. Handle ONNX model if requested
     if include_model:
         onnx_checksum = manifest.get("onnx_model_sha256")

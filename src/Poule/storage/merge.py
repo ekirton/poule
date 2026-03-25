@@ -211,6 +211,43 @@ def merge_indexes(sources: list[tuple[str, Path]], dest: Path) -> dict:
 
     dest_conn.commit()
 
+    # 6b. Copy embeddings, remapping decl_id.
+    for (lib_name, src_path), old_to_new in zip(sources, all_id_maps):
+        src_conn = sqlite3.connect(str(src_path))
+        try:
+            emb_rows = src_conn.execute(
+                "SELECT decl_id, vector FROM embeddings"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            emb_rows = []  # No embeddings table in this source
+        src_conn.close()
+
+        for old_decl_id, vector in emb_rows:
+            new_decl_id = old_to_new.get(old_decl_id)
+            if new_decl_id is not None:
+                dest_conn.execute(
+                    "INSERT OR IGNORE INTO embeddings (decl_id, vector) "
+                    "VALUES (?, ?)",
+                    (new_decl_id, vector),
+                )
+
+    dest_conn.commit()
+
+    # 6c. Copy neural_model_hash if all sources agree on it.
+    model_hashes = set()
+    for lib_name, src_path in sources:
+        src_conn = sqlite3.connect(str(src_path))
+        h = _meta_value(src_conn, "neural_model_hash")
+        src_conn.close()
+        if h is not None:
+            model_hashes.add(h)
+    if len(model_hashes) == 1:
+        dest_conn.execute(
+            "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+            ("neural_model_hash", model_hashes.pop()),
+        )
+        dest_conn.commit()
+
     # 7. Rebuild FTS5 from all merged declarations.
     fts_rows = dest_conn.execute(
         "SELECT id, name, statement, module FROM declarations"
