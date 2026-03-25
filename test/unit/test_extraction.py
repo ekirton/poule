@@ -2339,6 +2339,65 @@ class TestPrefetchedData:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# 13b. Empty Statement Fallback (§4.4 step 7)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestEmptyStatementFallback:
+    """When pretty_print returns empty, synthesize statement from type_signature
+    (§4.4 step 7, updated)."""
+
+    def test_empty_prefetched_statement_synthesizes_from_type_signature(self):
+        """Pre-fetched empty string triggers type_signature fallback."""
+        from Poule.extraction.pipeline import process_declaration
+
+        backend = _make_mock_backend()
+        constr_t = {"name": "TM_type", "type_signature": "Type", "source": "coq-lsp"}
+
+        result = process_declaration(
+            "Interval.Tactic.Private.TM.TMI.TM_type", "Definition", constr_t,
+            backend, "/fake.vo",
+            statement="", dependency_names=[],
+        )
+
+        assert result is not None
+        assert result.statement == "TM_type : Type"
+        backend.pretty_print.assert_not_called()
+
+    def test_none_statement_with_empty_pretty_print_synthesizes(self):
+        """When statement is None and pretty_print returns empty, fall back to
+        type_signature synthesis."""
+        from Poule.extraction.pipeline import process_declaration
+
+        backend = _make_mock_backend()
+        backend.pretty_print.return_value = ""
+        constr_t = {"name": "foo", "type_signature": "nat -> nat", "source": "coq-lsp"}
+
+        result = process_declaration(
+            "Mod.Sub.foo", "Definition", constr_t, backend, "/fake.vo",
+        )
+
+        assert result is not None
+        assert result.statement == "foo : nat -> nat"
+
+    def test_fallback_uses_fqn_when_no_type_signature(self):
+        """When type_signature is also unavailable, use FQN as statement."""
+        from Poule.extraction.pipeline import process_declaration
+
+        backend = _make_mock_backend()
+        backend.pretty_print.return_value = ""
+        backend.pretty_print_type.return_value = None
+        constr_t = {"name": "bar", "source": "coq-lsp"}
+
+        result = process_declaration(
+            "Mod.Sub.bar", "Definition", constr_t, backend, "/fake.vo",
+        )
+
+        assert result is not None
+        assert result.statement == "Mod.Sub.bar"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # 14. Metadata-Only constr_t (coq-lsp backend — §4.4 step 1)
 # ═══════════════════════════════════════════════════════════════════════════
 

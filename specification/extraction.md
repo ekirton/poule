@@ -232,7 +232,7 @@ For each declaration extracted from a `.vo` file:
 4. `extract_consts(tree)` → raw symbol set (short display names from parsed text)
 5. `resolve_symbols(raw_set, backend)` → FQN symbol set (see §4.4.1). The `backend` parameter provides the `locate()` method for `Locate` queries. A shared resolution cache is passed across declarations to avoid redundant queries.
 6. `wl_histogram(tree, h=3)` → WL vector (Phase 1 computes h=3 only)
-7. `pretty_print(name)` → statement
+7. `pretty_print(name)` → statement. When `pretty_print` returns an empty string (either from batched queries or per-declaration fallback), construct a synthetic statement from the declaration's type signature: `"<short_name> : <type_signature>"`, where `short_name` is the last dot-separated segment of the fully qualified name. If the type signature is also unavailable, store the fully qualified declaration name as the statement. This ensures every indexed declaration has a non-empty, display-quality statement suitable for full-text search.
 8. Type expression: derived from the Search output `type_signature` field in `constr_t` when available; falls back to `pretty_print_type(name)` otherwise (nullable)
 
 9. Proof-body detection: For each declaration whose kind ∈ {`lemma`, `theorem`, `definition`, `instance`}, determine `has_proof_body` using three signals evaluated in order:

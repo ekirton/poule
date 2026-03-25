@@ -571,6 +571,14 @@ def process_declaration(
     # Display data: use pre-fetched or fall back to per-declaration queries
     if statement is None:
         statement = backend.pretty_print(name)
+    if not statement:
+        # Print returned empty — synthesize from Search type_signature
+        type_sig = constr_t.get("type_signature") if isinstance(constr_t, dict) else None
+        if type_sig:
+            short_name = name.rsplit(".", 1)[-1]
+            statement = f"{short_name} : {type_sig}"
+        else:
+            statement = name
     if dependency_names is None:
         dependency_names = backend.get_dependencies(name)
 
