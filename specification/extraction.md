@@ -486,7 +486,7 @@ Each message identifies the current stage name. Messages are written to stderr s
 
 **Per-batch restart (batched queries):** During batched Print + Print Assumptions queries, the pipeline shall check the backend's RSS after each batch of declarations within an import-path group. Each batch (≤50 declarations) creates its own synthetic document starting with `Require Import <import_path>.`, so batches are self-contained and restarts between them lose no state. The backend shall not be restarted after the final batch of the final group, since Pass 1 processing requires a live backend.
 
-**Pass 1 restart:** During per-declaration processing (Pass 1), the pipeline shall check the backend's RSS after each BATCH_SIZE (1000 declaration) flush to SQLite. If RSS exceeds the restart threshold, the backend is stopped and restarted. Pass 1 issues `Locate` queries for symbol resolution; while most are served from cache, the backend process may still accumulate memory from prior phases' `Require Import` loads.
+**Pass 1 restart:** During per-declaration processing (Pass 1), the pipeline shall check the backend's RSS every 50 declarations, independent of the BATCH_SIZE flush cycle. If RSS exceeds the restart threshold, the backend is stopped and restarted. Pass 1 issues `Locate` queries for symbol resolution; the backend process may accumulate memory from these queries and from prior phases' `Require Import` loads. Checking every 50 declarations (matching the batched-query granularity) prevents coq-lsp from growing unboundedly between the less-frequent BATCH_SIZE flushes.
 
 **Notification buffer draining:** The backend shall discard buffered LSP notifications (e.g., `$/progress`) after each document lifecycle (query or batch) completes. coq-lsp emits progress notifications between responses; without draining, these accumulate unboundedly across hundreds of `proof/goals` requests per file.
 
@@ -521,7 +521,7 @@ Error hierarchy:
 - The entire process runs without GPU, network access, or external API keys.
 - Batch size: 1000 declarations per transaction.
 - Progress reporting at per-declaration granularity.
-- **Backend memory:** coq-lsp RSS is monitored after each `.vo` file, after each batch of ≤50 declarations during querying, and after each BATCH_SIZE flush during Pass 1; the process is restarted only when RSS exceeds the threshold (§4.12). Peak backend memory is bounded by the threshold, not cumulative across the library.
+- **Backend memory:** coq-lsp RSS is monitored after each `.vo` file, after each batch of ≤50 declarations during querying, and every 50 declarations during Pass 1; the process is restarted only when RSS exceeds the threshold (§4.12). Peak backend memory is bounded by the threshold, not cumulative across the library.
 - **Kind detection overhead (coq-lsp):** About queries are batched into shared documents (≤100 commands each), and Print + Print Assumptions queries are batched similarly (≤50 declarations = ≤100 lines per document), reducing document lifecycle overhead by 3–10x compared to per-declaration queries. Each Print batch document shall begin with `Require Import <import_path>.` so that declaration names are in scope; names shall be grouped by source module so each group shares a single import preamble.
 
 ## 7. Examples

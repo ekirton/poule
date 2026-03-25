@@ -1935,12 +1935,12 @@ class TestFullRunIntegration:
     def test_pass1_restarts_backend_between_batches_when_rss_high(
         self, tmp_path
     ):
-        """Pass 1 checks RSS after each BATCH_SIZE flush and restarts
+        """Pass 1 checks RSS every 50 declarations and restarts
         coq-lsp when it exceeds the threshold (spec §4.12)."""
-        from Poule.extraction.pipeline import run_extraction, BATCH_SIZE
+        from Poule.extraction.pipeline import run_extraction
 
-        # Create enough declarations to trigger at least 2 batch flushes.
-        num_decls = BATCH_SIZE + 10
+        # Create enough declarations to trigger at least 2 RSS checks (every 50).
+        num_decls = 110
         vo = Path("/fake/user-contrib/Pkg/Huge.vo")
         decl_names = [f"Pkg.Huge.d{i}" for i in range(num_decls)]
 
