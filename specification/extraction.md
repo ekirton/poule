@@ -480,9 +480,11 @@ Each message identifies the current stage name. Messages are written to stderr s
 
 ### 4.12 Backend Process Lifecycle
 
-**Per-file restart:** The backend process shall be stopped and restarted after processing each `.vo` file during declaration collection. Each `Require Import` permanently loads a module and its transitive dependencies into the coq-lsp process; restarting is the only way to reclaim that memory. Without per-file restarts, libraries like MathComp (105 `.vo` files with deep dependency chains) cause coq-lsp to consume multiple gigabytes of RAM.
+**RSS monitoring:** The pipeline shall monitor the coq-lsp child process's resident set size (RSS) by reading `VmRSS` from `/proc/<pid>/status`. The RSS restart threshold defaults to 5 GiB and is overridable via the `POULE_LSP_RSS_LIMIT` environment variable (in bytes). When RSS exceeds the threshold, the pipeline stops and restarts the backend to reclaim memory. When RSS is below the threshold, the pipeline skips the restart to avoid unnecessary overhead.
 
-**Per-group restart (batched queries):** The backend process shall be stopped and restarted between import-path groups during batched Print + Print Assumptions queries. Each group shares a single `Require Import`; restarting between groups reclaims the memory from previous imports. The backend shall not be restarted after the last group, since Pass 1 processing requires a live backend.
+**Per-file restart:** After processing each `.vo` file during declaration collection, the pipeline shall check the backend's RSS. If RSS exceeds the restart threshold, the backend is stopped and restarted before the next file. Each `list_declarations` call creates its own synthetic document, so restarts between files lose no state.
+
+**Per-batch restart (batched queries):** During batched Print + Print Assumptions queries, the pipeline shall check the backend's RSS after each batch of declarations within an import-path group. Each batch (≤50 declarations) creates its own synthetic document starting with `Require Import <import_path>.`, so batches are self-contained and restarts between them lose no state. The backend shall not be restarted after the final batch of the final group, since Pass 1 processing requires a live backend.
 
 **Notification buffer draining:** The backend shall discard buffered LSP notifications (e.g., `$/progress`) after each document lifecycle (query or batch) completes. coq-lsp emits progress notifications between responses; without draining, these accumulate unboundedly across hundreds of `proof/goals` requests per file.
 
@@ -517,7 +519,7 @@ Error hierarchy:
 - The entire process runs without GPU, network access, or external API keys.
 - Batch size: 1000 declarations per transaction.
 - Progress reporting at per-declaration granularity.
-- **Backend memory:** coq-lsp is restarted after every `.vo` file during declaration collection and after every import-path group during batched queries (§4.12). Peak backend memory is bounded by the single largest module, not cumulative across the library.
+- **Backend memory:** coq-lsp RSS is monitored after each `.vo` file and after each batch of ≤50 declarations; the process is restarted only when RSS exceeds the threshold (§4.12). Peak backend memory is bounded by the threshold, not cumulative across the library.
 - **Kind detection overhead (coq-lsp):** About queries are batched into shared documents (≤100 commands each), and Print + Print Assumptions queries are batched similarly (≤50 declarations = ≤100 lines per document), reducing document lifecycle overhead by 3–10x compared to per-declaration queries. Each Print batch document shall begin with `Require Import <import_path>.` so that declaration names are in scope; names shall be grouped by source module so each group shares a single import preamble.
 
 ## 7. Examples

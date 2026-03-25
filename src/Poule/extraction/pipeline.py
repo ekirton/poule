@@ -846,27 +846,40 @@ def run_extraction(
             num_groups = len(group_items)
             del import_groups  # free the dict; we iterate group_items
 
+            # Flatten groups into batch-sized chunks so we can check RSS
+            # between batches, not just between groups.  Each chunk is a
+            # (import_path, chunk_names) pair that query_declaration_data
+            # processes as an independent document.
+            _QUERY_BATCH_SIZE = 50  # matches query_declaration_data internal batch
+            all_chunks: list[tuple[str, list[str]]] = []
+            for import_path, group_names in group_items:
+                for i in range(0, len(group_names), _QUERY_BATCH_SIZE):
+                    all_chunks.append(
+                        (import_path, group_names[i : i + _QUERY_BATCH_SIZE])
+                    )
+            num_chunks = len(all_chunks)
+
             try:
-                for grp_idx, (import_path, group_names) in enumerate(group_items, 1):
+                for chunk_idx, (import_path, chunk_names) in enumerate(all_chunks, 1):
                     if progress_callback is not None:
                         progress_callback(
-                            f"Querying declaration data [{grp_idx}/{num_groups}]..."
+                            f"Querying declaration data [{chunk_idx}/{num_chunks}]..."
                         )
-                    name_to_import = {n: import_path for n in group_names}
+                    name_to_import = {n: import_path for n in chunk_names}
                     batch_result = _query_fn(
-                        group_names, name_to_import=name_to_import,
+                        chunk_names, name_to_import=name_to_import,
                     )
                     if isinstance(batch_result, dict):
                         decl_data.update(batch_result)
 
                     # Restart backend when RSS exceeds threshold.
-                    if grp_idx < num_groups:
+                    if chunk_idx < num_chunks:
                         rss = backend._get_child_rss_bytes()
                         if rss > _LSP_RSS_RESTART_THRESHOLD:
                             logger.debug(
-                                "Restarting coq-lsp after group %d/%d "
+                                "Restarting coq-lsp after chunk %d/%d "
                                 "(RSS=%.0f MiB)",
-                                grp_idx, num_groups, rss / (1024 * 1024),
+                                chunk_idx, num_chunks, rss / (1024 * 1024),
                             )
                             backend.stop()
                             backend.start()
