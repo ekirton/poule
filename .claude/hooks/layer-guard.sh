@@ -7,7 +7,7 @@ FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
 # Skip if no file path (e.g. Write to stdout)
 [ -z "$FILE" ] && exit 0
 
-PHASE=$(cat .claude/sdd-layer 2>/dev/null || echo "free")
+PHASE=$(cat $CLAUDE_PROJECT_DIR/sdd-layer 2>/dev/null || echo "free")
 
 # Normalize: strip leading ./ or absolute project root prefix
 FILE="${FILE#./}"

@@ -39,21 +39,21 @@ Work through the stages below **starting from the determined stage**. At each st
 
 ## Stage 1: Requirements
 
-1. Run: `echo "requirements" > .claude/sdd-layer`
+1. Run: `echo "requirements" > $CLAUDE_PROJECT_DIR/sdd-layer`
 2. If propagating from a user request that clearly defines the requirements, write or update the PRD in `doc/requirements/` autonomously.
 3. If the requirements already exist and are sufficient, confirm with the user and skip to Stage 2.
 4. If the change requires judgment (e.g., scope decisions, priority trade-offs), present options with analysis and a recommendation. Wait for approval.
 
 ## Stage 2: Features
 
-1. Run: `echo "features" > .claude/sdd-layer`
+1. Run: `echo "features" > $CLAUDE_PROJECT_DIR/sdd-layer`
 2. If propagating from Stage 1, propagate to `doc/features/` autonomously.
 3. If this is the starting stage, or if the change requires judgment beyond what the requirements prescribe, present options with analysis and a recommendation. Wait for approval.
 4. If a problem with the requirements is detected, do **not** edit requirements — surface the issue to the user and **stop**.
 
 ## Stage 3: Architecture
 
-1. Run: `echo "architecture" > .claude/sdd-layer`
+1. Run: `echo "architecture" > $CLAUDE_PROJECT_DIR/sdd-layer`
 2. Read `doc/architecture/data-models/expression-tree.md` and `doc/architecture/data-models/index-entities.md`.
 3. If propagating from Stage 2, propagate to `doc/architecture/` autonomously.
 4. If this is the starting stage, or if the change involves design decisions not prescribed by the feature doc, present options with analysis and a recommendation. Wait for approval.
@@ -61,31 +61,31 @@ Work through the stages below **starting from the determined stage**. At each st
 
 ## Stage 4: Specifications
 
-1. Run: `echo "specification" > .claude/sdd-layer`
+1. Run: `echo "specification" > $CLAUDE_PROJECT_DIR/sdd-layer`
 2. Read the parent architecture document.
 3. Propagate architecture down to `specification/`.
 4. If a problem is identified with the architecture, write a detailed description to `doc/architecture/feedback/` and **stop**. Notify the user — architecture changes require human approval.
-5. Record the blast radius — write changed spec filenames to `.claude/sdd-blast-radius`:
-   `echo "specification/channels.md specification/storage.md" > .claude/sdd-blast-radius`
+5. Record the blast radius — write changed spec filenames to `$CLAUDE_PROJECT_DIR/sdd-blast-radius`:
+   `echo "specification/channels.md specification/storage.md" > $CLAUDE_PROJECT_DIR/sdd-blast-radius`
 
 ## Stage 5: Tests and Implementation
 
 This stage follows TDD: write failing tests first, then implement until tests pass. Track feedback cycles (any return to step 1 or 3 from a feedback resolution counts as one cycle).
 
-1. Read the blast radius from `.claude/sdd-blast-radius` if it exists.
-2. Run: `echo "tests" > .claude/sdd-layer`
+1. Read the blast radius from `$CLAUDE_PROJECT_DIR/sdd-blast-radius` if it exists.
+2. Run: `echo "tests" > $CLAUDE_PROJECT_DIR/sdd-layer`
 3. Write or update tests for the new/changed specifications within the blast radius.
 4. Do **not** change specifications. If a spec problem is found, go to step 9.
 5. Run `python -m pytest test/ -x -q`. New tests covering the change should fail. Existing tests may pass or fail.
-6. Run: `echo "implementation" > .claude/sdd-layer`
+6. Run: `echo "implementation" > $CLAUDE_PROJECT_DIR/sdd-layer`
 7. Write the implementation to make tests pass. Do **not** change tests or specifications.
 8. Run `python -m pytest test/ -x -q` after each significant change. When all tests pass, proceed to Completion.
 9. **If a spec problem is found** (during tests or implementation):
-   - Run: `echo "specification" > .claude/sdd-layer`
+   - Run: `echo "specification" > $CLAUDE_PROJECT_DIR/sdd-layer`
    - Fix the specification. Delete the feedback file.
    - Increment feedback cycle count. Return to step 2.
 10. **If a test problem is found** (during implementation):
-    - Run: `echo "tests" > .claude/sdd-layer`
+    - Run: `echo "tests" > $CLAUDE_PROJECT_DIR/sdd-layer`
     - Fix the test. Delete the feedback file.
     - Increment feedback cycle count. Return to step 6.
 11. **If an architecture problem is found:**
@@ -94,8 +94,8 @@ This stage follows TDD: write failing tests first, then implement until tests pa
 
 ## Completion
 
-1. Run: `echo "free" > .claude/sdd-layer`
-2. Remove `.claude/sdd-blast-radius` if it exists.
+1. Run: `echo "free" > $CLAUDE_PROJECT_DIR/sdd-layer`
+2. Remove `$CLAUDE_PROJECT_DIR/sdd-blast-radius` if it exists.
 3. Check off completed tasks in `tasks/` (update `- [ ]` to `- [x]`).
 4. If any feedback files still exist, notify the user and **stop**.
 5. Report what was done and which files were changed.
