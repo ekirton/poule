@@ -38,6 +38,16 @@ _COQ_KEYWORDS = frozenset({
     "else", "return", "as", "with", "end", "fix", "cofix",
 })
 
+# Infix operator aliases: maps parser operator symbols to the Locate-resolved
+# names stored in the DB's symbol_set / inverted_index.  Only operators whose
+# Locate name differs from the parser symbol need an entry; operators like
+# "=", "<=", "<", "++", "::" already match between parser and DB.
+_OPERATOR_ALIASES: dict[str, str] = {
+    "+": "Nat.add",
+    "*": "Nat.mul",
+    "-": "Nat.sub",
+}
+
 
 def _clean_type_expr_for_fts(type_expr: str) -> str:
     """Extract identifier tokens from a type expression for FTS search.
@@ -182,6 +192,13 @@ def resolve_query_symbols(ctx: Any, symbols: list[str]) -> set[str]:
                 else:
                     resolved.add(sym)  # passthrough
             else:
+                # Operator notation alias fallback
+                op_alias = _OPERATOR_ALIASES.get(sym)
+                if op_alias:
+                    alias_resolved = _resolve_one(op_alias, ctx)
+                    if alias_resolved:
+                        resolved.update(alias_resolved)
+                        continue
                 resolved.add(sym)  # passthrough
     return resolved
 
@@ -261,6 +278,12 @@ def _resolve_const_name(name: str, ctx: Any) -> str | None:
             fqns = ctx.suffix_index[aliased]
             if len(fqns) == 1:
                 return fqns[0] if isinstance(fqns, list) else next(iter(fqns))
+    # NOTE: Operator aliases ("+", "*", "-") are NOT resolved here because
+    # this function feeds _resolve_consts_in_tree which transforms the
+    # ConstrNode tree.  DB trees store short operator names (LConst("+")),
+    # so the query tree must keep them too for structural matching.
+    # Operator aliases are resolved in resolve_query_symbols instead,
+    # which feeds MePo and const_jaccard (symbol-based channels).
     return None
 
 
@@ -382,28 +405,90 @@ def _peel_n_prods(tree: ExprTree, n: int) -> ExprTree:
     return body_tree
 
 
+def _peel_all_prods(tree: ExprTree) -> ExprTree:
+    """Strip ALL leading LProd layers from a tree.
+
+    Used by search_by_structure for binderless queries: peel candidate
+    binders so the body can be compared against the bare query pattern.
+    """
+    current = tree.root
+    while isinstance(current.label, LProd) and len(current.children) == 2:
+        current = current.children[1]
+    if current is tree.root:
+        return tree
+    nc = _node_count(current)
+    body_tree = ExprTree(root=current, node_count=nc)
+    recompute_depths(body_tree)
+    assign_node_ids(body_tree)
+    return body_tree
+
+
+def _is_known_const(name: str, ctx: Any) -> bool:
+    """Return True if *name* can be resolved via the index.
+
+    Used to distinguish known Coq constants (``nat``, ``eq``, ``+``)
+    from user-intended free variables (``n``, ``x``, ``f``) without
+    modifying the ConstrNode tree.  Keeping short names in the tree
+    preserves structural matching against DB trees (which also store
+    short names).
+    """
+    return _resolve_const_name(name, ctx) is not None
+
+
+def _collect_free_vars_with_ctx(node: object, ctx: Any) -> list[str]:
+    """Collect free variable names, using the index to distinguish them
+    from known constants.
+
+    A Const is a free variable if it passes ``_is_free_variable`` AND
+    cannot be resolved by the suffix/inverted index.
+    """
+    seen: set[str] = set()
+    result: list[str] = []
+
+    def _walk(n: object) -> None:
+        if isinstance(n, Const) and _is_free_variable(n.fqn):
+            if not _is_known_const(n.fqn, ctx):
+                if n.fqn not in seen:
+                    seen.add(n.fqn)
+                    result.append(n.fqn)
+        elif isinstance(n, Prod):
+            _walk(n.type)
+            _walk(n.body)
+        elif isinstance(n, Lambda):
+            _walk(n.type)
+            _walk(n.body)
+        elif isinstance(n, App):
+            _walk(n.func)
+            for a in n.args:
+                _walk(a)
+
+    _walk(node)
+    return result
+
+
 def normalize_type_query(ctx: Any, constr_node: object) -> tuple[object, int]:
     """Normalize a parsed type query for search_by_type.
 
-    1. Resolve constant names to FQNs via the suffix index.
-    2. Detect free variables (unresolved simple lowercase identifiers).
-    3. Wrap in forall binders, converting free variable Const nodes to Rel.
+    1. Detect free variables (simple lowercase identifiers that cannot be
+       resolved via the suffix/inverted index).
+    2. Wrap in forall binders, converting free variable Const nodes to Rel.
+
+    The tree is NOT rewritten with FQNs — short names are preserved so
+    that structural matching (WL, collapse_match, TED) works against DB
+    trees, which also store short operator and type names.
 
     Returns ``(transformed_constr_node, auto_binder_count)`` where
     *auto_binder_count* is the number of forall binders that were
     auto-generated (0 when no wrapping occurred).
     """
-    # Step 1: Resolve constants to FQNs
-    resolved = _resolve_consts_in_tree(constr_node, ctx)
-
-    # Step 2: Detect free variables
-    free_vars = _collect_free_vars(resolved)
+    # Step 1: Detect free variables using index lookup (not tree rewriting)
+    free_vars = _collect_free_vars_with_ctx(constr_node, ctx)
     if not free_vars:
-        return resolved, 0
+        return constr_node, 0
 
-    # Step 3: Skip wrapping if outermost node is already Prod (user wrote forall)
-    if isinstance(resolved, Prod):
-        return resolved, 0
+    # Step 2: Skip wrapping if outermost node is already Prod (user wrote forall)
+    if isinstance(constr_node, Prod):
+        return constr_node, 0
 
     # Build var_map: maps each free var name to its binding depth (0-based)
     # Outermost binder is depth 0, next is depth 1, etc.
@@ -413,7 +498,7 @@ def normalize_type_query(ctx: Any, constr_node: object) -> tuple[object, int]:
 
     # Replace free var references with Rel nodes
     # The body starts at depth = len(free_vars) (after all the Prod binders)
-    body = _replace_free_vars(resolved, var_map, len(free_vars))
+    body = _replace_free_vars(constr_node, var_map, len(free_vars))
 
     # Wrap in Prod binders: innermost last, so build from right to left
     result = body
@@ -446,26 +531,43 @@ def search_by_structure(ctx: Any, expression: str, limit: int) -> list[Any]:
     if cse_tree is None:
         cse_tree = normalized_tree
 
-    # Step 4: WL histogram
-    query_histogram = wl_histogram(cse_tree, h=3)
+    # Detect binderless query: no leading LProd means the user wrote a bare
+    # pattern like "_ * _ = _ * _" that needs to match declaration bodies
+    # (which are always wrapped in forall binders).
+    query_has_prods = isinstance(cse_tree.root.label, LProd)
 
-    # Step 5: WL screening
-    candidates_with_wl = wl_screen(
-        query_histogram,
-        cse_tree.node_count,
-        ctx.wl_histograms,
-        ctx.declaration_node_counts,
-        n=500,
-    )
+    if query_has_prods:
+        # Standard path: WL screening + structural scoring
+        query_histogram = wl_histogram(cse_tree, h=3)
+        candidates_with_wl = wl_screen(
+            query_histogram,
+            cse_tree.node_count,
+            ctx.wl_histograms,
+            ctx.declaration_node_counts,
+            n=500,
+        )
+        scored = score_candidates(cse_tree, candidates_with_wl, ctx)
+    else:
+        # Binderless query: WL screening fails because depth-encoded hashes
+        # don't match across binder layers.  Use symbol-based screening
+        # instead, then peel candidate binders before structural comparison.
+        query_consts = extract_consts(cse_tree)
+        resolved_consts = resolve_query_symbols(ctx, list(query_consts))
+        candidate_ids: set[int] = set()
+        for sym in resolved_consts:
+            if sym in ctx.inverted_index:
+                candidate_ids.update(ctx.inverted_index[sym])
+        candidates_with_wl = [(did, 0.0) for did in list(candidate_ids)[:2000]]
+        scored = score_candidates(
+            cse_tree, candidates_with_wl, ctx,
+            peel_candidate_prods=True,
+        )
 
-    # Step 6: Structural scoring
-    scored = score_candidates(cse_tree, candidates_with_wl, ctx)
-
-    # Step 7: Sort by score descending, take top limit
+    # Sort by score descending, take top limit
     scored.sort(key=lambda x: x[1], reverse=True)
     scored = scored[:limit]
 
-    # Step 8: Construct SearchResult objects (spec §4.3 step 8)
+    # Construct SearchResult objects (spec §4.3 step 8)
     return _resolve_scored_results(scored, ctx.reader)
 
 
@@ -602,20 +704,24 @@ def score_candidates(
     ctx: Any,
     *,
     auto_binder_count: int = 0,
+    peel_candidate_prods: bool = False,
 ) -> list[tuple[int, float]]:
     """Compute structural scores for candidates.
 
     When *auto_binder_count* > 0, peels that many leading ``LProd`` layers
     from both query and candidate trees before computing collapse_match and
-    ted_similarity.  WL cosine and const_jaccard use the full (unpeeled) trees.
+    ted_similarity.  When *peel_candidate_prods* is True, peels ALL leading
+    ``LProd`` layers from each candidate (for binderless structure queries).
+    WL cosine and const_jaccard use the full (unpeeled) trees.
 
     Returns (decl_id, structural_score) pairs.
     """
     if not candidates_with_wl:
         return []
 
-    # Extract query constants (uses full tree)
-    query_consts = extract_consts(query_tree)
+    # Extract query constants (uses full tree) and resolve to match DB namespace
+    raw_query_consts = extract_consts(query_tree)
+    query_consts = resolve_query_symbols(ctx, list(raw_query_consts))
 
     # Peel query tree once (outside loop) if auto binders were generated
     if auto_binder_count > 0:
@@ -638,7 +744,9 @@ def score_candidates(
         cj = jaccard_similarity(query_consts, candidate_consts)
 
         # Peel candidate tree for structural comparison
-        if auto_binder_count > 0:
+        if peel_candidate_prods:
+            peeled_candidate = _peel_all_prods(candidate_tree)
+        elif auto_binder_count > 0:
             peeled_candidate = _peel_n_prods(candidate_tree, auto_binder_count)
         else:
             peeled_candidate = candidate_tree

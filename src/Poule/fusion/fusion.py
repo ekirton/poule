@@ -181,6 +181,13 @@ def _collapse_node(a: TreeNode, b: TreeNode) -> float:
         body_score = _collapse_node(a.children[1], b.children[1])
         return 1.0 + type_score + body_score
 
+    # Universal sort-leaf wildcard: a bare LSort (from parser's _ token)
+    # matches any subtree, contributing the other subtree's full node count.
+    if _is_sort_leaf(a) and not _is_sort_leaf(b):
+        return float(_count_subtree(b))
+    if _is_sort_leaf(b) and not _is_sort_leaf(a):
+        return float(_count_subtree(a))
+
     if cat_a != cat_b:
         # Different category: 0.0, no recursion.
         return 0.0

@@ -711,6 +711,7 @@ class TestSearchByStructure:
         mock_wl_screen,
         mock_score,
     ):
+        from Poule.models.labels import LProd
         parser = _mock_parser()
         ctx = _mock_context(parser=parser)
 
@@ -718,6 +719,9 @@ class TestSearchByStructure:
         normalized_tree = MagicMock()
         cse_tree = MagicMock()
         cse_tree.node_count = 15
+        # Simulate a forall-quantified query: root label is LProd so the
+        # standard WL screening path is taken (not the binderless path).
+        cse_tree.root.label = LProd()
         query_histogram = {"label_A": 3, "label_B": 1}
 
         parser.parse.return_value = raw_tree

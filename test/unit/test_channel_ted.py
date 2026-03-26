@@ -170,9 +170,9 @@ class TestRenameCost:
         assert rename_cost(_lrel(0), _lcsevar(0)) == 0.5
 
     def test_cross_category_sort_vs_primitive(self):
-        """LSort (Sort) vs LPrimitive (Primitive) → 1.0."""
+        """LSort acts as wildcard → 0.0 against any other label."""
         from Poule.channels.ted import rename_cost
-        assert rename_cost(_lsort(), _lprimitive()) == 1.0
+        assert rename_cost(_lsort(), _lprimitive()) == 0.0
 
     def test_same_category_control(self):
         """LCase vs LFix (both Control) → 0.5."""

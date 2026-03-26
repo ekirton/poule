@@ -55,9 +55,12 @@ def rename_cost(label_a: NodeLabel, label_b: NodeLabel) -> float:
     """Return the rename cost between two node labels.
 
     Returns 0.0 if labels are equal, 0.5 if same category but different
-    labels, 1.0 if different categories.
+    labels, 1.0 if different categories.  LSort acts as a wildcard (from
+    the parser's ``_`` token) and matches any label at cost 0.0.
     """
     if label_a == label_b:
+        return 0.0
+    if isinstance(label_a, LSort) or isinstance(label_b, LSort):
         return 0.0
     cat_a = _CATEGORY[type(label_a)]
     cat_b = _CATEGORY[type(label_b)]

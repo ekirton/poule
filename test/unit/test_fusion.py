@@ -219,10 +219,10 @@ class TestCollapseMatchDifferentCategoryRoots:
         assert collapse_match(tree_a, tree_b) == pytest.approx(0.0)
 
     def test_const_leaf_vs_sort_leaf(self):
-        # LConst (ConstantRef) vs LSort (Sort) -> different categories.
+        # LSort acts as a universal wildcard → matches any single node.
         tree_a = tree(leaf(LConst("a")))
         tree_b = tree(leaf(LSort(SortKind.PROP)))
-        assert collapse_match(tree_a, tree_b) == pytest.approx(0.0)
+        assert collapse_match(tree_a, tree_b) == pytest.approx(1.0)
 
 
 class TestCollapseMatchDifferentChildCounts:
@@ -259,10 +259,10 @@ class TestCollapseMatchMixedLevels:
         # Child 0: LConst("a") vs LInd("b") -> same category (ConstantRef) -> 0.5
         # Child 1: LProd vs LProd -> same label -> 1.0
         #   Grandchild 0: LRel(0) vs LRel(0) -> same label -> 1.0
-        #   Grandchild 1: LRel(1) vs LSort(PROP) -> diff category -> 0.0
-        # Total node scores = 1.0 + 0.5 + 1.0 + 1.0 + 0.0 = 3.5
+        #   Grandchild 1: LRel(1) vs LSort(PROP) -> LSort wildcard -> 1.0
+        # Total node scores = 1.0 + 0.5 + 1.0 + 1.0 + 1.0 = 4.5
         # Both trees: 5 nodes each -> max(5,5) = 5
-        # Final = 3.5 / 5.0 = 0.7
+        # Final = 4.5 / 5.0 = 0.9
         tree_a = tree(
             node(
                 LProd(),
@@ -282,7 +282,7 @@ class TestCollapseMatchMixedLevels:
             )
         )
         result = collapse_match(tree_a, tree_b)
-        assert result == pytest.approx(0.7)
+        assert result == pytest.approx(0.9)
 
 
 # ===========================================================================
