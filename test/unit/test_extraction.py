@@ -3977,3 +3977,140 @@ class TestDetectProofBodyKindFilter:
             opacity=None,
         )
         assert result == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Dangling re-export alias validation — §4.4
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDanglingReExportAliasValidation:
+    """When a re-export alias's canonical_fqn doesn't resolve to any
+    extracted declaration, the re-exported declaration must be kept
+    instead of being skipped.
+
+    This happens when the canonical module is a functor body whose
+    declarations are not directly extractable as top-level names
+    (e.g., Coq.Numbers.NatInt.NZOrder.le_refl).
+
+    Spec: extraction.md §4.4 re-export detection."""
+
+    def test_dangling_alias_keeps_declaration(self, tmp_path):
+        """When canonical_fqn points to a non-existent declaration,
+        the re-exported declaration is kept and no alias is stored."""
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend()
+        # NZOrder.vo yields no declarations (functor body)
+        # PeanoNat.vo yields le_refl declared in NZOrder
+        backend.list_declarations.side_effect = [
+            [],  # NZOrder.vo — empty (functor body)
+            [("Coq.Arith.PeanoNat.Nat.le_refl", "Definition", {
+                "declared_library": "Stdlib.Numbers.NatInt.NZOrder",
+                "type_signature": "forall n : nat, n <= n",
+            })],
+        ]
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {
+            "Coq.Arith.PeanoNat.Nat.le_refl": 1,
+        }
+
+        result_mock = Mock()
+        result_mock.name = "Coq.Arith.PeanoNat.Nat.le_refl"
+        result_mock.kind = "definition"
+        result_mock.symbol_set = []
+        result_mock.dependency_names = []
+
+        db_path = tmp_path / "index.db"
+        process_mock = Mock(return_value=result_mock)
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=[
+                    Path("/fake/user-contrib/Stdlib/Numbers/NatInt/NZOrder.vo"),
+                    Path("/fake/user-contrib/Stdlib/Arith/PeanoNat.vo"),
+                ],
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                process_mock,
+            ),
+        ):
+            run_extraction(targets=["stdlib"], db_path=db_path)
+
+        # The declaration should be processed (not skipped)
+        process_mock.assert_called_once()
+
+        # The alias should NOT be stored (canonical target doesn't exist)
+        writer.insert_re_export_aliases.assert_called_once()
+        aliases = writer.insert_re_export_aliases.call_args[0][0]
+        assert "Coq.Arith.PeanoNat.Nat.le_refl" not in aliases
+
+    def test_valid_alias_still_works(self, tmp_path):
+        """When canonical_fqn exists, the alias is kept and the
+        re-export is skipped (existing behavior preserved)."""
+        from Poule.extraction.pipeline import run_extraction
+
+        backend = _make_mock_backend()
+        backend.list_declarations.side_effect = [
+            [("Coq.Lists.ListDef.map", "Definition", {
+                "declared_library": "Stdlib.Lists.ListDef",
+                "type_signature": "forall A B, (A -> B) -> list A -> list B",
+            })],
+            [("Coq.Lists.List.map", "Definition", {
+                "declared_library": "Stdlib.Lists.ListDef",
+                "type_signature": "forall A B, (A -> B) -> list A -> list B",
+            })],
+        ]
+        writer = _make_mock_writer()
+        writer.batch_insert.return_value = {"Coq.Lists.ListDef.map": 1}
+
+        result_mock = Mock()
+        result_mock.name = "Coq.Lists.ListDef.map"
+        result_mock.kind = "definition"
+        result_mock.symbol_set = []
+        result_mock.dependency_names = []
+
+        db_path = tmp_path / "index.db"
+        process_mock = Mock(return_value=result_mock)
+
+        with (
+            patch(
+                "Poule.extraction.pipeline.discover_libraries",
+                return_value=[
+                    Path("/fake/user-contrib/Stdlib/Lists/ListDef.vo"),
+                    Path("/fake/user-contrib/Stdlib/Lists/List.vo"),
+                ],
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_backend",
+                return_value=backend,
+            ),
+            patch(
+                "Poule.extraction.pipeline.create_writer",
+                return_value=writer,
+            ),
+            patch(
+                "Poule.extraction.pipeline.process_declaration",
+                process_mock,
+            ),
+        ):
+            run_extraction(targets=["stdlib"], db_path=db_path)
+
+        # Only the canonical declaration should be processed
+        process_mock.assert_called_once()
+
+        # The alias should be stored
+        writer.insert_re_export_aliases.assert_called_once()
+        aliases = writer.insert_re_export_aliases.call_args[0][0]
+        assert "Coq.Lists.List.map" in aliases
+        assert aliases["Coq.Lists.List.map"] == "Coq.Lists.ListDef.map"

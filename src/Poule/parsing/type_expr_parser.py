@@ -362,7 +362,7 @@ def tokenize(text: str) -> list[Token]:
                 tokens.append(Token(TokenKind.SORT, word, pos))
             elif word == "forall":
                 tokens.append(Token(TokenKind.FORALL, word, pos))
-            elif word == "exists":
+            elif word in ("exists", "exists2"):
                 tokens.append(Token(TokenKind.EXISTS, word, pos))
             elif word == "fun":
                 tokens.append(Token(TokenKind.FUN, word, pos))
@@ -411,6 +411,13 @@ class TypeExprParser:
 
         tokens = tokenize(expression)
         pos, node = self._expr(tokens, 0, [], 0)
+
+        # Trailing type annotation: `expr : Type` — Coq prints some
+        # declarations with a return-type annotation at the top level.
+        # Discard the annotation; the expression is the useful part.
+        if tokens[pos].kind == TokenKind.COLON:
+            pos += 1  # consume ':'
+            pos, _annotation = self._expr(tokens, pos, [], 0)
 
         if tokens[pos].kind != TokenKind.EOF:
             tok = tokens[pos]
@@ -755,6 +762,23 @@ class TypeExprParser:
                     all_pairs.append((name, ty))
                     current_binders.append(name)
                 continue
+
+            if (tok.kind == TokenKind.IDENT and tok.value == "'"
+                    and pos + 1 < len(tokens)
+                    and tokens[pos + 1].kind == TokenKind.LPAREN):
+                # Pattern binder: '(a, b) — Coq pattern-matching lambda.
+                # Skip the pattern and treat as an anonymous binder.
+                pos += 2  # consume "'" and "("
+                depth = 1
+                while depth > 0 and tokens[pos].kind != TokenKind.EOF:
+                    if tokens[pos].kind == TokenKind.LPAREN:
+                        depth += 1
+                    elif tokens[pos].kind == TokenKind.RPAREN:
+                        depth -= 1
+                    pos += 1
+                all_pairs.append(("_", Sort("Type")))
+                current_binders.append("_")
+                break  # pattern binder ends the binder list
 
             if tok.kind in (TokenKind.IDENT, TokenKind.UNDERSCORE):
                 # Unparenthesized binder(s): x y ... : T  (or untyped for fun)

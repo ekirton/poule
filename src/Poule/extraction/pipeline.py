@@ -856,6 +856,8 @@ def run_extraction(
         seen_names: dict[str, Path] = {}  # name -> first .vo path
         unique_declarations: list[tuple[str, str, Any, Path]] = []
         re_export_aliases: dict[str, str] = {}
+        # First collect candidates; deferred re-exports validated below.
+        deferred_re_exports: list[tuple[str, str, Any, Path, str]] = []
         for decl in all_declarations:
             name, _kind, constr_t, vo_path = decl
             declared_lib = constr_t.get("declared_library") if isinstance(constr_t, dict) else None
@@ -864,16 +866,30 @@ def run_extraction(
                 canonical_module = CoqLspBackend._vo_to_canonical_module(vo_path)
                 normalized_lib = _normalize_declared_library(declared_lib)
                 if normalized_lib != canonical_module:
-                    # Re-export detected — record alias, skip declaration
+                    # Re-export detected — defer until we know which
+                    # canonical FQNs actually exist.
                     short_name = name.rsplit(".", 1)[-1]
                     canonical_fqn = f"{normalized_lib}.{short_name}"
-                    re_export_aliases[name] = canonical_fqn
+                    deferred_re_exports.append((*decl, canonical_fqn))
                     continue
 
             # Not a re-export (or declared_library unavailable): normal dedup
             if name not in seen_names:
                 seen_names[name] = vo_path
                 unique_declarations.append(decl)
+
+        # Validate deferred re-exports: only create aliases when the
+        # canonical target was actually extracted.  When the target lives
+        # inside a functor body (e.g. NZOrder.le_refl) it won't appear
+        # in seen_names — keep the re-export as a normal declaration.
+        for name, _kind, constr_t, vo_path, canonical_fqn in deferred_re_exports:
+            if canonical_fqn in seen_names:
+                re_export_aliases[name] = canonical_fqn
+            elif name not in seen_names:
+                # Canonical target missing — keep the re-exported declaration
+                seen_names[name] = vo_path
+                unique_declarations.append((name, _kind, constr_t, vo_path))
+
         all_declarations = unique_declarations
         del seen_names  # free dedup lookup; no longer needed
 

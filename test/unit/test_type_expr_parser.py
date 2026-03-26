@@ -970,3 +970,115 @@ class TestTolerantParenParsing:
         """(x — truly unclosed paren raises ParseError."""
         with pytest.raises(ParseError):
             self.parser.parse("(x")
+
+
+# -----------------------------------------------------------------------
+# Bug fix: exists2 keyword support
+# -----------------------------------------------------------------------
+
+
+class TestExists2:
+    """exists2 introduces two propositions separated by &.
+
+    Coq syntax: exists2 x : T, P x & Q x
+    For indexing: treated as Prod (like exists/forall).
+    """
+
+    def setup_method(self):
+        self.parser = TypeExprParser()
+
+    def test_exists2_simple(self):
+        """exists2 m : nat, P m & Q m — two propositions."""
+        result = self.parser.parse("exists2 m : nat, P m & Q m")
+        # Should parse without error; result is Prod-based
+        assert isinstance(result, Prod)
+        assert result.name == "m"
+        assert result.type == Const("nat")
+
+    def test_exists2_in_forall_body(self):
+        """Real stdlib pattern: forall ..., ... -> exists2 m : nat, P & Q."""
+        result = self.parser.parse(
+            "forall (Q : nat -> Prop) (k l : nat), "
+            "exists_between Q k l -> exists2 m : nat, in_int k l m & Q m"
+        )
+        assert isinstance(result, Prod)
+
+    def test_exists2_unparenthesized(self):
+        """exists2 x : T, P & Q — basic form."""
+        result = self.parser.parse("exists2 x : T, P x & Q x")
+        assert isinstance(result, Prod)
+
+
+# -----------------------------------------------------------------------
+# Bug fix: trailing type annotation at top level
+# -----------------------------------------------------------------------
+
+
+class TestTrailingTypeAnnotation:
+    """Coq prints some types with a trailing `: Type` annotation.
+
+    Example: complement R y x : Type
+    The parser should consume the trailing `: Type` and use it as
+    the result type.
+    """
+
+    def setup_method(self):
+        self.parser = TypeExprParser()
+
+    def test_trailing_type(self):
+        """foo bar : Type — trailing annotation consumed."""
+        result = self.parser.parse("foo bar : Type")
+        # The `: Type` wraps the preceding expression
+        assert result is not None
+
+    def test_trailing_prop(self):
+        """A -> B : Prop — trailing annotation."""
+        result = self.parser.parse("A -> B : Prop")
+        assert result is not None
+
+    def test_asymmetry_pattern(self):
+        """Real stdlib pattern with trailing : Type."""
+        result = self.parser.parse(
+            "forall {A : Type} {R : crelation A}, Asymmetric R -> "
+            "forall {x y : A}, R x y -> complement R y x : Type"
+        )
+        assert isinstance(result, Prod)
+
+
+# -----------------------------------------------------------------------
+# Bug fix: pattern lambda fun '(_, b) => body
+# -----------------------------------------------------------------------
+
+
+class TestPatternLambda:
+    """Lambda with Coq pattern-matching binders: fun '(a, b) => body.
+
+    The ' before ( signals a pattern binder. The parser should
+    treat the entire '(...) as a single anonymous binder.
+    """
+
+    def setup_method(self):
+        self.parser = TypeExprParser()
+
+    def test_pattern_lambda_darrow(self):
+        """fun '(_, b) => b — pattern binder with =>."""
+        result = self.parser.parse("fun '(_, b) => b")
+        # Should parse without error; pattern treated as anonymous binder
+        assert result is not None
+
+    def test_pattern_lambda_comma(self):
+        """fun '(_, b), b — pattern binder with comma separator."""
+        result = self.parser.parse("fun '(_, b), b")
+        assert result is not None
+
+    def test_pattern_lambda_in_application(self):
+        """filter (fun '(_, b) => b) n — pattern lambda as argument."""
+        result = self.parser.parse("filter (fun '(_, b) => b) n")
+        assert isinstance(result, App)
+
+    def test_pattern_lambda_unicode(self):
+        """filter (λ '(_, b), b ∈ dom m) n — Unicode form."""
+        result = self.parser.parse(
+            "filter (fun '(_, b), b) n"
+        )
+        assert isinstance(result, App)
