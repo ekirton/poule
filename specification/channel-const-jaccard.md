@@ -30,7 +30,7 @@ Define the Const Jaccard channel that computes similarity between two declaratio
 #### extract_consts(tree)
 
 - REQUIRES: `tree` is a valid `ExprTree`.
-- ENSURES: Returns a `set[str]` of fully qualified names from all `LConst`, `LInd`, and `LConstruct` nodes. For `LConstruct`, the name is the parent inductive FQN (already stored in the label's `name` field).
+- ENSURES: Returns a `set[str]` of fully qualified names from all `LConst`, `LInd`, and `LConstruct` nodes. For `LConstruct`, the name is the parent inductive FQN (already stored in the label's `name` field). Parser placeholder constants (names matching the `_*_` pattern — e.g., `_match_`, `_if_`, `_unit_`, `_nil_`, `_record_`) shall be excluded from the returned set.
 
 This function is shared with the MePo channel (`extract_symbols` is equivalent to `extract_consts`).
 

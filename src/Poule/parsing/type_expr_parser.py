@@ -529,6 +529,9 @@ class TypeExprParser:
             # Handle 'match ... with ... end' — skip to 'end', return body
             if tok.value == "match":
                 return self._skip_match(tokens, pos, binders)
+            # Handle 'if ... then ... else ...' — skip, return placeholder
+            if tok.value == "if":
+                return self._skip_if(tokens, pos, binders)
             return pos + 1, self._resolve(tok.value, binders)
 
         if tok.kind == TokenKind.SORT:
@@ -953,6 +956,50 @@ class TypeExprParser:
                     return pos, Const("_match_")
             pos += 1
         return pos, Const("_match_")
+
+    def _skip_if(
+        self,
+        tokens: list[Token],
+        pos: int,
+        binders: list[str],
+    ) -> tuple[int, Any]:
+        """Skip ``if ... then ... else ...`` and return a placeholder.
+
+        Consumes the ``if`` keyword, skips to the matching ``else``
+        branch (tracking nested if/match depth), then skips the else
+        branch (one primary expression), and returns ``Const("_if_")``.
+        """
+        depth = 1
+        pos += 1  # consume 'if'
+        while tokens[pos].kind != TokenKind.EOF:
+            val = tokens[pos].value if tokens[pos].kind == TokenKind.IDENT else None
+            if val == "if" or val == "match":
+                depth += 1
+            elif val == "else" and depth == 1:
+                pos += 1  # consume 'else'
+                # Skip the else branch: consume one primary expression
+                # (greedy application, same as normal parsing).
+                # For simplicity, just consume tokens until we hit a
+                # closing delimiter, infix operator, or EOF.
+                paren_depth = 0
+                while tokens[pos].kind != TokenKind.EOF:
+                    tk = tokens[pos]
+                    if tk.kind in (TokenKind.LPAREN, TokenKind.LBRACKET, TokenKind.LBRACE):
+                        paren_depth += 1
+                    elif tk.kind in (TokenKind.RPAREN, TokenKind.RBRACKET, TokenKind.RBRACE):
+                        if paren_depth == 0:
+                            break
+                        paren_depth -= 1
+                    elif paren_depth == 0 and tk.kind in (
+                        TokenKind.ARROW, TokenKind.DARROW, TokenKind.COMMA,
+                    ):
+                        break
+                    pos += 1
+                return pos, Const("_if_")
+            elif val == "end":
+                depth -= 1
+            pos += 1
+        return pos, Const("_if_")
 
     def _skip_let_to_in(
         self,

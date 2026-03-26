@@ -143,6 +143,7 @@ Function application (juxtaposition) binds tighter than all infix operators. The
 | `()` | `Const("_unit_")` | Empty parens — unit type |
 | `[]` | `Const("_nil_")` | Empty brackets — nil/empty list |
 | `{| field := val; ... |}` | `Const("_record_")` | Record literal — skipped as opaque constant |
+| `if c then a else b` | `Const("_if_")` | If expression — skipped; consumes tokens up to balanced `else` branch |
 | `match ... with ... end` | `Const("_match_")` | Match expression — skipped with depth tracking |
 | `(expr)` | `expr` | Parentheses for grouping only |
 | `(expr : Type)` | `Type` | Type annotation — keep the type for indexing, discard the expression |
