@@ -94,8 +94,16 @@ def mepo_select(
     return sorted(selected.items(), key=lambda x: x[1], reverse=True)
 
 
+def _is_placeholder(name: str) -> bool:
+    """Return True for parser placeholder constants (e.g. ``_match_``, ``_if_``)."""
+    return len(name) > 2 and name[0] == "_" and name[-1] == "_"
+
+
 def extract_consts(tree: ExprTree) -> set[str]:
-    """Extract fully qualified names from LConst, LInd, LConstruct nodes."""
+    """Extract fully qualified names from LConst, LInd, LConstruct nodes.
+
+    Parser placeholder constants (names matching ``_*_``) are excluded.
+    """
     from Poule.models.tree import TreeNode
 
     result: set[str] = set()
@@ -103,9 +111,11 @@ def extract_consts(tree: ExprTree) -> set[str]:
     def _walk(node: TreeNode) -> None:
         label = node.label
         if isinstance(label, (LConst, LInd)):
-            result.add(label.name)
+            if not _is_placeholder(label.name):
+                result.add(label.name)
         elif isinstance(label, LConstruct):
-            result.add(label.name)
+            if not _is_placeholder(label.name):
+                result.add(label.name)
         for child in node.children:
             _walk(child)
 
