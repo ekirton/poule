@@ -212,13 +212,19 @@ def search_by_symbols(ctx: Any, symbols: list[str], limit: int) -> list[Any]:
     (co-occurrence filter, spec §4.5 step 3).
     Returns up to *limit* SearchResult items ranked by MePo relevance.
     """
-    # Step 1: Resolve symbols, keeping per-input-symbol groups
+    # Step 1: Resolve symbols, keeping per-input-symbol groups.
+    # Use tight resolution (_resolve_one) for co-occurrence groups to avoid
+    # suffix expansion making every ".add" symbol match "Nat.add".
+    # Use full resolve_query_symbols for MePo's working set (broad recall).
     symbol_groups: list[set[str]] = []
     all_resolved: set[str] = set()
     for sym in symbols:
-        group = resolve_query_symbols(ctx, [sym])
-        symbol_groups.append(group)
-        all_resolved.update(group)
+        tight = _resolve_one(sym, ctx)
+        if not tight:
+            tight = {sym}
+        symbol_groups.append(tight)
+        full = resolve_query_symbols(ctx, [sym])
+        all_resolved.update(full)
 
     # Step 2: MePo iterative selection over the full resolved set
     results = mepo_select(

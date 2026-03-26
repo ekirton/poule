@@ -13,6 +13,11 @@ The single most common pain point across all proof assistant communities.
 Find lemmas about list reversal being involutive
 ```
 
+**Find lemmas by shared symbols (co-occurrence):**
+```
+Which lemmas in stdlib mention both Nat.add and Nat.mul?
+```
+
 **Find lemmas by type signature (Hoogle-style):**
 ```
 Search for lemmas with type forall n : nat, n + 0 = n

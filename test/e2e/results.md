@@ -1,14 +1,14 @@
 # E2E Test Results
 
-Tested: 2026-03-26 (retested section 9 — Textbook / Education RAG only)
+Tested: 2026-03-26 (retested 1.2 — search_by_symbols co-occurrence fix)
 
 Run `/run-e2e` to retest prompts and update this file.
 
-**Summary: 98 PASS, 1 FAIL, 0 SKIP (99 total)**
+**Summary: 99 PASS, 0 FAIL, 0 SKIP (99 total)**
 
 | Section | PASS | FAIL | SKIP |
 |---------|------|------|------|
-| 1. Discovery and Search | 14 | 1 | 0 |
+| 1. Discovery and Search | 15 | 0 | 0 |
 | 2. Understanding Errors | 10 | 0 | 0 |
 | 3. Navigation | 10 | 0 | 0 |
 | 4. Proof Construction | 23 | 0 | 0 |
@@ -25,7 +25,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
 | 1.1 | Find lemmas about list reversal being involutive | PASS | search_by_name returned Stdlib.Lists.List.rev_involutive and stdpp.list_basics.reverse_involutive |
-| 1.2 | Which lemmas in stdlib mention both Nat.add and Nat.mul? | FAIL | search_by_symbols returned 50 results but none contain both Nat.add and Nat.mul symbols |
+| 1.2 | Which lemmas in stdlib mention both Nat.add and Nat.mul? | PASS | search_by_symbols returned named declaration results including Nat_as_OT.div2_odd referencing both symbols |
 | 1.3 | Search for lemmas with type forall n : nat, n + 0 = n | PASS | search_by_type returned results including nat_cancel.make_nat_add_0_r; related add-zero results present |
 | 1.4 | Find a lemma of type List.map f (List.map g l) = List.map (fun x => f (g x)) l | PASS | search_by_type found Stdlib.Lists.List.map_map at rank 5 with matching type |
 | 1.5 | Find all commutativity lemmas in MathComp — anything matching _ * _ = _ * _ | PASS | search_by_structure returned multiplication equality results (f_equal2_mult, mul_divide_mono) |
@@ -168,8 +168,4 @@ Run `/run-e2e` to retest prompts and update this file.
 
 ## Remaining Issues
 
-### Issue 1: search_by_symbols does not filter for co-occurrence of all queried symbols
-
-**Affects:** 1.2
-**Severity:** medium
-**Details:** `search_by_symbols(["Nat.add", "Nat.mul"])` returns 50 results but none contain both `Nat.add` and `Nat.mul` symbols. The tool returns declarations matching any of the queried symbols rather than requiring all symbols to be present. This was previously passing, suggesting a regression in the symbol intersection logic.
+None.
