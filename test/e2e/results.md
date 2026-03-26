@@ -1,10 +1,10 @@
 # E2E Test Results
 
-Tested: 2026-03-26 (full retest of all prompts)
+Tested: 2026-03-26 (retested section 9 — Textbook / Education RAG only)
 
 Run `/run-e2e` to retest prompts and update this file.
 
-**Summary: 88 PASS, 11 FAIL, 0 SKIP (99 total)**
+**Summary: 98 PASS, 1 FAIL, 0 SKIP (99 total)**
 
 | Section | PASS | FAIL | SKIP |
 |---------|------|------|------|
@@ -16,7 +16,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 6. Library and Ecosystem | 5 | 0 | 0 |
 | 7. Debugging | 12 | 0 | 0 |
 | 8. Performance | 9 | 0 | 0 |
-| 9. Textbook / Education RAG | 0 | 10 | 0 |
+| 9. Textbook / Education RAG | 10 | 0 | 0 |
 
 ---
 
@@ -153,16 +153,16 @@ Run `/run-e2e` to retest prompts and update this file.
 
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
-| 9.1 | /textbook how does induction work in Coq? | FAIL | EDUCATION_UNAVAILABLE: Education database not found or not loaded |
-| 9.2 | /textbook what is a proposition vs a boolean in Coq? | FAIL | EDUCATION_UNAVAILABLE: Education database not found or not loaded |
-| 9.3 | /textbook how do I use the rewrite tactic? | FAIL | EDUCATION_UNAVAILABLE: Education database not found or not loaded |
-| 9.4 | /textbook when should I use inversion vs destruct? | FAIL | EDUCATION_UNAVAILABLE: Education database not found or not loaded |
-| 9.5 | /textbook --volume lf what are inductively defined types? | FAIL | EDUCATION_UNAVAILABLE: Education database not found or not loaded |
-| 9.6 | /textbook --volume plf what is the simply typed lambda calculus? | FAIL | EDUCATION_UNAVAILABLE: Education database not found or not loaded |
-| 9.7 | /textbook how do I prove things by case analysis? | FAIL | EDUCATION_UNAVAILABLE: Education database not found or not loaded |
-| 9.8 | /textbook what is the difference between assert and have? | FAIL | EDUCATION_UNAVAILABLE: Education database not found or not loaded |
-| 9.9 | /textbook forall n : nat, n + 0 = n | FAIL | EDUCATION_UNAVAILABLE: Education database not found or not loaded |
-| 9.10 | /textbook what is a Hoare triple? | FAIL | EDUCATION_UNAVAILABLE: Education database not found or not loaded |
+| 9.1 | /textbook how does induction work in Coq? | PASS | education_context returned 3 passages from VFA (Z integers, positive numbers, sorted lists) with inductive type content |
+| 9.2 | /textbook what is a proposition vs a boolean in Coq? | PASS | education_context returned 3 passages from VFA Decide (sumbool, reflect vs sumbool, decidable propositions) |
+| 9.3 | /textbook how do I use the rewrite tactic? | PASS | education_context returned 3 passages from LF Tactics (apply_rewrite exercise) and PLF LibTactics/UseTactics (rewrites, asserts_rewrite) |
+| 9.4 | /textbook when should I use inversion vs destruct? | PASS | education_context returned 3 passages from PLF LibTactics (inversions), LF Tactics (destruct on compound expressions), LF AltAuto |
+| 9.5 | /textbook --volume lf what are inductively defined types? | PASS | education_context returned 3 LF passages: Basics (rgb/color inductive types), IndPrinciples (polymorphism), Poly (mumble_grumble) |
+| 9.6 | /textbook --volume plf what is the simply typed lambda calculus? | PASS | education_context returned 3 PLF passages: Stlc (lambda cube, STLC intro), References (types), StlcProp (canonical forms) |
+| 9.7 | /textbook how do I prove things by case analysis? | PASS | education_context returned 3 passages from LF: Imp (misc tactics), Induction (formal vs informal proof), Basics (proof by simplification) |
+| 9.8 | /textbook what is the difference between assert and have? | PASS | education_context returned 3 passages from PLF: LibTactics (asserts/cuts), Hoare (Assertion definition), Hoare (assert_vs_assume exercise) |
+| 9.9 | /textbook forall n : nat, n + 0 = n | PASS | education_context returned 3 passages from LF: Basics (zero_nbeq_plus_1), Induction (add_0_r with full proof walkthrough), Induction (eqb_refl) |
+| 9.10 | /textbook what is a Hoare triple? | PASS | education_context returned 3 passages from PLF: Hoare (Hoare triple definition with examples), HoareAsLogic (valid definition), HoareAsLogic (decidability) |
 
 ---
 
@@ -173,9 +173,3 @@ Run `/run-e2e` to retest prompts and update this file.
 **Affects:** 1.2
 **Severity:** medium
 **Details:** `search_by_symbols(["Nat.add", "Nat.mul"])` returns 50 results but none contain both `Nat.add` and `Nat.mul` symbols. The tool returns declarations matching any of the queried symbols rather than requiring all symbols to be present. This was previously passing, suggesting a regression in the symbol intersection logic.
-
-### Issue 2: Education database unavailable
-
-**Affects:** 9.1–9.10
-**Severity:** high
-**Details:** All `education_context` calls return `EDUCATION_UNAVAILABLE: Education database not found or not loaded`. The Software Foundations textbook database is either missing from the environment or not being loaded by the MCP server. This is a regression — all 10 tests passed in the previous run.

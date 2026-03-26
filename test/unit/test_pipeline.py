@@ -689,6 +689,26 @@ class TestSearchBySymbols:
 
         assert len(results) <= 5
 
+    @patch("Poule.pipeline.search.mepo_select")
+    def test_co_occurrence_filter(self, mock_mepo):
+        """Results must contain ALL queried symbols, not just any (spec §4.5 step 3)."""
+        ctx = _mock_context_mixed_symbols()
+        # MePo returns decls 1-5.  In the mock:
+        #   decl 2,3,4 have both Nat.add AND Nat.mul
+        #   decl 1 has only Nat.add (no Nat.mul)
+        #   decl 5 has only Nat.mul (no Nat.add)
+        mock_mepo.return_value = [(1, 0.9), (2, 0.85), (3, 0.8), (4, 0.75), (5, 0.7)]
+        ctx.reader.get_declarations_by_ids.return_value = [
+            {"id": i, "name": f"D.{i}", "module": "M", "kind": "lemma", "statement": "", "type_expr": ""}
+            for i in range(1, 6)
+        ]
+
+        results = search_by_symbols(ctx, ["Nat.add", "Nat.mul"], limit=10)
+
+        # Only decls 2, 3, 4 should survive (they have both Nat.add and Nat.mul)
+        result_names = {r.name for r in results}
+        assert result_names == {"D.2", "D.3", "D.4"}, f"Expected co-occurrence filter, got {result_names}"
+
 
 # ---------------------------------------------------------------------------
 # 5. search_by_structure: full flow with mocked dependencies

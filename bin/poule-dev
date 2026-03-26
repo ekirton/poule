@@ -260,6 +260,30 @@ if [ ! -f "$DATA_DIR/index.db" ]; then
     echo ""
 fi
 
+# Copy education RAG database and model files from production image if missing
+PROD_IMAGE="ghcr.io/ekirton/poule"
+if [ ! -f "$DATA_DIR/education.db" ]; then
+    echo ""
+    echo "Education database not found — copying from production image..."
+    if docker image inspect "$PROD_IMAGE" >/dev/null 2>&1 || docker pull --platform linux/amd64 "$PROD_IMAGE" 2>/dev/null; then
+        TEMP_CID=$(docker create --platform linux/amd64 "$PROD_IMAGE" true)
+        mkdir -p "$DATA_DIR/models/education"
+        docker cp "$TEMP_CID:/data/education.db" "$DATA_DIR/education.db" 2>/dev/null || true
+        docker cp "$TEMP_CID:/data/models/education/encoder.onnx" "$DATA_DIR/models/education/encoder.onnx" 2>/dev/null || true
+        docker cp "$TEMP_CID:/data/models/education/tokenizer.json" "$DATA_DIR/models/education/tokenizer.json" 2>/dev/null || true
+        docker rm "$TEMP_CID" >/dev/null
+        if [ -f "$DATA_DIR/education.db" ]; then
+            echo "Education database copied successfully."
+        else
+            echo "Warning: Failed to copy education database. Education RAG will be unavailable."
+        fi
+    else
+        echo "Warning: Could not access production image. Education RAG will be unavailable."
+        echo "  You can build it manually: ./scripts/build-rag.sh --output $DATA_DIR/education.db"
+    fi
+    echo ""
+fi
+
 # Initialize zsh configuration in persistent home
 if [ ! -f "$CONTAINER_HOME/.zshrc" ]; then
     cat > "$CONTAINER_HOME/.zshrc" << 'EOF'

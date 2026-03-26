@@ -12,8 +12,21 @@ The single most common pain point across all proof assistant communities.
 ```
 Find lemmas about list reversal being involutive
 ```
+
+**Find lemmas by type signature (Hoogle-style):**
 ```
-Which lemmas in stdlib mention both Nat.add and Nat.mul?
+Search for lemmas with type forall n : nat, n + 0 = n
+```
+```
+Find a lemma of type List.map f (List.map g l) = List.map (fun x => f (g x)) l
+```
+
+**Find lemmas matching a structural pattern:**
+```
+Find all commutativity lemmas in MathComp — anything matching _ * _ = _ * _
+```
+```
+Find lemmas concluding with _ + _ <= _
 ```
 
 **Find rewrites for a specific term:**
@@ -66,20 +79,20 @@ The second most common pain point. Poule can parse and explain cryptic error mes
 /explain-error Unable to unify Nat.add ?n (S ?m) with Nat.add (S ?n) ?m
 ```
 
-**Diagnose universe constraint errors:**
-```
-Diagnose this error: Universe inconsistency: Cannot enforce Set < Set
-```
-```
-What are the universe constraints on vhead in examples/dependent.v?
-```
-
 **Reveal hidden differences when terms look identical:**
 ```
 Run Check my_lemma from examples/algebra.v with Set Printing All so I can see the implicit arguments
 ```
 ```
 Check my_lemma from examples/algebra.v with all implicit arguments visible
+```
+
+**Diagnose universe constraint errors:**
+```
+Diagnose this error: Universe inconsistency: Cannot enforce Set < Set
+```
+```
+What are the universe constraints on vhead in examples/dependent.v?
 ```
 
 **Debug typeclass resolution failures:**

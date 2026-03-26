@@ -171,12 +171,13 @@ These are classified as free variables. Collect them in order of first occurrenc
 #### search_by_symbols(ctx, symbols, limit)
 
 - REQUIRES: `ctx` is a valid `PipelineContext`. `symbols` is a non-empty list of symbol name strings (at any qualification level — short, partial, or fully qualified). `limit` is in [1, 200].
-- ENSURES: Returns up to `limit` `SearchResult` items ranked by MePo relevance.
+- ENSURES: Returns up to `limit` `SearchResult` items ranked by MePo relevance. Every returned declaration contains **all** of the resolved query symbols in its symbol set (co-occurrence filter).
 
 Algorithm:
-1. Resolve each symbol to FQN(s) via `resolve_query_symbols(ctx, symbols)` (see §4.5.1) → resolved FQN set
+1. Resolve each symbol to FQN(s) via `resolve_query_symbols(ctx, symbols)` (see §4.5.1) → resolved FQN set. Also record the per-input-symbol resolution groups (each input symbol maps to one or more FQNs).
 2. `mepo_select(resolved_set, ctx.inverted_index, ctx.symbol_frequencies, ctx.declaration_symbols, p=0.6, c=2.4, max_rounds=5)` → ranked results
-3. Take top `limit`, construct `SearchResult` objects
+3. **Co-occurrence filter**: For each candidate, verify that its symbol set intersects with at least one resolved FQN from **every** input symbol group. Discard candidates that match only a subset of the input symbols.
+4. Take top `limit` from filtered results, construct `SearchResult` objects
 
 #### 4.5.1 resolve_query_symbols(ctx, symbols)
 

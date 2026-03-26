@@ -206,12 +206,23 @@ def resolve_query_symbols(ctx: Any, symbols: list[str]) -> set[str]:
 def search_by_symbols(ctx: Any, symbols: list[str], limit: int) -> list[Any]:
     """Search declarations by symbol names using MePo relevance.
 
-    Resolves short/partial names to FQNs before matching.
+    Resolves short/partial names to FQNs before matching.  Results are
+    filtered to include only declarations whose symbol set intersects
+    with at least one resolved FQN from **every** input symbol
+    (co-occurrence filter, spec §4.5 step 3).
     Returns up to *limit* SearchResult items ranked by MePo relevance.
     """
-    resolved = resolve_query_symbols(ctx, symbols)
+    # Step 1: Resolve symbols, keeping per-input-symbol groups
+    symbol_groups: list[set[str]] = []
+    all_resolved: set[str] = set()
+    for sym in symbols:
+        group = resolve_query_symbols(ctx, [sym])
+        symbol_groups.append(group)
+        all_resolved.update(group)
+
+    # Step 2: MePo iterative selection over the full resolved set
     results = mepo_select(
-        resolved,
+        all_resolved,
         ctx.inverted_index,
         ctx.symbol_frequencies,
         ctx.declaration_symbols,
@@ -219,8 +230,19 @@ def search_by_symbols(ctx: Any, symbols: list[str], limit: int) -> list[Any]:
         c=2.4,
         max_rounds=5,
     )
+
+    # Step 3: Co-occurrence filter — keep only candidates whose symbol
+    # set intersects every input symbol group.
+    if len(symbol_groups) > 1:
+        filtered: list[tuple[int, float]] = []
+        for decl_id, score in results:
+            decl_syms = ctx.declaration_symbols.get(decl_id, set())
+            if all(decl_syms & group for group in symbol_groups):
+                filtered.append((decl_id, score))
+        results = filtered
+
     results = sorted(results, key=lambda r: r[1], reverse=True)
-    # Step 3: Construct SearchResult objects (spec §4.5 step 3)
+    # Step 4: Construct SearchResult objects
     return _resolve_scored_results(results[:limit], ctx.reader)
 
 
