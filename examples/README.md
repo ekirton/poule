@@ -12,6 +12,9 @@ The single most common pain point across all proof assistant communities.
 ```
 Find lemmas about list reversal being involutive
 ```
+```
+Which lemmas in stdlib mention both Nat.add and Nat.mul?
+```
 
 **Find rewrites for a specific term:**
 ```
