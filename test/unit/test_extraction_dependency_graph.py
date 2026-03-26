@@ -41,7 +41,7 @@ def _make_extraction_step(step_index: int, tactic: str | None, premises: list[di
 
 
 def _make_extraction_record(
-    theorem_name: str = "Coq.Arith.PeanoNat.Nat.add_comm",
+    theorem_name: str = "Stdlib.Arith.PeanoNat.Nat.add_comm",
     source_file: str = "theories/Arith/PeanoNat.v",
     project_id: str = "coq-stdlib",
     steps: list[dict] | None = None,
@@ -65,7 +65,7 @@ def _make_extraction_record(
 
 
 def _make_extraction_error(
-    theorem_name: str = "Coq.Init.Logic.broken",
+    theorem_name: str = "Stdlib.Init.Logic.broken",
     source_file: str = "theories/Init/Logic.v",
     project_id: str = "coq-stdlib",
     error_kind: str = "tactic_failure",
@@ -91,16 +91,16 @@ def _spec_example_record() -> dict:
     steps = [
         _make_extraction_step(0, None, []),
         _make_extraction_step(1, "apply A.", [
-            _make_premise("Coq.Arith.A", "lemma"),
+            _make_premise("Stdlib.Arith.A", "lemma"),
             _make_premise("H", "hypothesis"),
         ]),
         _make_extraction_step(2, "unfold B.", [
-            _make_premise("Coq.Arith.B", "definition"),
-            _make_premise("Coq.Arith.A", "lemma"),
+            _make_premise("Stdlib.Arith.B", "definition"),
+            _make_premise("Stdlib.Arith.A", "lemma"),
         ]),
     ]
     return _make_extraction_record(
-        theorem_name="Coq.Arith.PeanoNat.Nat.add_comm",
+        theorem_name="Stdlib.Arith.PeanoNat.Nat.add_comm",
         steps=steps,
     )
 
@@ -116,9 +116,9 @@ class TestExtractDependenciesBasic:
     def test_returns_dependency_entry_with_theorem_name(self):
         from Poule.extraction.dependency_graph import extract_dependencies
 
-        record = _make_extraction_record(theorem_name="Coq.Init.Logic.eq_refl")
+        record = _make_extraction_record(theorem_name="Stdlib.Init.Logic.eq_refl")
         entry = extract_dependencies(record)
-        assert entry.theorem_name == "Coq.Init.Logic.eq_refl"
+        assert entry.theorem_name == "Stdlib.Init.Logic.eq_refl"
 
     def test_returns_dependency_entry_with_source_file(self):
         from Poule.extraction.dependency_graph import extract_dependencies
@@ -140,17 +140,17 @@ class TestExtractDependenciesBasic:
         steps = [
             _make_extraction_step(0, None, []),
             _make_extraction_step(1, "apply X.", [
-                _make_premise("Coq.X", "lemma"),
+                _make_premise("Stdlib.X", "lemma"),
             ]),
             _make_extraction_step(2, "apply Y.", [
-                _make_premise("Coq.Y", "definition"),
+                _make_premise("Stdlib.Y", "definition"),
             ]),
         ]
         record = _make_extraction_record(steps=steps)
         entry = extract_dependencies(record)
         names = [ref.name for ref in entry.depends_on]
-        assert "Coq.X" in names
-        assert "Coq.Y" in names
+        assert "Stdlib.X" in names
+        assert "Stdlib.Y" in names
 
     def test_spec_example_excludes_hypothesis_and_deduplicates(self):
         """Spec §4.1 example: [A(lemma), H(hyp), B(def), A(lemma)] → [A(lemma), B(definition)]."""
@@ -159,9 +159,9 @@ class TestExtractDependenciesBasic:
         record = _spec_example_record()
         entry = extract_dependencies(record)
         assert len(entry.depends_on) == 2
-        assert entry.depends_on[0].name == "Coq.Arith.A"
+        assert entry.depends_on[0].name == "Stdlib.Arith.A"
         assert entry.depends_on[0].kind == "lemma"
-        assert entry.depends_on[1].name == "Coq.Arith.B"
+        assert entry.depends_on[1].name == "Stdlib.Arith.B"
         assert entry.depends_on[1].kind == "definition"
 
 
@@ -200,14 +200,14 @@ class TestHypothesisExclusion:
             _make_extraction_step(0, None, []),
             _make_extraction_step(1, "rewrite H.", [
                 _make_premise("H", "hypothesis"),
-                _make_premise("Coq.Init.Logic.eq_sym", "lemma"),
+                _make_premise("Stdlib.Init.Logic.eq_sym", "lemma"),
             ]),
         ]
         record = _make_extraction_record(steps=steps)
         entry = extract_dependencies(record)
         names = [ref.name for ref in entry.depends_on]
         assert "H" not in names
-        assert "Coq.Init.Logic.eq_sym" in names
+        assert "Stdlib.Init.Logic.eq_sym" in names
 
     @pytest.mark.parametrize("allowed_kind", ["lemma", "definition", "constructor"])
     def test_allowed_kinds_appear_in_depends_on(self, allowed_kind):
@@ -216,13 +216,13 @@ class TestHypothesisExclusion:
         steps = [
             _make_extraction_step(0, None, []),
             _make_extraction_step(1, "tac.", [
-                _make_premise("Coq.Some.Entity", allowed_kind),
+                _make_premise("Stdlib.Some.Entity", allowed_kind),
             ]),
         ]
         record = _make_extraction_record(steps=steps)
         entry = extract_dependencies(record)
         assert len(entry.depends_on) == 1
-        assert entry.depends_on[0].name == "Coq.Some.Entity"
+        assert entry.depends_on[0].name == "Stdlib.Some.Entity"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -239,7 +239,7 @@ class TestDependencyClassification:
         steps = [
             _make_extraction_step(0, None, []),
             _make_extraction_step(1, "apply L.", [
-                _make_premise("Coq.Some.Lemma", "lemma"),
+                _make_premise("Stdlib.Some.Lemma", "lemma"),
             ]),
         ]
         record = _make_extraction_record(steps=steps)
@@ -252,7 +252,7 @@ class TestDependencyClassification:
         steps = [
             _make_extraction_step(0, None, []),
             _make_extraction_step(1, "unfold D.", [
-                _make_premise("Coq.Some.Def", "definition"),
+                _make_premise("Stdlib.Some.Def", "definition"),
             ]),
         ]
         record = _make_extraction_record(steps=steps)
@@ -265,7 +265,7 @@ class TestDependencyClassification:
         steps = [
             _make_extraction_step(0, None, []),
             _make_extraction_step(1, "exact S.", [
-                _make_premise("Coq.Init.Datatypes.S", "constructor"),
+                _make_premise("Stdlib.Init.Datatypes.S", "constructor"),
             ]),
         ]
         record = _make_extraction_record(steps=steps)
@@ -279,9 +279,9 @@ class TestDependencyClassification:
         steps = [
             _make_extraction_step(0, None, []),
             _make_extraction_step(1, "apply X.", [
-                _make_premise("Coq.A", "lemma"),
-                _make_premise("Coq.B", "definition"),
-                _make_premise("Coq.C", "constructor"),
+                _make_premise("Stdlib.A", "lemma"),
+                _make_premise("Stdlib.B", "definition"),
+                _make_premise("Stdlib.C", "constructor"),
             ]),
         ]
         record = _make_extraction_record(steps=steps)
@@ -305,16 +305,16 @@ class TestDeduplicationAndOrdering:
         steps = [
             _make_extraction_step(0, None, []),
             _make_extraction_step(1, "apply A.", [
-                _make_premise("Coq.A", "lemma"),
+                _make_premise("Stdlib.A", "lemma"),
             ]),
             _make_extraction_step(2, "apply A.", [
-                _make_premise("Coq.A", "lemma"),
+                _make_premise("Stdlib.A", "lemma"),
             ]),
         ]
         record = _make_extraction_record(steps=steps)
         entry = extract_dependencies(record)
         assert len(entry.depends_on) == 1
-        assert entry.depends_on[0].name == "Coq.A"
+        assert entry.depends_on[0].name == "Stdlib.A"
 
     def test_first_appearance_order_across_steps(self):
         """§4.4 example: A at step 1 and 3, B at step 2 → order [A, B]."""
@@ -323,18 +323,18 @@ class TestDeduplicationAndOrdering:
         steps = [
             _make_extraction_step(0, None, []),
             _make_extraction_step(1, "apply A.", [
-                _make_premise("Coq.A", "lemma"),
+                _make_premise("Stdlib.A", "lemma"),
             ]),
             _make_extraction_step(2, "unfold B.", [
-                _make_premise("Coq.B", "definition"),
+                _make_premise("Stdlib.B", "definition"),
             ]),
             _make_extraction_step(3, "apply A.", [
-                _make_premise("Coq.A", "lemma"),
+                _make_premise("Stdlib.A", "lemma"),
             ]),
         ]
         record = _make_extraction_record(steps=steps)
         entry = extract_dependencies(record)
-        assert [ref.name for ref in entry.depends_on] == ["Coq.A", "Coq.B"]
+        assert [ref.name for ref in entry.depends_on] == ["Stdlib.A", "Stdlib.B"]
 
     def test_within_step_ordering_preserved(self):
         from Poule.extraction.dependency_graph import extract_dependencies
@@ -342,14 +342,14 @@ class TestDeduplicationAndOrdering:
         steps = [
             _make_extraction_step(0, None, []),
             _make_extraction_step(1, "tac.", [
-                _make_premise("Coq.Z", "lemma"),
-                _make_premise("Coq.M", "definition"),
-                _make_premise("Coq.A", "constructor"),
+                _make_premise("Stdlib.Z", "lemma"),
+                _make_premise("Stdlib.M", "definition"),
+                _make_premise("Stdlib.A", "constructor"),
             ]),
         ]
         record = _make_extraction_record(steps=steps)
         entry = extract_dependencies(record)
-        assert [ref.name for ref in entry.depends_on] == ["Coq.Z", "Coq.M", "Coq.A"]
+        assert [ref.name for ref in entry.depends_on] == ["Stdlib.Z", "Stdlib.M", "Stdlib.A"]
 
     def test_ordering_is_deterministic(self):
         """Identical inputs produce identical ordering (§4.4)."""
@@ -358,12 +358,12 @@ class TestDeduplicationAndOrdering:
         steps = [
             _make_extraction_step(0, None, []),
             _make_extraction_step(1, "tac.", [
-                _make_premise("Coq.B", "definition"),
-                _make_premise("Coq.A", "lemma"),
+                _make_premise("Stdlib.B", "definition"),
+                _make_premise("Stdlib.A", "lemma"),
             ]),
             _make_extraction_step(2, "tac2.", [
-                _make_premise("Coq.C", "constructor"),
-                _make_premise("Coq.A", "lemma"),
+                _make_premise("Stdlib.C", "constructor"),
+                _make_premise("Stdlib.A", "lemma"),
             ]),
         ]
         record = _make_extraction_record(steps=steps)
@@ -409,16 +409,16 @@ class TestDependencyEntrySerialization:
         steps = [
             _make_extraction_step(0, None, []),
             _make_extraction_step(1, "induction n.", [
-                _make_premise("Coq.Arith.PeanoNat.Nat.add_0_r", "lemma"),
-                _make_premise("Coq.Arith.PeanoNat.Nat.add_succ_r", "lemma"),
+                _make_premise("Stdlib.Arith.PeanoNat.Nat.add_0_r", "lemma"),
+                _make_premise("Stdlib.Arith.PeanoNat.Nat.add_succ_r", "lemma"),
             ]),
             _make_extraction_step(2, "constructor.", [
-                _make_premise("Coq.Init.Datatypes.nat", "inductive"),
-                _make_premise("Coq.Init.Datatypes.S", "constructor"),
+                _make_premise("Stdlib.Init.Datatypes.nat", "inductive"),
+                _make_premise("Stdlib.Init.Datatypes.S", "constructor"),
             ]),
         ]
         record = _make_extraction_record(
-            theorem_name="Coq.Arith.PeanoNat.Nat.add_comm",
+            theorem_name="Stdlib.Arith.PeanoNat.Nat.add_comm",
             source_file="theories/Arith/PeanoNat.v",
             project_id="coq-stdlib",
             steps=steps,
@@ -426,19 +426,19 @@ class TestDependencyEntrySerialization:
         entry = extract_dependencies(record)
         json_str = entry.to_json()
         parsed = json.loads(json_str)
-        assert parsed["theorem_name"] == "Coq.Arith.PeanoNat.Nat.add_comm"
+        assert parsed["theorem_name"] == "Stdlib.Arith.PeanoNat.Nat.add_comm"
         assert parsed["source_file"] == "theories/Arith/PeanoNat.v"
         assert parsed["project_id"] == "coq-stdlib"
         assert len(parsed["depends_on"]) == 4
-        assert parsed["depends_on"][0] == {"name": "Coq.Arith.PeanoNat.Nat.add_0_r", "kind": "lemma"}
-        assert parsed["depends_on"][3] == {"name": "Coq.Init.Datatypes.S", "kind": "constructor"}
+        assert parsed["depends_on"][0] == {"name": "Stdlib.Arith.PeanoNat.Nat.add_0_r", "kind": "lemma"}
+        assert parsed["depends_on"][3] == {"name": "Stdlib.Init.Datatypes.S", "kind": "constructor"}
 
     def test_empty_depends_on_serialization(self):
         """Theorem with no external dependencies (§7 second example)."""
         from Poule.extraction.dependency_graph import extract_dependencies
 
         record = _make_extraction_record(
-            theorem_name="Coq.Init.Logic.eq_refl_proof",
+            theorem_name="Stdlib.Init.Logic.eq_refl_proof",
             source_file="theories/Init/Logic.v",
             project_id="coq-stdlib",
         )
@@ -471,8 +471,8 @@ class TestPostHocMode:
     def test_reads_extraction_output_and_writes_dependency_graph(self):
         from Poule.extraction.dependency_graph import extract_dependency_graph
 
-        record1 = _make_extraction_record(theorem_name="Coq.T1")
-        record2 = _make_extraction_record(theorem_name="Coq.T2")
+        record1 = _make_extraction_record(theorem_name="Stdlib.T1")
+        record2 = _make_extraction_record(theorem_name="Stdlib.T2")
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as inp:
             inp.write(json.dumps(record1) + "\n")
@@ -488,8 +488,8 @@ class TestPostHocMode:
             assert len(lines) == 2
             entry1 = json.loads(lines[0])
             entry2 = json.loads(lines[1])
-            assert entry1["theorem_name"] == "Coq.T1"
-            assert entry2["theorem_name"] == "Coq.T2"
+            assert entry1["theorem_name"] == "Stdlib.T1"
+            assert entry2["theorem_name"] == "Stdlib.T2"
         finally:
             input_path.unlink(missing_ok=True)
             output_path.unlink(missing_ok=True)
@@ -498,8 +498,8 @@ class TestPostHocMode:
         """ExtractionError records are skipped; no dependency entry produced (§4.6)."""
         from Poule.extraction.dependency_graph import extract_dependency_graph
 
-        record = _make_extraction_record(theorem_name="Coq.Good")
-        error = _make_extraction_error(theorem_name="Coq.Bad")
+        record = _make_extraction_record(theorem_name="Stdlib.Good")
+        error = _make_extraction_error(theorem_name="Stdlib.Bad")
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as inp:
             inp.write(json.dumps(record) + "\n")
@@ -514,7 +514,7 @@ class TestPostHocMode:
             lines = output_path.read_text().strip().split("\n")
             assert len(lines) == 1
             entry = json.loads(lines[0])
-            assert entry["theorem_name"] == "Coq.Good"
+            assert entry["theorem_name"] == "Stdlib.Good"
         finally:
             input_path.unlink(missing_ok=True)
             output_path.unlink(missing_ok=True)
@@ -525,10 +525,10 @@ class TestPostHocMode:
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as inp:
             for i in range(100):
-                record = _make_extraction_record(theorem_name=f"Coq.T{i}")
+                record = _make_extraction_record(theorem_name=f"Stdlib.T{i}")
                 inp.write(json.dumps(record) + "\n")
             for i in range(5):
-                error = _make_extraction_error(theorem_name=f"Coq.E{i}")
+                error = _make_extraction_error(theorem_name=f"Stdlib.E{i}")
                 inp.write(json.dumps(error) + "\n")
             input_path = Path(inp.name)
 
@@ -591,7 +591,7 @@ class TestErrorCases:
         from Poule.extraction.dependency_graph import extract_dependency_graph
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as inp:
-            record = _make_extraction_record(theorem_name="Coq.Good")
+            record = _make_extraction_record(theorem_name="Stdlib.Good")
             inp.write(json.dumps(record) + "\n")
             inp.write("this is not valid json\n")
             input_path = Path(inp.name)
@@ -617,20 +617,20 @@ class TestDependencyTypes:
     def test_dependency_ref_has_name_and_kind(self):
         from Poule.extraction.types import DependencyRef
 
-        ref = DependencyRef(name="Coq.A", kind="lemma")
-        assert ref.name == "Coq.A"
+        ref = DependencyRef(name="Stdlib.A", kind="lemma")
+        assert ref.name == "Stdlib.A"
         assert ref.kind == "lemma"
 
     def test_dependency_entry_has_required_fields(self):
         from Poule.extraction.types import DependencyEntry, DependencyRef
 
         entry = DependencyEntry(
-            theorem_name="Coq.T",
+            theorem_name="Stdlib.T",
             source_file="theories/T.v",
             project_id="proj",
-            depends_on=[DependencyRef(name="Coq.A", kind="lemma")],
+            depends_on=[DependencyRef(name="Stdlib.A", kind="lemma")],
         )
-        assert entry.theorem_name == "Coq.T"
+        assert entry.theorem_name == "Stdlib.T"
         assert entry.source_file == "theories/T.v"
         assert entry.project_id == "proj"
         assert len(entry.depends_on) == 1
@@ -639,7 +639,7 @@ class TestDependencyTypes:
         from Poule.extraction.types import DependencyEntry
 
         entry = DependencyEntry(
-            theorem_name="Coq.T",
+            theorem_name="Stdlib.T",
             source_file="theories/T.v",
             project_id="proj",
             depends_on=[],
@@ -702,18 +702,18 @@ class TestImportDependencies:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.Arith.PeanoNat.Nat.add_comm", "Coq.Arith.PeanoNat"),
-            ("Coq.Arith.PeanoNat.Nat.add_0_r", "Coq.Arith.PeanoNat"),
-            ("Coq.Init.Datatypes.nat", "Coq.Init.Datatypes"),
+            ("Stdlib.Arith.PeanoNat.Nat.add_comm", "Stdlib.Arith.PeanoNat"),
+            ("Stdlib.Arith.PeanoNat.Nat.add_0_r", "Stdlib.Arith.PeanoNat"),
+            ("Stdlib.Init.Datatypes.nat", "Stdlib.Init.Datatypes"),
         ])
         deps_path = tmp_path / "deps.jsonl"
         _write_dep_graph(deps_path, [{
-            "theorem_name": "Coq.Arith.PeanoNat.Nat.add_comm",
+            "theorem_name": "Stdlib.Arith.PeanoNat.Nat.add_comm",
             "source_file": "theories/Arith/PeanoNat.v",
             "project_id": "coq-stdlib",
             "depends_on": [
-                {"name": "Coq.Arith.PeanoNat.Nat.add_0_r", "kind": "lemma"},
-                {"name": "Coq.Init.Datatypes.nat", "kind": "inductive"},
+                {"name": "Stdlib.Arith.PeanoNat.Nat.add_0_r", "kind": "lemma"},
+                {"name": "Stdlib.Init.Datatypes.nat", "kind": "inductive"},
             ],
         }])
 
@@ -730,11 +730,11 @@ class TestImportDependencies:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.Arith.PeanoNat.Nat.add_comm", "Coq.Arith.PeanoNat"),
+            ("Stdlib.Arith.PeanoNat.Nat.add_comm", "Stdlib.Arith.PeanoNat"),
         ])
         deps_path = tmp_path / "deps.jsonl"
         _write_dep_graph(deps_path, [{
-            "theorem_name": "Coq.Arith.PeanoNat.Nat.add_comm",
+            "theorem_name": "Stdlib.Arith.PeanoNat.Nat.add_comm",
             "source_file": "theories/Arith/PeanoNat.v",
             "project_id": "coq-stdlib",
             "depends_on": [
@@ -750,15 +750,15 @@ class TestImportDependencies:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.A", "Coq"),
-            ("Coq.B", "Coq"),
+            ("Stdlib.A", "Coq"),
+            ("Stdlib.B", "Coq"),
         ])
         deps_path = tmp_path / "deps.jsonl"
         _write_dep_graph(deps_path, [{
-            "theorem_name": "Coq.A",
+            "theorem_name": "Stdlib.A",
             "source_file": "A.v",
             "project_id": "test",
-            "depends_on": [{"name": "Coq.B", "kind": "definition"}],
+            "depends_on": [{"name": "Stdlib.B", "kind": "definition"}],
         }])
 
         import_dependencies(deps_path, db_path)
@@ -776,13 +776,13 @@ class TestImportDependencies:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.Arith.PeanoNat.Nat.add_comm", "Coq.Arith.PeanoNat"),
-            ("Coq.Arith.PeanoNat.Nat.add_0_r", "Coq.Arith.PeanoNat"),
+            ("Stdlib.Arith.PeanoNat.Nat.add_comm", "Stdlib.Arith.PeanoNat"),
+            ("Stdlib.Arith.PeanoNat.Nat.add_0_r", "Stdlib.Arith.PeanoNat"),
         ])
         deps_path = tmp_path / "deps.jsonl"
         # Use short name that should resolve via suffix match
         _write_dep_graph(deps_path, [{
-            "theorem_name": "Coq.Arith.PeanoNat.Nat.add_comm",
+            "theorem_name": "Stdlib.Arith.PeanoNat.Nat.add_comm",
             "source_file": "PeanoNat.v",
             "project_id": "test",
             "depends_on": [{"name": "Nat.add_0_r", "kind": "lemma"}],
@@ -796,14 +796,14 @@ class TestImportDependencies:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.A", "Coq"),
+            ("Stdlib.A", "Coq"),
         ])
         deps_path = tmp_path / "deps.jsonl"
         _write_dep_graph(deps_path, [{
-            "theorem_name": "Coq.A",
+            "theorem_name": "Stdlib.A",
             "source_file": "A.v",
             "project_id": "test",
-            "depends_on": [{"name": "Coq.A", "kind": "definition"}],
+            "depends_on": [{"name": "Stdlib.A", "kind": "definition"}],
         }])
 
         inserted = import_dependencies(deps_path, db_path)
@@ -832,12 +832,12 @@ class TestImportDependenciesDotFormat:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.Arith.PeanoNat.Nat.add_assoc", "Coq.Arith.PeanoNat"),
-            ("Coq.Arith.PeanoNat.Nat.add_comm", "Coq.Arith.PeanoNat"),
+            ("Stdlib.Arith.PeanoNat.Nat.add_assoc", "Stdlib.Arith.PeanoNat"),
+            ("Stdlib.Arith.PeanoNat.Nat.add_comm", "Stdlib.Arith.PeanoNat"),
         ])
         dot_path = tmp_path / "deps.dot"
         _write_dot_file(dot_path, [
-            ("Coq.Arith.PeanoNat.Nat.add_assoc", "Coq.Arith.PeanoNat.Nat.add_comm"),
+            ("Stdlib.Arith.PeanoNat.Nat.add_assoc", "Stdlib.Arith.PeanoNat.Nat.add_comm"),
         ])
 
         inserted = import_dependencies(dot_path, db_path, source_format="dot")
@@ -856,11 +856,11 @@ class TestImportDependenciesDotFormat:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.A", "Coq"),
-            ("Coq.B", "Coq"),
+            ("Stdlib.A", "Coq"),
+            ("Stdlib.B", "Coq"),
         ])
         dot_path = tmp_path / "deps.dot"
-        _write_dot_file(dot_path, [("Coq.A", "Coq.B")])
+        _write_dot_file(dot_path, [("Stdlib.A", "Stdlib.B")])
 
         inserted = import_dependencies(dot_path, db_path)
         assert inserted == 1
@@ -870,12 +870,12 @@ class TestImportDependenciesDotFormat:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.A", "Coq"),
+            ("Stdlib.A", "Coq"),
         ])
         dot_path = tmp_path / "deps.dot"
         _write_dot_file(dot_path, [
-            ("Coq.A", "Unknown.B"),
-            ("Unknown.C", "Coq.A"),
+            ("Stdlib.A", "Unknown.B"),
+            ("Unknown.C", "Stdlib.A"),
         ])
 
         inserted = import_dependencies(dot_path, db_path, source_format="dot")
@@ -886,15 +886,15 @@ class TestImportDependenciesDotFormat:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.A", "Coq"),
-            ("Coq.B", "Coq"),
-            ("Coq.C", "Coq"),
+            ("Stdlib.A", "Coq"),
+            ("Stdlib.B", "Coq"),
+            ("Stdlib.C", "Coq"),
         ])
         dot_path = tmp_path / "deps.dot"
         _write_dot_file(dot_path, [
-            ("Coq.A", "Coq.B"),
-            ("Coq.A", "Coq.C"),
-            ("Coq.B", "Coq.C"),
+            ("Stdlib.A", "Stdlib.B"),
+            ("Stdlib.A", "Stdlib.C"),
+            ("Stdlib.B", "Stdlib.C"),
         ])
 
         inserted = import_dependencies(dot_path, db_path, source_format="dot")
@@ -905,11 +905,11 @@ class TestImportDependenciesDotFormat:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.A", "Coq"),
-            ("Coq.B", "Coq"),
+            ("Stdlib.A", "Coq"),
+            ("Stdlib.B", "Coq"),
         ])
         dot_path = tmp_path / "deps.dot"
-        _write_dot_file(dot_path, [("Coq.A", "Coq.B")])
+        _write_dot_file(dot_path, [("Stdlib.A", "Stdlib.B")])
 
         import_dependencies(dot_path, db_path, source_format="dot")
         import_dependencies(dot_path, db_path, source_format="dot")
@@ -923,9 +923,9 @@ class TestImportDependenciesDotFormat:
         from Poule.extraction.dependency_graph import import_dependencies
 
         db_path = tmp_path / "index.db"
-        _create_test_index(db_path, [("Coq.A", "Coq")])
+        _create_test_index(db_path, [("Stdlib.A", "Coq")])
         dot_path = tmp_path / "deps.dot"
-        _write_dot_file(dot_path, [("Coq.A", "Coq.A")])
+        _write_dot_file(dot_path, [("Stdlib.A", "Stdlib.A")])
 
         inserted = import_dependencies(dot_path, db_path, source_format="dot")
         assert inserted == 0
@@ -936,15 +936,15 @@ class TestImportDependenciesDotFormat:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.A", "Coq"),
-            ("Coq.B", "Coq"),
+            ("Stdlib.A", "Coq"),
+            ("Stdlib.B", "Coq"),
         ])
         dot_path = tmp_path / "deps.dot"
         with open(dot_path, "w") as f:
             f.write("digraph dependencies {\n")
             f.write("  // This is a comment\n")
-            f.write('  "Coq.A" [label="A"];\n')
-            f.write('  "Coq.A" -> "Coq.B";\n')
+            f.write('  "Stdlib.A" [label="A"];\n')
+            f.write('  "Stdlib.A" -> "Stdlib.B";\n')
             f.write("  rankdir=LR;\n")
             f.write("}\n")
 
@@ -956,8 +956,8 @@ class TestImportDependenciesDotFormat:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.Arith.PeanoNat.Nat.add_comm", "Coq.Arith.PeanoNat"),
-            ("Coq.Arith.PeanoNat.Nat.add_0_r", "Coq.Arith.PeanoNat"),
+            ("Stdlib.Arith.PeanoNat.Nat.add_comm", "Stdlib.Arith.PeanoNat"),
+            ("Stdlib.Arith.PeanoNat.Nat.add_0_r", "Stdlib.Arith.PeanoNat"),
         ])
         dot_path = tmp_path / "deps.dot"
         _write_dot_file(dot_path, [
@@ -973,15 +973,15 @@ class TestImportDependenciesDotFormat:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.A", "Coq"),
-            ("Coq.B", "Coq"),
-            ("Coq.C", "Coq"),
+            ("Stdlib.A", "Coq"),
+            ("Stdlib.B", "Coq"),
+            ("Stdlib.C", "Coq"),
         ])
         dot_path = tmp_path / "deps.dot"
         _write_dot_file(dot_path, [
-            ("Coq.A", "Coq.B"),
-            ("Coq.A", "Unknown"),  # unresolvable — skipped
-            ("Coq.B", "Coq.C"),
+            ("Stdlib.A", "Stdlib.B"),
+            ("Stdlib.A", "Unknown"),  # unresolvable — skipped
+            ("Stdlib.B", "Stdlib.C"),
         ])
 
         inserted = import_dependencies(dot_path, db_path, source_format="dot")
@@ -996,15 +996,15 @@ class TestImportDependenciesFormatDetection:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.A", "Coq"),
-            ("Coq.B", "Coq"),
+            ("Stdlib.A", "Coq"),
+            ("Stdlib.B", "Coq"),
         ])
         deps_path = tmp_path / "deps.jsonl"
         _write_dep_graph(deps_path, [{
-            "theorem_name": "Coq.A",
+            "theorem_name": "Stdlib.A",
             "source_file": "A.v",
             "project_id": "test",
-            "depends_on": [{"name": "Coq.B", "kind": "definition"}],
+            "depends_on": [{"name": "Stdlib.B", "kind": "definition"}],
         }])
 
         inserted = import_dependencies(deps_path, db_path)
@@ -1015,15 +1015,15 @@ class TestImportDependenciesFormatDetection:
 
         db_path = tmp_path / "index.db"
         _create_test_index(db_path, [
-            ("Coq.A", "Coq"),
-            ("Coq.B", "Coq"),
+            ("Stdlib.A", "Coq"),
+            ("Stdlib.B", "Coq"),
         ])
         deps_path = tmp_path / "deps.json"
         _write_dep_graph(deps_path, [{
-            "theorem_name": "Coq.A",
+            "theorem_name": "Stdlib.A",
             "source_file": "A.v",
             "project_id": "test",
-            "depends_on": [{"name": "Coq.B", "kind": "definition"}],
+            "depends_on": [{"name": "Stdlib.B", "kind": "definition"}],
         }])
 
         inserted = import_dependencies(deps_path, db_path)
@@ -1033,7 +1033,7 @@ class TestImportDependenciesFormatDetection:
         from Poule.extraction.dependency_graph import import_dependencies
 
         db_path = tmp_path / "index.db"
-        _create_test_index(db_path, [("Coq.A", "Coq")])
+        _create_test_index(db_path, [("Stdlib.A", "Coq")])
         deps_path = tmp_path / "deps.xyz"
         deps_path.write_text("")
 

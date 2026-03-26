@@ -110,18 +110,18 @@ class TestLConst:
     def test_construction_and_name_access(self):
         from Poule.models.labels import LConst
 
-        lc = LConst("Coq.Init.Nat.add")
-        assert lc.name == "Coq.Init.Nat.add"
+        lc = LConst("Stdlib.Init.Nat.add")
+        assert lc.name == "Stdlib.Init.Nat.add"
 
     def test_equality_same_name(self):
         from Poule.models.labels import LConst
 
-        assert LConst("Coq.Init.Nat.add") == LConst("Coq.Init.Nat.add")
+        assert LConst("Stdlib.Init.Nat.add") == LConst("Stdlib.Init.Nat.add")
 
     def test_inequality_different_name(self):
         from Poule.models.labels import LConst
 
-        assert LConst("Coq.Init.Nat.add") != LConst("Coq.Init.Nat.mul")
+        assert LConst("Stdlib.Init.Nat.add") != LConst("Stdlib.Init.Nat.mul")
 
     def test_hashable_and_equal_hashes(self):
         from Poule.models.labels import LConst
@@ -149,8 +149,8 @@ class TestLInd:
     def test_construction_and_name_access(self):
         from Poule.models.labels import LInd
 
-        li = LInd("Coq.Init.Datatypes.nat")
-        assert li.name == "Coq.Init.Datatypes.nat"
+        li = LInd("Stdlib.Init.Datatypes.nat")
+        assert li.name == "Stdlib.Init.Datatypes.nat"
 
     def test_equality_same_name(self):
         from Poule.models.labels import LInd
@@ -174,8 +174,8 @@ class TestLConstruct:
     def test_construction_and_payload_access(self):
         from Poule.models.labels import LConstruct
 
-        lc = LConstruct("Coq.Init.Datatypes.nat", 0)
-        assert lc.name == "Coq.Init.Datatypes.nat"
+        lc = LConstruct("Stdlib.Init.Datatypes.nat", 0)
+        assert lc.name == "Stdlib.Init.Datatypes.nat"
         assert lc.index == 0
 
     def test_equality_same_name_and_index(self):
@@ -442,8 +442,8 @@ class TestLCase:
     def test_construction_and_ind_name_access(self):
         from Poule.models.labels import LCase
 
-        lc = LCase("Coq.Init.Datatypes.nat")
-        assert lc.ind_name == "Coq.Init.Datatypes.nat"
+        lc = LCase("Stdlib.Init.Datatypes.nat")
+        assert lc.ind_name == "Stdlib.Init.Datatypes.nat"
 
     def test_equality_same_ind_name(self):
         from Poule.models.labels import LCase
@@ -558,7 +558,7 @@ class TestCrossTypeInequality:
     def test_lconst_vs_lind_same_name(self):
         from Poule.models.labels import LConst, LInd
 
-        assert LConst("Coq.Init.Nat.add") != LInd("Coq.Init.Nat.add")
+        assert LConst("Stdlib.Init.Nat.add") != LInd("Stdlib.Init.Nat.add")
 
     def test_lconst_vs_lproj_same_name(self):
         from Poule.models.labels import LConst, LProj
@@ -613,8 +613,8 @@ class TestTreeNode:
     def test_leaf_construction(self, make_leaf):
         from Poule.models.labels import LConst
 
-        node = make_leaf(LConst("Coq.Init.Nat.add"))
-        assert node.label == LConst("Coq.Init.Nat.add")
+        node = make_leaf(LConst("Stdlib.Init.Nat.add"))
+        assert node.label == LConst("Stdlib.Init.Nat.add")
         assert node.children == []
 
     def test_default_depth_is_zero(self, make_leaf):
@@ -632,7 +632,7 @@ class TestTreeNode:
     def test_interior_construction(self, make_leaf, make_node):
         from Poule.models.labels import LApp, LConst, LPrimitive
 
-        child_a = make_leaf(LConst("Coq.Init.Nat.add"))
+        child_a = make_leaf(LConst("Stdlib.Init.Nat.add"))
         child_b = make_leaf(LPrimitive(1))
         node = make_node(LApp(), [child_a, child_b])
         assert node.label == LApp()
@@ -665,7 +665,7 @@ class TestExprTree:
         from Poule.models.labels import LConst
         from Poule.models.tree import ExprTree
 
-        root = make_leaf(LConst("Coq.Init.Nat.add"))
+        root = make_leaf(LConst("Stdlib.Init.Nat.add"))
         tree = ExprTree(root=root, node_count=1)
         assert tree.root is root
         assert tree.node_count == 1
@@ -675,8 +675,8 @@ class TestExprTree:
         from Poule.models.tree import ExprTree
 
         root = make_node(LProd(), [
-            make_leaf(LInd("Coq.Init.Datatypes.nat")),
-            make_leaf(LInd("Coq.Init.Datatypes.nat")),
+            make_leaf(LInd("Stdlib.Init.Datatypes.nat")),
+            make_leaf(LInd("Stdlib.Init.Datatypes.nat")),
         ])
         tree = ExprTree(root=root, node_count=3)
         assert tree.node_count == 3
@@ -907,17 +907,17 @@ class TestSearchResult:
         from Poule.models.responses import SearchResult
 
         sr = SearchResult(
-            name="Coq.Init.Nat.add",
+            name="Stdlib.Init.Nat.add",
             statement="forall n m : nat, nat",
             type="nat -> nat -> nat",
-            module="Coq.Init.Nat",
+            module="Stdlib.Init.Nat",
             kind=DeclKind.DEFINITION,
             score=0.95,
         )
-        assert sr.name == "Coq.Init.Nat.add"
+        assert sr.name == "Stdlib.Init.Nat.add"
         assert sr.statement == "forall n m : nat, nat"
         assert sr.type == "nat -> nat -> nat"
-        assert sr.module == "Coq.Init.Nat"
+        assert sr.module == "Stdlib.Init.Nat"
         assert sr.kind == DeclKind.DEFINITION
         assert sr.score == 0.95
 
@@ -962,23 +962,23 @@ class TestLemmaDetail:
         from Poule.models.responses import LemmaDetail
 
         ld = LemmaDetail(
-            name="Coq.Arith.PeanoNat.Nat.add_comm",
+            name="Stdlib.Arith.PeanoNat.Nat.add_comm",
             statement="forall n m : nat, n + m = m + n",
             type="nat -> nat -> Prop",
-            module="Coq.Arith.PeanoNat",
+            module="Stdlib.Arith.PeanoNat",
             kind=DeclKind.LEMMA,
             score=1.0,
-            dependencies=["Coq.Init.Nat.add"],
-            dependents=["Coq.Arith.PeanoNat.Nat.add_assoc"],
+            dependencies=["Stdlib.Init.Nat.add"],
+            dependents=["Stdlib.Arith.PeanoNat.Nat.add_assoc"],
             proof_sketch="induction on n",
-            symbols=["Coq.Init.Nat.add", "eq"],
+            symbols=["Stdlib.Init.Nat.add", "eq"],
             node_count=15,
         )
-        assert ld.name == "Coq.Arith.PeanoNat.Nat.add_comm"
-        assert ld.dependencies == ["Coq.Init.Nat.add"]
-        assert ld.dependents == ["Coq.Arith.PeanoNat.Nat.add_assoc"]
+        assert ld.name == "Stdlib.Arith.PeanoNat.Nat.add_comm"
+        assert ld.dependencies == ["Stdlib.Init.Nat.add"]
+        assert ld.dependents == ["Stdlib.Arith.PeanoNat.Nat.add_assoc"]
         assert ld.proof_sketch == "induction on n"
-        assert ld.symbols == ["Coq.Init.Nat.add", "eq"]
+        assert ld.symbols == ["Stdlib.Init.Nat.add", "eq"]
         assert ld.node_count == 15
 
     def test_empty_dependencies_and_dependents(self):
@@ -1054,8 +1054,8 @@ class TestModule:
     def test_construction_and_field_access(self):
         from Poule.models.responses import Module
 
-        mod = Module(name="Coq.Arith.PeanoNat", decl_count=42)
-        assert mod.name == "Coq.Arith.PeanoNat"
+        mod = Module(name="Stdlib.Arith.PeanoNat", decl_count=42)
+        assert mod.name == "Stdlib.Arith.PeanoNat"
         assert mod.decl_count == 42
 
     def test_zero_decl_count_is_valid(self):
@@ -1092,10 +1092,10 @@ class TestSpecExampleNatAdd:
         from Poule.models.tree import TreeNode, ExprTree
 
         tree = ExprTree(
-            root=TreeNode(label=LConst("Coq.Init.Nat.add"), children=[]),
+            root=TreeNode(label=LConst("Stdlib.Init.Nat.add"), children=[]),
             node_count=1,
         )
-        assert tree.root.label == LConst("Coq.Init.Nat.add")
+        assert tree.root.label == LConst("Stdlib.Init.Nat.add")
         assert tree.node_count == 1
 
 
@@ -1107,7 +1107,7 @@ class TestSpecExampleCurriedApp:
         from Poule.models.tree import TreeNode, ExprTree, recompute_depths
 
         inner = TreeNode(label=LApp(), children=[
-            TreeNode(label=LConst("Coq.Init.Nat.add"), children=[]),
+            TreeNode(label=LConst("Stdlib.Init.Nat.add"), children=[]),
             TreeNode(label=LPrimitive(1), children=[]),
         ])
         outer = TreeNode(label=LApp(), children=[
@@ -1128,7 +1128,7 @@ class TestSpecExampleCurriedApp:
         from Poule.models.tree import TreeNode, ExprTree, assign_node_ids
 
         inner = TreeNode(label=LApp(), children=[
-            TreeNode(label=LConst("Coq.Init.Nat.add"), children=[]),
+            TreeNode(label=LConst("Stdlib.Init.Nat.add"), children=[]),
             TreeNode(label=LPrimitive(1), children=[]),
         ])
         outer = TreeNode(label=LApp(), children=[
@@ -1299,8 +1299,8 @@ class TestPremiseType:
 
     def test_construction_valid_kind(self):
         Premise = _import_proof_types()[4]
-        p = Premise(name="Coq.Arith.PeanoNat.Nat.add_comm", kind="lemma")
-        assert p.name == "Coq.Arith.PeanoNat.Nat.add_comm"
+        p = Premise(name="Stdlib.Arith.PeanoNat.Nat.add_comm", kind="lemma")
+        assert p.name == "Stdlib.Arith.PeanoNat.Nat.add_comm"
         assert p.kind == "lemma"
 
     @pytest.mark.parametrize("kind", ["lemma", "hypothesis", "constructor", "definition"])
@@ -1510,7 +1510,7 @@ class TestExtractionRecordType:
         )
         record = ExtractionRecord(
             schema_version=1, record_type="proof_trace",
-            theorem_name="Coq.Init.Logic.eq_refl",
+            theorem_name="Stdlib.Init.Logic.eq_refl",
             source_file="theories/Init/Logic.v",
             project_id="coq-stdlib", total_steps=1,
             steps=[step0, step1],
@@ -1593,7 +1593,7 @@ class TestExtractionErrorType:
         *_, ExtractionError, _, _, _, _, _, _, _, _, _, _ = _import_extraction_types()
         error = ExtractionError(
             schema_version=1, record_type="extraction_error",
-            theorem_name="Coq.Arith.PeanoNat.Nat.sub_diag",
+            theorem_name="Stdlib.Arith.PeanoNat.Nat.sub_diag",
             source_file="theories/Arith/PeanoNat.v",
             project_id="coq-stdlib",
             error_kind="timeout",
@@ -1753,12 +1753,12 @@ class TestDependencyEntryType:
     def test_construction(self):
         (_, DependencyEntry, DependencyRef, *_) = _import_extraction_types()
         entry = DependencyEntry(
-            theorem_name="Coq.Arith.PeanoNat.Nat.add_comm",
+            theorem_name="Stdlib.Arith.PeanoNat.Nat.add_comm",
             source_file="theories/Arith/PeanoNat.v",
             project_id="coq-stdlib",
             depends_on=[
-                DependencyRef(name="Coq.Arith.PeanoNat.Nat.add_0_r", kind="lemma"),
-                DependencyRef(name="Coq.Init.Datatypes.nat", kind="inductive"),
+                DependencyRef(name="Stdlib.Arith.PeanoNat.Nat.add_0_r", kind="lemma"),
+                DependencyRef(name="Stdlib.Init.Datatypes.nat", kind="inductive"),
             ],
         )
         assert len(entry.depends_on) == 2
@@ -1780,7 +1780,7 @@ class TestDependencyRefType:
     ])
     def test_all_valid_kinds_accepted(self, kind):
         (_, _, DependencyRef, *_) = _import_extraction_types()
-        ref = DependencyRef(name="Coq.Init.Datatypes.nat", kind=kind)
+        ref = DependencyRef(name="Stdlib.Init.Datatypes.nat", kind=kind)
         assert ref.kind == kind
 
 
@@ -1872,15 +1872,15 @@ class TestScopeFilterType:
 
     def test_module_prefixes_only(self):
         *_, ScopeFilter, _ = _import_extraction_types()
-        sf = ScopeFilter(name_pattern=None, module_prefixes=["Coq.Arith"])
-        assert sf.module_prefixes == ["Coq.Arith"]
+        sf = ScopeFilter(name_pattern=None, module_prefixes=["Stdlib.Arith"])
+        assert sf.module_prefixes == ["Stdlib.Arith"]
 
     def test_both_set_means_conjunction(self):
         """Spec: when both fields are set, both must match (conjunction)."""
         *_, ScopeFilter, _ = _import_extraction_types()
         sf = ScopeFilter(
             name_pattern=".*comm.*",
-            module_prefixes=["Coq.Arith"],
+            module_prefixes=["Stdlib.Arith"],
         )
         assert sf.name_pattern is not None
         assert sf.module_prefixes is not None

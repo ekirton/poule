@@ -111,7 +111,7 @@ def _make_assumption_result(
 
 
 def _make_classified_axiom(
-    name="Coq.Logic.Classical_Prop.classic",
+    name="Stdlib.Logic.Classical_Prop.classic",
     type_str="forall P : Prop, P \\/ ~ P",
     category=None,
     explanation="Law of excluded middle",
@@ -279,15 +279,15 @@ class TestAxiomOpaqueSeparation:
         audit_assumptions, _, _ = _import_engine()
         manager = _make_mock_session_manager(
             print_assumptions_output={
-                "my_thm": "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P",
+                "my_thm": "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P",
             },
             declaration_kinds={
-                "Coq.Logic.Classical_Prop.classic": "Axiom",
+                "Stdlib.Logic.Classical_Prop.classic": "Axiom",
             },
         )
         result = await audit_assumptions(manager, "my_thm")
         assert len(result.axioms) == 1
-        assert result.axioms[0].name == "Coq.Logic.Classical_Prop.classic"
+        assert result.axioms[0].name == "Stdlib.Logic.Classical_Prop.classic"
         assert result.opaque_dependencies == []
 
     @pytest.mark.asyncio
@@ -354,7 +354,7 @@ class TestAxiomClassification:
             _AR, _CA, _OD, AxiomCategory, *_rest,
         ) = _import_types()
         category, explanation = classify(
-            "Coq.Logic.Classical_Prop.classic",
+            "Stdlib.Logic.Classical_Prop.classic",
             "forall P : Prop, P \\/ ~ P",
         )
         assert category == AxiomCategory("classical")
@@ -367,7 +367,7 @@ class TestAxiomClassification:
             _AR, _CA, _OD, AxiomCategory, *_rest,
         ) = _import_types()
         category, _ = classify(
-            "Coq.Logic.FunctionalExtensionality.functional_extensionality_dep",
+            "Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep",
             "forall (A : Type) (B : A -> Type) (f g : forall x, B x), "
             "(forall x, f x = g x) -> f = g",
         )
@@ -380,7 +380,7 @@ class TestAxiomClassification:
             _AR, _CA, _OD, AxiomCategory, *_rest,
         ) = _import_types()
         category, _ = classify(
-            "Coq.Logic.ProofIrrelevance.proof_irrelevance",
+            "Stdlib.Logic.ProofIrrelevance.proof_irrelevance",
             "forall (P : Prop) (p1 p2 : P), p1 = p2",
         )
         assert category == AxiomCategory("proof_irrelevance")
@@ -392,7 +392,7 @@ class TestAxiomClassification:
             _AR, _CA, _OD, AxiomCategory, *_rest,
         ) = _import_types()
         category, _ = classify(
-            "Coq.Logic.IndefiniteDescription.constructive_indefinite_description",
+            "Stdlib.Logic.IndefiniteDescription.constructive_indefinite_description",
             "forall (A : Type) (P : A -> Prop), (exists x, P x) -> {x : A | P x}",
         )
         assert category == AxiomCategory("choice")
@@ -404,7 +404,7 @@ class TestAxiomClassification:
             _AR, _CA, _OD, AxiomCategory, *_rest,
         ) = _import_types()
         category, _ = classify(
-            "Coq.Logic.Classical_Prop.some_new_variant",
+            "Stdlib.Logic.Classical_Prop.some_new_variant",
             "some_type",
         )
         assert category == AxiomCategory("classical")
@@ -416,7 +416,7 @@ class TestAxiomClassification:
             _AR, _CA, _OD, AxiomCategory, *_rest,
         ) = _import_types()
         category, _ = classify(
-            "Coq.Logic.ChoiceFacts.new_choice_lemma",
+            "Stdlib.Logic.ChoiceFacts.new_choice_lemma",
             "some_type",
         )
         assert category == AxiomCategory("choice")
@@ -428,7 +428,7 @@ class TestAxiomClassification:
             _AR, _CA, _OD, AxiomCategory, *_rest,
         ) = _import_types()
         category, _ = classify(
-            "Coq.Logic.ProofIrrelevanceFacts.some_lemma",
+            "Stdlib.Logic.ProofIrrelevanceFacts.some_lemma",
             "some_type",
         )
         assert category == AxiomCategory("proof_irrelevance")
@@ -473,7 +473,7 @@ class TestAxiomClassification:
         ) = _import_types()
         # classic is both an exact entry and under Classical_Prop prefix
         category, explanation = classify(
-            "Coq.Logic.Classical_Prop.classic",
+            "Stdlib.Logic.Classical_Prop.classic",
             "forall P : Prop, P \\/ ~ P",
         )
         assert category == AxiomCategory("classical")
@@ -492,17 +492,17 @@ class TestKnownAxiomRegistry:
         """All 11 axioms listed in section 4.5 table are present."""
         KNOWN_AXIOMS, _ = _import_registry()
         required_entries = [
-            "Coq.Logic.Classical_Prop.classic",
-            "Coq.Logic.Classical_Prop.NNPP",
-            "Coq.Logic.ClassicalEpsilon.excluded_middle_informative",
-            "Coq.Logic.Decidable.dec_not_not",
-            "Coq.Logic.FunctionalExtensionality.functional_extensionality_dep",
-            "Coq.Logic.PropExtensionality.propositional_extensionality",
-            "Coq.Logic.IndefiniteDescription.constructive_indefinite_description",
-            "Coq.Logic.ClassicalChoice.choice",
-            "Coq.Logic.Epsilon.epsilon",
-            "Coq.Logic.ProofIrrelevance.proof_irrelevance",
-            "Coq.Logic.JMeq.JMeq_eq",
+            "Stdlib.Logic.Classical_Prop.classic",
+            "Stdlib.Logic.Classical_Prop.NNPP",
+            "Stdlib.Logic.ClassicalEpsilon.excluded_middle_informative",
+            "Stdlib.Logic.Decidable.dec_not_not",
+            "Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep",
+            "Stdlib.Logic.PropExtensionality.propositional_extensionality",
+            "Stdlib.Logic.IndefiniteDescription.constructive_indefinite_description",
+            "Stdlib.Logic.ClassicalChoice.choice",
+            "Stdlib.Logic.Epsilon.epsilon",
+            "Stdlib.Logic.ProofIrrelevance.proof_irrelevance",
+            "Stdlib.Logic.JMeq.JMeq_eq",
         ]
         for entry in required_entries:
             assert entry in KNOWN_AXIOMS, f"Missing registry entry: {entry}"
@@ -524,25 +524,25 @@ class TestKnownAxiomRegistry:
         (
             _AR, _CA, _OD, AxiomCategory, *_rest,
         ) = _import_types()
-        assert KNOWN_AXIOMS["Coq.Logic.Classical_Prop.classic"][0] == AxiomCategory("classical")
-        assert KNOWN_AXIOMS["Coq.Logic.FunctionalExtensionality.functional_extensionality_dep"][0] == AxiomCategory("extensionality")
-        assert KNOWN_AXIOMS["Coq.Logic.IndefiniteDescription.constructive_indefinite_description"][0] == AxiomCategory("choice")
-        assert KNOWN_AXIOMS["Coq.Logic.ProofIrrelevance.proof_irrelevance"][0] == AxiomCategory("proof_irrelevance")
+        assert KNOWN_AXIOMS["Stdlib.Logic.Classical_Prop.classic"][0] == AxiomCategory("classical")
+        assert KNOWN_AXIOMS["Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep"][0] == AxiomCategory("extensionality")
+        assert KNOWN_AXIOMS["Stdlib.Logic.IndefiniteDescription.constructive_indefinite_description"][0] == AxiomCategory("choice")
+        assert KNOWN_AXIOMS["Stdlib.Logic.ProofIrrelevance.proof_irrelevance"][0] == AxiomCategory("proof_irrelevance")
 
     def test_module_prefixes_contains_all_required(self):
         """All 10 module prefixes from section 4.5 table are present."""
         _, MODULE_PREFIXES = _import_registry()
         required_prefixes = [
-            "Coq.Logic.Classical_Prop",
-            "Coq.Logic.ClassicalEpsilon",
-            "Coq.Logic.FunctionalExtensionality",
-            "Coq.Logic.PropExtensionality",
-            "Coq.Logic.ChoiceFacts",
-            "Coq.Logic.IndefiniteDescription",
-            "Coq.Logic.ClassicalChoice",
-            "Coq.Logic.Epsilon",
-            "Coq.Logic.ProofIrrelevance",
-            "Coq.Logic.ProofIrrelevanceFacts",
+            "Stdlib.Logic.Classical_Prop",
+            "Stdlib.Logic.ClassicalEpsilon",
+            "Stdlib.Logic.FunctionalExtensionality",
+            "Stdlib.Logic.PropExtensionality",
+            "Stdlib.Logic.ChoiceFacts",
+            "Stdlib.Logic.IndefiniteDescription",
+            "Stdlib.Logic.ClassicalChoice",
+            "Stdlib.Logic.Epsilon",
+            "Stdlib.Logic.ProofIrrelevance",
+            "Stdlib.Logic.ProofIrrelevanceFacts",
         ]
         prefix_names = [p[0] for p in MODULE_PREFIXES]
         for prefix in required_prefixes:
@@ -579,10 +579,10 @@ class TestSingleTheoremAuditing:
         ) = _import_types()
         manager = _make_mock_session_manager(
             print_assumptions_output={
-                "Coq.Arith.PeanoNat.Nat.add_comm": "Closed under the global context",
+                "Stdlib.Arith.PeanoNat.Nat.add_comm": "Closed under the global context",
             },
         )
-        result = await audit_assumptions(manager, "Coq.Arith.PeanoNat.Nat.add_comm")
+        result = await audit_assumptions(manager, "Stdlib.Arith.PeanoNat.Nat.add_comm")
         assert isinstance(result, AssumptionResult)
         assert result.is_closed is True
         assert result.axioms == []
@@ -598,10 +598,10 @@ class TestSingleTheoremAuditing:
         ) = _import_types()
         manager = _make_mock_session_manager(
             print_assumptions_output={
-                "my_theorem": "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P",
+                "my_theorem": "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P",
             },
             declaration_kinds={
-                "Coq.Logic.Classical_Prop.classic": "Axiom",
+                "Stdlib.Logic.Classical_Prop.classic": "Axiom",
             },
         )
         result = await audit_assumptions(manager, "my_theorem")
@@ -671,19 +671,19 @@ class TestSingleTheoremAuditing:
         manager = _make_mock_session_manager(
             print_assumptions_output={
                 "my_classical_theorem": (
-                    "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P\n"
+                    "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P\n"
                     "helper_lemma : nat -> nat -> Prop"
                 ),
             },
             declaration_kinds={
-                "Coq.Logic.Classical_Prop.classic": "Axiom",
+                "Stdlib.Logic.Classical_Prop.classic": "Axiom",
                 "helper_lemma": "Opaque",
             },
         )
         result = await audit_assumptions(manager, "my_classical_theorem")
         assert result.is_closed is False
         assert len(result.axioms) == 1
-        assert result.axioms[0].name == "Coq.Logic.Classical_Prop.classic"
+        assert result.axioms[0].name == "Stdlib.Logic.Classical_Prop.classic"
         assert len(result.opaque_dependencies) == 1
         assert result.opaque_dependencies[0].name == "helper_lemma"
 
@@ -718,12 +718,12 @@ class TestBatchModuleAuditing:
                 ),
             },
             print_assumptions_output={
-                "MyLib.Foo.thm_a": "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P",
-                "MyLib.Foo.thm_b": "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P",
+                "MyLib.Foo.thm_a": "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P",
+                "MyLib.Foo.thm_b": "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P",
                 "MyLib.Foo.thm_c": "Closed under the global context",
             },
             declaration_kinds={
-                "Coq.Logic.Classical_Prop.classic": "Axiom",
+                "Stdlib.Logic.Classical_Prop.classic": "Axiom",
             },
         )
         result = await audit_module(manager, "MyLib.Foo", flag_categories=["classical"])
@@ -734,7 +734,7 @@ class TestBatchModuleAuditing:
         assert len(result.flagged_theorems) == 2
         # axiom_summary sorted by dependent_count descending
         assert len(result.axiom_summary) >= 1
-        assert result.axiom_summary[0].axiom_name == "Coq.Logic.Classical_Prop.classic"
+        assert result.axiom_summary[0].axiom_name == "Stdlib.Logic.Classical_Prop.classic"
         assert result.axiom_summary[0].dependent_count == 2
 
     @pytest.mark.asyncio
@@ -838,13 +838,13 @@ class TestBatchModuleAuditing:
             print_assumptions_output={
                 # extensionality is NOT in the defaults
                 "MyLib.Defaults.thm_ext": (
-                    "Coq.Logic.FunctionalExtensionality.functional_extensionality_dep : "
+                    "Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep : "
                     "forall (A : Type) (B : A -> Type) (f g : forall x, B x), "
                     "(forall x, f x = g x) -> f = g"
                 ),
             },
             declaration_kinds={
-                "Coq.Logic.FunctionalExtensionality.functional_extensionality_dep": "Axiom",
+                "Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep": "Axiom",
             },
         )
         # Call without explicit flag_categories to use defaults
@@ -879,20 +879,20 @@ class TestBatchModuleAuditing:
             },
             print_assumptions_output={
                 "MyLib.Sorted.t1": (
-                    "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P\n"
-                    "Coq.Logic.FunctionalExtensionality.functional_extensionality_dep : some_type"
+                    "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P\n"
+                    "Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep : some_type"
                 ),
                 "MyLib.Sorted.t2": (
-                    "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P"
+                    "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P"
                 ),
                 "MyLib.Sorted.t3": (
-                    "Coq.Logic.FunctionalExtensionality.functional_extensionality_dep : some_type\n"
-                    "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P"
+                    "Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep : some_type\n"
+                    "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P"
                 ),
             },
             declaration_kinds={
-                "Coq.Logic.Classical_Prop.classic": "Axiom",
-                "Coq.Logic.FunctionalExtensionality.functional_extensionality_dep": "Axiom",
+                "Stdlib.Logic.Classical_Prop.classic": "Axiom",
+                "Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep": "Axiom",
             },
         )
         result = await audit_module(
@@ -922,16 +922,16 @@ class TestAssumptionComparison:
         manager = _make_mock_session_manager(
             print_assumptions_output={
                 "A": (
-                    "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P\n"
-                    "Coq.Logic.FunctionalExtensionality.functional_extensionality_dep : some_type"
+                    "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P\n"
+                    "Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep : some_type"
                 ),
                 "B": (
-                    "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P"
+                    "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P"
                 ),
             },
             declaration_kinds={
-                "Coq.Logic.Classical_Prop.classic": "Axiom",
-                "Coq.Logic.FunctionalExtensionality.functional_extensionality_dep": "Axiom",
+                "Stdlib.Logic.Classical_Prop.classic": "Axiom",
+                "Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep": "Axiom",
             },
         )
         result = await compare_assumptions(manager, ["A", "B"])
@@ -939,10 +939,10 @@ class TestAssumptionComparison:
         assert result.theorems == ["A", "B"]
         # shared: classic
         shared_names = [a.name for a in result.shared_axioms]
-        assert "Coq.Logic.Classical_Prop.classic" in shared_names
+        assert "Stdlib.Logic.Classical_Prop.classic" in shared_names
         # unique to A: func_ext
         unique_a_names = [a.name for a in result.unique_axioms["A"]]
-        assert "Coq.Logic.FunctionalExtensionality.functional_extensionality_dep" in unique_a_names
+        assert "Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep" in unique_a_names
         # unique to B: empty
         assert result.unique_axioms["B"] == []
         # weakest: B (subset of A's axioms)
@@ -960,16 +960,16 @@ class TestAssumptionComparison:
         ) = _import_types()
         manager = _make_mock_session_manager(
             print_assumptions_output={
-                "T1": "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P",
+                "T1": "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P",
                 "T2": (
-                    "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P\n"
-                    "Coq.Logic.ClassicalChoice.choice : some_type"
+                    "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P\n"
+                    "Stdlib.Logic.ClassicalChoice.choice : some_type"
                 ),
-                "T3": "Coq.Logic.ClassicalChoice.choice : some_type",
+                "T3": "Stdlib.Logic.ClassicalChoice.choice : some_type",
             },
             declaration_kinds={
-                "Coq.Logic.Classical_Prop.classic": "Axiom",
-                "Coq.Logic.ClassicalChoice.choice": "Axiom",
+                "Stdlib.Logic.Classical_Prop.classic": "Axiom",
+                "Stdlib.Logic.ClassicalChoice.choice": "Axiom",
             },
         )
         result = await compare_assumptions(manager, ["T1", "T2", "T3"])
@@ -1014,14 +1014,14 @@ class TestAssumptionComparison:
                 # A has {classic, func_ext}, B has {classic}
                 # B is a strict subset of A
                 "A": (
-                    "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P\n"
-                    "Coq.Logic.FunctionalExtensionality.functional_extensionality_dep : some_type"
+                    "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P\n"
+                    "Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep : some_type"
                 ),
-                "B": "Coq.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P",
+                "B": "Stdlib.Logic.Classical_Prop.classic : forall P : Prop, P \\/ ~ P",
             },
             declaration_kinds={
-                "Coq.Logic.Classical_Prop.classic": "Axiom",
-                "Coq.Logic.FunctionalExtensionality.functional_extensionality_dep": "Axiom",
+                "Stdlib.Logic.Classical_Prop.classic": "Axiom",
+                "Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep": "Axiom",
             },
         )
         result = await compare_assumptions(manager, ["A", "B"])

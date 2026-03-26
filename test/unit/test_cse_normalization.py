@@ -85,7 +85,7 @@ class TestNoRepeatedSubexpressions:
 
         # Prod(Ind("nat"), Sort(PROP)) -- all leaves are different types/payloads
         root = _node(LProd(), [
-            _leaf(LInd("Coq.Init.Datatypes.nat")),
+            _leaf(LInd("Stdlib.Init.Datatypes.nat")),
             _leaf(LSort(SortKind.PROP)),
         ])
         tree = _prepare(_tree(root))
@@ -115,8 +115,8 @@ class TestRepeatedNonConstantReplacement:
 
         def _make_app_list_nat():
             return _node(LApp(), [
-                _leaf(LInd("Coq.Init.Datatypes.list")),
-                _leaf(LInd("Coq.Init.Datatypes.nat")),
+                _leaf(LInd("Stdlib.Init.Datatypes.list")),
+                _leaf(LInd("Stdlib.Init.Datatypes.nat")),
             ])
 
         root = _node(LProd(), [
@@ -239,8 +239,8 @@ class TestConstantsPreserved:
         from Poule.normalization.cse import cse_normalize
 
         root = _node(LApp(), [
-            _leaf(LConst("Coq.Init.Nat.add")),
-            _leaf(LConst("Coq.Init.Nat.add")),
+            _leaf(LConst("Stdlib.Init.Nat.add")),
+            _leaf(LConst("Stdlib.Init.Nat.add")),
         ])
         tree = _prepare(_tree(root))
 
@@ -258,8 +258,8 @@ class TestConstantsPreserved:
         from Poule.normalization.cse import cse_normalize
 
         root = _node(LApp(), [
-            _leaf(LInd("Coq.Init.Datatypes.nat")),
-            _leaf(LInd("Coq.Init.Datatypes.nat")),
+            _leaf(LInd("Stdlib.Init.Datatypes.nat")),
+            _leaf(LInd("Stdlib.Init.Datatypes.nat")),
         ])
         tree = _prepare(_tree(root))
 
@@ -275,8 +275,8 @@ class TestConstantsPreserved:
         from Poule.normalization.cse import cse_normalize
 
         root = _node(LApp(), [
-            _leaf(LConstruct("Coq.Init.Datatypes.nat", 0)),
-            _leaf(LConstruct("Coq.Init.Datatypes.nat", 0)),
+            _leaf(LConstruct("Stdlib.Init.Datatypes.nat", 0)),
+            _leaf(LConstruct("Stdlib.Init.Datatypes.nat", 0)),
         ])
         tree = _prepare(_tree(root))
 
@@ -313,11 +313,11 @@ class TestMixedConstantsAndNonConstants:
         root = _node(LApp(), [
             _node(LApp(), [
                 _sub(),
-                _leaf(LInd("Coq.Init.Datatypes.nat")),
+                _leaf(LInd("Stdlib.Init.Datatypes.nat")),
             ]),
             _node(LApp(), [
                 _sub(),
-                _leaf(LInd("Coq.Init.Datatypes.nat")),
+                _leaf(LInd("Stdlib.Init.Datatypes.nat")),
             ]),
         ])
         tree = _prepare(_tree(root))
@@ -360,7 +360,7 @@ class TestSingleNodeTree:
         from Poule.models.labels import LConst
         from Poule.normalization.cse import cse_normalize
 
-        root = _leaf(LConst("Coq.Init.Nat.add"))
+        root = _leaf(LConst("Stdlib.Init.Nat.add"))
         tree = _prepare(_tree(root))
 
         cse_normalize(tree)
@@ -382,8 +382,8 @@ class TestNodeCountUpdated:
 
         def _make_app_list_nat():
             return _node(LApp(), [
-                _leaf(LInd("Coq.Init.Datatypes.list")),
-                _leaf(LInd("Coq.Init.Datatypes.nat")),
+                _leaf(LInd("Stdlib.Init.Datatypes.list")),
+                _leaf(LInd("Stdlib.Init.Datatypes.nat")),
             ])
 
         # Prod(App(Ind, Ind), App(Ind, Ind)) -> 7 nodes
@@ -413,8 +413,8 @@ class TestDepthsAndNodeIdsRecomputed:
 
         def _make_app_list_nat():
             return _node(LApp(), [
-                _leaf(LInd("Coq.Init.Datatypes.list")),
-                _leaf(LInd("Coq.Init.Datatypes.nat")),
+                _leaf(LInd("Stdlib.Init.Datatypes.list")),
+                _leaf(LInd("Stdlib.Init.Datatypes.nat")),
             ])
 
         root = _node(LProd(), [
@@ -442,8 +442,8 @@ class TestDepthsAndNodeIdsRecomputed:
 
         def _make_app_list_nat():
             return _node(LApp(), [
-                _leaf(LInd("Coq.Init.Datatypes.list")),
-                _leaf(LInd("Coq.Init.Datatypes.nat")),
+                _leaf(LInd("Stdlib.Init.Datatypes.list")),
+                _leaf(LInd("Stdlib.Init.Datatypes.nat")),
             ])
 
         root = _node(LProd(), [
@@ -594,10 +594,10 @@ class TestSpecExamples:
         from Poule.normalization.cse import cse_normalize
 
         root = _node(LProd(), [
-            _leaf(LInd("Coq.Init.Datatypes.nat")),
+            _leaf(LInd("Stdlib.Init.Datatypes.nat")),
             _node(LProd(), [
-                _leaf(LInd("Coq.Init.Datatypes.nat")),
-                _leaf(LInd("Coq.Init.Datatypes.nat")),
+                _leaf(LInd("Stdlib.Init.Datatypes.nat")),
+                _leaf(LInd("Stdlib.Init.Datatypes.nat")),
             ]),
         ])
         tree = _prepare(_tree(root))
@@ -617,8 +617,8 @@ class TestSpecExamples:
         from Poule.normalization.cse import cse_normalize
 
         root = _node(LProd(), [
-            _leaf(LInd("Coq.Init.Datatypes.nat")),
-            _leaf(LInd("Coq.Init.Datatypes.bool")),
+            _leaf(LInd("Stdlib.Init.Datatypes.nat")),
+            _leaf(LInd("Stdlib.Init.Datatypes.bool")),
         ])
         tree = _prepare(_tree(root))
 
@@ -638,8 +638,8 @@ class TestSpecExamples:
 
         def _make_app_list_nat():
             return _node(LApp(), [
-                _leaf(LInd("Coq.Init.Datatypes.list")),
-                _leaf(LInd("Coq.Init.Datatypes.nat")),
+                _leaf(LInd("Stdlib.Init.Datatypes.list")),
+                _leaf(LInd("Stdlib.Init.Datatypes.nat")),
             ])
 
         root = _node(LProd(), [
@@ -678,12 +678,12 @@ class TestAllConstantTree:
 
         root = _node(LApp(), [
             _node(LApp(), [
-                _leaf(LConst("Coq.Init.Nat.add")),
-                _leaf(LInd("Coq.Init.Datatypes.nat")),
+                _leaf(LConst("Stdlib.Init.Nat.add")),
+                _leaf(LInd("Stdlib.Init.Datatypes.nat")),
             ]),
             _node(LApp(), [
-                _leaf(LConst("Coq.Init.Nat.add")),
-                _leaf(LInd("Coq.Init.Datatypes.nat")),
+                _leaf(LConst("Stdlib.Init.Nat.add")),
+                _leaf(LInd("Stdlib.Init.Datatypes.nat")),
             ]),
         ])
         tree = _prepare(_tree(root))

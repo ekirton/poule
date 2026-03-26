@@ -1112,8 +1112,8 @@ class TestGetPremises:
         states = [_make_stepped_state(i) for i in range(1, 4)]
         states[-1] = _make_proof_state(step_index=3, is_complete=True)
         premises_map = {
-            1: [{"name": "Coq.Init.Nat.add", "kind": "definition"}],
-            2: [{"name": "Coq.Arith.PeanoNat.Nat.add_comm", "kind": "lemma"}],
+            1: [{"name": "Stdlib.Init.Nat.add", "kind": "definition"}],
+            2: [{"name": "Stdlib.Arith.PeanoNat.Nat.add_comm", "kind": "lemma"}],
             3: [],
         }
         backend = _make_mock_backend(
@@ -1159,7 +1159,7 @@ class TestGetStepPremises:
         SessionManager = _import_manager()
         states = [_make_stepped_state(i) for i in range(1, 4)]
         premises_map = {
-            3: [{"name": "Coq.Init.Logic.eq_refl", "kind": "lemma"}],
+            3: [{"name": "Stdlib.Init.Logic.eq_refl", "kind": "lemma"}],
         }
         backend = _make_mock_backend(
             tactic_results=states,

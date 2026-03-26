@@ -29,10 +29,10 @@ from Poule.models.responses import LemmaDetail, Module, SearchResult
 
 
 def _sr(
-    name: str = "Coq.Arith.PeanoNat.Nat.add_comm",
+    name: str = "Stdlib.Arith.PeanoNat.Nat.add_comm",
     statement: str = "forall n m : nat, n + m = m + n",
     type_: str = "forall n m : nat, n + m = m + n",
-    module: str = "Coq.Arith.PeanoNat",
+    module: str = "Stdlib.Arith.PeanoNat",
     kind: str = "lemma",
     score: float = 0.95,
 ) -> SearchResult:
@@ -47,10 +47,10 @@ def _sr(
 
 
 def _ld(
-    name: str = "Coq.Arith.PeanoNat.Nat.add_comm",
+    name: str = "Stdlib.Arith.PeanoNat.Nat.add_comm",
     statement: str = "forall n m : nat, n + m = m + n",
     type_: str = "forall n m : nat, n + m = m + n",
-    module: str = "Coq.Arith.PeanoNat",
+    module: str = "Stdlib.Arith.PeanoNat",
     kind: str = "lemma",
     score: float = 1.0,
     dependencies: list[str] | None = None,
@@ -73,7 +73,7 @@ def _ld(
     )
 
 
-def _mod(name: str = "Coq.Arith.PeanoNat", decl_count: int = 42) -> Module:
+def _mod(name: str = "Stdlib.Arith.PeanoNat", decl_count: int = 42) -> Module:
     return Module(name=name, decl_count=decl_count)
 
 
@@ -148,11 +148,11 @@ class TestFormatSearchResults:
         format_search_results, _, _ = _import_formatting()
         results = [_sr()]
         output = format_search_results(results, json_mode=False)
-        assert "Coq.Arith.PeanoNat.Nat.add_comm" in output
+        assert "Stdlib.Arith.PeanoNat.Nat.add_comm" in output
         assert "lemma" in output
         assert "0.9500" in output
         assert "forall n m : nat, n + m = m + n" in output
-        assert "module: Coq.Arith.PeanoNat" in output
+        assert "module: Stdlib.Arith.PeanoNat" in output
 
     def test_human_readable_multiple_results_separated_by_blank_lines(self):
         format_search_results, _, _ = _import_formatting()
@@ -175,7 +175,7 @@ class TestFormatSearchResults:
         parsed = json.loads(output)
         assert isinstance(parsed, list)
         assert len(parsed) == 1
-        assert parsed[0]["name"] == "Coq.Arith.PeanoNat.Nat.add_comm"
+        assert parsed[0]["name"] == "Stdlib.Arith.PeanoNat.Nat.add_comm"
         assert parsed[0]["score"] == 0.95
 
     def test_json_mode_empty_results(self):
@@ -204,7 +204,7 @@ class TestFormatLemmaDetail:
         _, format_lemma_detail, _ = _import_formatting()
         detail = _ld(dependencies=["Nat.add"], dependents=["Thm.foo"], symbols=["Nat.add"], node_count=15)
         output = format_lemma_detail(detail, json_mode=False)
-        assert "Coq.Arith.PeanoNat.Nat.add_comm" in output
+        assert "Stdlib.Arith.PeanoNat.Nat.add_comm" in output
         assert "(lemma)" in output
         assert "forall n m : nat, n + m = m + n" in output
         assert "module:" in output
@@ -218,7 +218,7 @@ class TestFormatLemmaDetail:
         detail = _ld()
         output = format_lemma_detail(detail, json_mode=True)
         parsed = json.loads(output)
-        assert parsed["name"] == "Coq.Arith.PeanoNat.Nat.add_comm"
+        assert parsed["name"] == "Stdlib.Arith.PeanoNat.Nat.add_comm"
         required_fields = {
             "name", "statement", "type", "module", "kind", "score",
             "dependencies", "dependents", "proof_sketch", "symbols", "node_count",
@@ -236,9 +236,9 @@ class TestFormatModules:
 
     def test_human_readable(self):
         _, _, format_modules = _import_formatting()
-        modules = [_mod(name="Coq.Arith.PeanoNat", decl_count=42)]
+        modules = [_mod(name="Stdlib.Arith.PeanoNat", decl_count=42)]
         output = format_modules(modules, json_mode=False)
-        assert "Coq.Arith.PeanoNat" in output
+        assert "Stdlib.Arith.PeanoNat" in output
         assert "42" in output
         assert "declarations" in output
 
@@ -253,7 +253,7 @@ class TestFormatModules:
         output = format_modules(modules, json_mode=True)
         parsed = json.loads(output)
         assert isinstance(parsed, list)
-        assert parsed[0]["name"] == "Coq.Arith.PeanoNat"
+        assert parsed[0]["name"] == "Stdlib.Arith.PeanoNat"
         assert parsed[0]["decl_count"] == 42
 
     def test_json_mode_empty(self):
@@ -276,7 +276,7 @@ class TestSearchByNameCommand:
              patch("Poule.cli.commands.search_by_name", return_value=[_sr()]):
             result = runner.invoke(cli, ["search-by-name", "--db", tmp_db, "Nat.add_comm"])
         assert result.exit_code == 0
-        assert "Coq.Arith.PeanoNat.Nat.add_comm" in result.output
+        assert "Stdlib.Arith.PeanoNat.Nat.add_comm" in result.output
 
     def test_happy_path_json(self, runner, tmp_db):
         cli = _import_cli()
@@ -286,7 +286,7 @@ class TestSearchByNameCommand:
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
-        assert parsed[0]["name"] == "Coq.Arith.PeanoNat.Nat.add_comm"
+        assert parsed[0]["name"] == "Stdlib.Arith.PeanoNat.Nat.add_comm"
 
     def test_custom_limit(self, runner, tmp_db):
         cli = _import_cli()
@@ -341,7 +341,7 @@ class TestSearchByTypeCommand:
              patch("Poule.cli.commands.search_by_type", return_value=[_sr()]):
             result = runner.invoke(cli, ["search-by-type", "--db", tmp_db, "nat -> nat -> nat"])
         assert result.exit_code == 0
-        assert "Coq.Arith.PeanoNat.Nat.add_comm" in result.output
+        assert "Stdlib.Arith.PeanoNat.Nat.add_comm" in result.output
 
     def test_json_output(self, runner, tmp_db):
         cli = _import_cli()
@@ -376,7 +376,7 @@ class TestSearchByStructureCommand:
              patch("Poule.cli.commands.search_by_structure", return_value=[_sr()]):
             result = runner.invoke(cli, ["search-by-structure", "--db", tmp_db, "forall n, n = n"])
         assert result.exit_code == 0
-        assert "Coq.Arith.PeanoNat.Nat.add_comm" in result.output
+        assert "Stdlib.Arith.PeanoNat.Nat.add_comm" in result.output
 
     def test_json_output(self, runner, tmp_db):
         cli = _import_cli()
@@ -410,7 +410,7 @@ class TestSearchBySymbolsCommand:
              patch("Poule.cli.commands.search_by_symbols", return_value=[_sr()]):
             result = runner.invoke(cli, ["search-by-symbols", "--db", tmp_db, "Nat.add", "Nat.mul"])
         assert result.exit_code == 0
-        assert "Coq.Arith.PeanoNat.Nat.add_comm" in result.output
+        assert "Stdlib.Arith.PeanoNat.Nat.add_comm" in result.output
 
     def test_json_output(self, runner, tmp_db):
         cli = _import_cli()
@@ -441,19 +441,19 @@ class TestGetLemmaCommand:
             mock_ctx = MagicMock()
             mock_ctx.reader.get_declaration.return_value = {
                 "id": 1,
-                "name": "Coq.Arith.PeanoNat.Nat.add_comm",
+                "name": "Stdlib.Arith.PeanoNat.Nat.add_comm",
                 "statement": "forall n m : nat, n + m = m + n",
                 "type_expr": "forall n m : nat, n + m = m + n",
-                "module": "Coq.Arith.PeanoNat",
+                "module": "Stdlib.Arith.PeanoNat",
                 "kind": "lemma",
                 "node_count": 15,
                 "symbol_set": '["Nat.add"]',
             }
             mock_ctx.reader.get_dependencies.return_value = []
             mock_ctx_fn.return_value = mock_ctx
-            result = runner.invoke(cli, ["get-lemma", "--db", tmp_db, "Coq.Arith.PeanoNat.Nat.add_comm"])
+            result = runner.invoke(cli, ["get-lemma", "--db", tmp_db, "Stdlib.Arith.PeanoNat.Nat.add_comm"])
         assert result.exit_code == 0
-        assert "Coq.Arith.PeanoNat.Nat.add_comm" in result.output
+        assert "Stdlib.Arith.PeanoNat.Nat.add_comm" in result.output
 
     def test_json_output(self, runner, tmp_db):
         cli = _import_cli()
@@ -461,20 +461,20 @@ class TestGetLemmaCommand:
             mock_ctx = MagicMock()
             mock_ctx.reader.get_declaration.return_value = {
                 "id": 1,
-                "name": "Coq.Arith.PeanoNat.Nat.add_comm",
+                "name": "Stdlib.Arith.PeanoNat.Nat.add_comm",
                 "statement": "forall n m : nat, n + m = m + n",
                 "type_expr": "forall n m : nat, n + m = m + n",
-                "module": "Coq.Arith.PeanoNat",
+                "module": "Stdlib.Arith.PeanoNat",
                 "kind": "lemma",
                 "node_count": 15,
                 "symbol_set": '["Nat.add"]',
             }
             mock_ctx.reader.get_dependencies.return_value = []
             mock_ctx_fn.return_value = mock_ctx
-            result = runner.invoke(cli, ["get-lemma", "--db", tmp_db, "--json", "Coq.Arith.PeanoNat.Nat.add_comm"])
+            result = runner.invoke(cli, ["get-lemma", "--db", tmp_db, "--json", "Stdlib.Arith.PeanoNat.Nat.add_comm"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        assert parsed["name"] == "Coq.Arith.PeanoNat.Nat.add_comm"
+        assert parsed["name"] == "Stdlib.Arith.PeanoNat.Nat.add_comm"
         required_fields = {
             "name", "statement", "type", "module", "kind", "score",
             "dependencies", "dependents", "proof_sketch", "symbols", "node_count",
@@ -509,7 +509,7 @@ class TestFindRelatedCommand:
         with patch("Poule.cli.commands.create_context") as mock_ctx_fn:
             mock_ctx = MagicMock()
             mock_ctx.reader.get_declaration.return_value = {
-                "id": 1, "name": "A", "module": "Coq.Init",
+                "id": 1, "name": "A", "module": "Stdlib.Init",
                 "statement": "stmt", "type_expr": "ty",
                 "kind": "lemma", "node_count": 5, "symbol_set": "[]",
             }
@@ -517,7 +517,7 @@ class TestFindRelatedCommand:
                 {"target_name": "B", "src": 1, "dst": 2, "relation": "uses"}
             ]
             mock_ctx.reader.get_declarations_by_ids.return_value = [{
-                "id": 2, "name": "B", "module": "Coq.Init",
+                "id": 2, "name": "B", "module": "Stdlib.Init",
                 "statement": "stmt_b", "type_expr": "ty_b",
                 "kind": "lemma", "node_count": 3, "symbol_set": "[]",
             }]
@@ -536,7 +536,7 @@ class TestFindRelatedCommand:
         with patch("Poule.cli.commands.create_context") as mock_ctx_fn:
             mock_ctx = MagicMock()
             mock_ctx.reader.get_declaration.return_value = {
-                "id": 1, "name": "A", "module": "Coq.Init",
+                "id": 1, "name": "A", "module": "Stdlib.Init",
                 "statement": "s", "type_expr": "t",
                 "kind": "lemma", "node_count": 1, "symbol_set": "[]",
             }
@@ -585,12 +585,12 @@ class TestListModulesCommand:
         with patch("Poule.cli.commands.create_context") as mock_ctx_fn:
             mock_ctx = MagicMock()
             mock_ctx.reader.list_modules.return_value = [
-                {"module": "Coq.Arith.PeanoNat", "count": 42},
+                {"module": "Stdlib.Arith.PeanoNat", "count": 42},
             ]
             mock_ctx_fn.return_value = mock_ctx
-            result = runner.invoke(cli, ["list-modules", "--db", tmp_db, "Coq.Arith"])
+            result = runner.invoke(cli, ["list-modules", "--db", tmp_db, "Stdlib.Arith"])
         assert result.exit_code == 0
-        assert "Coq.Arith.PeanoNat" in result.output
+        assert "Stdlib.Arith.PeanoNat" in result.output
         assert "42" in result.output
 
     def test_no_prefix_lists_all(self, runner, tmp_db):
@@ -598,28 +598,28 @@ class TestListModulesCommand:
         with patch("Poule.cli.commands.create_context") as mock_ctx_fn:
             mock_ctx = MagicMock()
             mock_ctx.reader.list_modules.return_value = [
-                {"module": "Coq.Arith", "count": 10},
-                {"module": "Coq.Init", "count": 20},
+                {"module": "Stdlib.Arith", "count": 10},
+                {"module": "Stdlib.Init", "count": 20},
             ]
             mock_ctx_fn.return_value = mock_ctx
             result = runner.invoke(cli, ["list-modules", "--db", tmp_db])
         assert result.exit_code == 0
-        assert "Coq.Arith" in result.output
-        assert "Coq.Init" in result.output
+        assert "Stdlib.Arith" in result.output
+        assert "Stdlib.Init" in result.output
 
     def test_json_output(self, runner, tmp_db):
         cli = _import_cli()
         with patch("Poule.cli.commands.create_context") as mock_ctx_fn:
             mock_ctx = MagicMock()
             mock_ctx.reader.list_modules.return_value = [
-                {"module": "Coq.Arith.PeanoNat", "count": 42},
+                {"module": "Stdlib.Arith.PeanoNat", "count": 42},
             ]
             mock_ctx_fn.return_value = mock_ctx
-            result = runner.invoke(cli, ["list-modules", "--db", tmp_db, "--json", "Coq.Arith"])
+            result = runner.invoke(cli, ["list-modules", "--db", tmp_db, "--json", "Stdlib.Arith"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
-        assert parsed[0]["name"] == "Coq.Arith.PeanoNat"
+        assert parsed[0]["name"] == "Stdlib.Arith.PeanoNat"
         assert parsed[0]["decl_count"] == 42
 
     def test_empty_result(self, runner, tmp_db):

@@ -89,13 +89,18 @@ To achieve the dependency edges described in the [library-indexing](../features/
 
 ### Fully qualified name derivation
 
-Backends that return short names (e.g., coq-lsp `Search` returns `Nat.add_comm` rather than `Coq.Arith.PeanoNat.Nat.add_comm`) derive fully qualified names by prepending the `.vo` file's logical module path. The logical module path is derived from the filesystem path using heuristic prefix stripping (see below). The resulting name has the form `<logical_module_path>.<short_name>`.
+Backends that return short names (e.g., coq-lsp `Search` returns `Nat.add_comm` rather than `Stdlib.Arith.PeanoNat.Nat.add_comm`) derive fully qualified names by prepending the `.vo` file's canonical module path. The canonical module path is derived from the filesystem path using heuristic prefix stripping (see below). The resulting name has the form `<canonical_module_path>.<short_name>`.
 
 ### Module path derivation
 
 The `module` field on each declaration is the logical path of the `.vo` file from which the declaration was extracted — not derived from string manipulation of the fully qualified name. For nested modules, the `.vo` file is the source of truth.
 
-The logical path is derived from the `.vo` file's filesystem path by stripping known directory prefixes (`user-contrib/`, `theories/`), removing version-specific prefixes (e.g., `Stdlib/`), converting path separators to dots, and removing the `.vo` extension.
+Two path forms are derived from each `.vo` file:
+
+- **Import path** (for `Require Import` and `Search _ inside`): strips `user-contrib/`, `theories/`, and `Stdlib/` prefixes, converts to dots, removes `.vo`. Example: `user-contrib/Stdlib/Arith/PeanoNat.vo` → `Arith.PeanoNat`. This form is needed because `Search _ inside Stdlib.Arith.PeanoNat.` does not work in Rocq 9.x.
+- **Canonical module path** (for storage and FQN construction): strips `user-contrib/` and `theories/` but **keeps** the `Stdlib` prefix, converts to dots, removes `.vo`. Example: `user-contrib/Stdlib/Arith/PeanoNat.vo` → `Stdlib.Arith.PeanoNat`. This produces the canonical FQN used by Rocq 9.x (e.g., `Stdlib.Arith.PeanoNat.Nat.add_comm`). For non-stdlib packages (e.g., MathComp, Flocq), both paths are identical.
+
+The `Corelib` prefix (used internally by Rocq 9.x for preloaded modules) is normalized to `Stdlib` for storage — `Corelib.Init.Nat` becomes `Stdlib.Init.Nat`. This ensures that `declared_library` metadata from `About` matches the canonical module path for re-export detection.
 
 ### Kind detection and About metadata
 
@@ -107,6 +112,22 @@ The `About` response also contains two additional signals extracted during the s
 
 - **Opacity**: Rocq 9.x About output includes "`<name> is opaque`" or "`<name> is transparent`". Opaque declarations were proved with `Qed` (tactic proof body); transparent declarations were defined with `:=` or proved with `Defined`. This is the primary signal for proof-body detection (see step 8b above).
 - **Declared library and line**: The line "`Declared in library <lib>, line <n>, characters <range>`" names the library and exact source position where the declaration was originally defined. For re-exported declarations (via `Include` or functor application), the declared library differs from the `.vo` file where the declaration was discovered. The backend extracts both the library name and the line number. Proof-body detection uses the declared library to locate the `.v` source file and the declared line to anchor its Vernacular keyword check to the exact declaration (eliminating ambiguity from same-named declarations in nested modules).
+
+### Kind refinement (Rocq 9.x)
+
+In Rocq 9.x, all lemmas, theorems, definitions, and instances report `"Expands to: Constant"` in `About` output, mapping to storage kind `"definition"`. To recover finer-grained kinds, the extraction pipeline applies a source-based refinement step after About-based kind detection:
+
+When the detected kind is `"definition"` and `declared_library` + `declared_line` are available from About metadata, resolve the `.v` source file (using the same path resolution as proof-body detection Signal 3) and read the Vernacular keyword at the declared line:
+
+| Source keyword | Refined kind |
+|---------------|-------------|
+| `Lemma`, `Proposition`, `Corollary`, `Fact`, `Remark` | `lemma` |
+| `Theorem` | `theorem` |
+| `Instance` | `instance` |
+| `Definition`, `Fixpoint`, `Let`, `Coercion`, `Canonical` | `definition` (unchanged) |
+| Line unavailable or keyword unrecognized | `definition` (unchanged) |
+
+This reuses the same `.v` file cache and path resolution infrastructure as proof-body detection. Kind refinement runs during `process_declaration`, after About-based kind detection and before proof-body detection.
 
 ### Kind mapping
 
@@ -240,21 +261,21 @@ cse_normalize(tree) → CSE-reduced tree
 extract_symbols(tree), wl_histogram(tree, h=3)
 ```
 
-The text parser initially produces short display names — `Const("nat")` rather than the kernel-precise `Ind("Coq.Init.Datatypes.nat")`. A post-extraction symbol resolution step resolves these short names to fully qualified kernel names using batched coq-lsp `Locate` queries (see Symbol FQN Resolution below). This ensures the symbol index uses canonical FQNs, which is essential for the MePo Symbol Overlap channel to match user queries like `Nat.add` against the correct index entries. WL histograms and structural matching continue to use the parser's display-name labels, which are internally consistent between index time and query time.
+The text parser initially produces short display names — `Const("nat")` rather than the kernel-precise `Ind("Corelib.Init.Datatypes.nat")`. A post-extraction symbol resolution step resolves these short names to fully qualified kernel names using batched coq-lsp `Locate` queries (see Symbol FQN Resolution below). This ensures the symbol index uses canonical FQNs, which is essential for the MePo Symbol Overlap channel to match user queries like `Nat.add` against the correct index entries. WL histograms and structural matching continue to use the parser's display-name labels, which are internally consistent between index time and query time.
 
 ## Symbol FQN Resolution
 
-The `TypeExprParser` produces short display names (`nat`, `+`, `list`, `eq`) because it parses textual type signatures, not kernel terms. These short names must be resolved to fully qualified kernel names (`Coq.Init.Datatypes.nat`, `Coq.Init.Nat.add`, `Coq.Init.Datatypes.list`, `Coq.Init.Logic.eq`) before being stored in the symbol index.
+The `TypeExprParser` produces short display names (`nat`, `+`, `list`, `eq`) because it parses textual type signatures, not kernel terms. These short names must be resolved to fully qualified kernel names (`Corelib.Init.Datatypes.nat`, `Stdlib.Init.Nat.add`, `Corelib.Init.Datatypes.list`, `Corelib.Init.Logic.eq`) before being stored in the symbol index.
 
 ### Resolution mechanism
 
 After `extract_symbols(tree)` produces a raw symbol set of short names, a resolution step maps each to its FQN:
 
-1. **Batch `Locate` queries**: Issue coq-lsp `Locate <name>.` queries for each unique short name in the extraction batch. The `Locate` command returns the FQN and object kind (Constant, Inductive, Constructor). Queries are batched into shared documents (≤100 per document) to reduce round-trip overhead, following the same batching pattern as kind detection.
+1. **Batch `Locate` queries**: Issue coq-lsp `Locate <name>.` queries for each unique short name in the extraction batch. The `Locate` command returns the FQN and object kind (Constant, Inductive, Constructor, Class, Instance). Queries are batched into shared documents (≤100 per document) to reduce round-trip overhead, following the same batching pattern as kind detection.
 
 2. **Cache**: Maintain a `short_name → FQN` lookup table for the duration of the indexing run. Most short names recur across thousands of declarations (e.g., `nat` appears in ~40% of stdlib declarations), so the cache eliminates redundant queries. The cache is keyed by the exact short name string.
 
-3. **Infix operator resolution**: Infix operators parsed as `Const("+")`, `Const("*")`, `Const("<")`, etc. are resolved via `Locate` like any other name. Coq's `Locate "+"` returns the underlying constant (e.g., `Coq.Init.Nat.add`). Operators that resolve to multiple notations are expanded to all matching FQNs.
+3. **Infix operator resolution**: Infix operators parsed as `Const("+")`, `Const("*")`, `Const("<")`, etc. are resolved via `Locate` like any other name. Coq's `Locate "+"` returns the underlying constant (e.g., `Stdlib.Init.Nat.add`). Operators that resolve to multiple notations are expanded to all matching FQNs.
 
 4. **Fallback**: Names that cannot be resolved (e.g., `Locate` returns an error or the name is user-defined and not in the Coq environment) are stored as-is in the symbol set. This preserves information without discarding unresolvable names.
 
@@ -295,7 +316,7 @@ Both extraction passes report progress at per-declaration granularity, and each 
 The indexing command:
 1. Deletes any existing database file at the output path
 2. Detects the installed Coq/Rocq version and target library versions
-3. Collects declarations from all `.vo` files, then deduplicates by fully qualified name (keeps first occurrence; duplicates arise from module re-exports across `.vo` files). During deduplication, captures re-export aliases: when a canonical FQN appears from a `.vo` file whose module path differs from the FQN's own module prefix, the module-qualified short name is recorded as a re-export alias (e.g., `Coq.Lists.ListDef.map` found in `List.vo` → alias `Coq.Lists.List.map`). Aliases are stored in the index for suffix index enrichment at query time.
+3. Collects declarations from all `.vo` files, then deduplicates by fully qualified name (keeps first occurrence; duplicates arise from module re-exports across `.vo` files). During deduplication, captures re-export aliases: when a canonical FQN appears from a `.vo` file whose module path differs from the FQN's own module prefix, the module-qualified short name is recorded as a re-export alias (e.g., `Stdlib.Lists.ListDef.map` found in `List.vo` → alias `Stdlib.Lists.List.map`). Aliases are stored in the index for suffix index enrichment at query time.
 4. Processes each unique declaration through the pipeline above
 5. Computes global symbol frequencies across all declarations
 6. Writes everything to a single SQLite database
@@ -322,6 +343,6 @@ When a library is not installed, detection returns `"none"`.
 
 The two-pass extraction pipeline captures axiom-level and symbol-set-level dependencies from `.vo` files. For theorem-to-theorem proof dependencies — which theorems a proof body actually invokes — the extraction campaign ([extraction-campaign.md](extraction-campaign.md)) produces a JSON Lines file of `DependencyEntry` records (see [extraction-types.md](data-models/extraction-types.md)).
 
-An import step reads this dependency graph file and inserts `"uses"` edges into an existing index database. Names in the dependency graph are resolved against the index using the same multi-strategy resolver as Pass 2 (exact match, `Coq.` prefix, suffix match). Edges already present from Pass 2 are skipped via the primary key constraint (idempotent). Unresolvable names are silently skipped.
+An import step reads this dependency graph file and inserts `"uses"` edges into an existing index database. Names in the dependency graph are resolved against the index using the same multi-strategy resolver as Pass 2 (exact match, `Stdlib.` prefix, suffix match). Edges already present from Pass 2 are skipped via the primary key constraint (idempotent). Unresolvable names are silently skipped.
 
 This import complements the three Pass 2 dependency sources (tree-based, `Print Assumptions`, symbol-set cross-referencing) by adding proof-body-level edges that cannot be obtained from `.vo`-only analysis.

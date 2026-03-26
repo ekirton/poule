@@ -160,15 +160,15 @@ class TestDirectMappingVariants:
         assert result.children == []
 
     def test_const_produces_lconst(self, constr, c2t, labels):
-        node = constr.Const("Coq.Init.Nat.add")
+        node = constr.Const("Stdlib.Init.Nat.add")
         result = c2t(node)
-        assert result.label == labels.LConst("Coq.Init.Nat.add")
+        assert result.label == labels.LConst("Stdlib.Init.Nat.add")
         assert result.children == []
 
     def test_ind_produces_lind(self, constr, c2t, labels):
-        node = constr.Ind("Coq.Init.Datatypes.nat")
+        node = constr.Ind("Stdlib.Init.Datatypes.nat")
         result = c2t(node)
-        assert result.label == labels.LInd("Coq.Init.Datatypes.nat")
+        assert result.label == labels.LInd("Stdlib.Init.Datatypes.nat")
         assert result.children == []
 
 
@@ -198,7 +198,7 @@ class TestCurrification:
     def test_app_two_args_produces_nested_lapp(self, constr, c2t, labels):
         """App(f, [a1, a2]) → LApp(LApp(f, a1), a2)."""
         node = constr.App(
-            constr.Const("Coq.Init.Nat.add"),
+            constr.Const("Stdlib.Init.Nat.add"),
             [constr.Rel(1), constr.Rel(2)],
         )
         result = c2t(node)
@@ -208,7 +208,7 @@ class TestCurrification:
         # Inner LApp
         inner = result.children[0]
         assert inner.label == labels.LApp()
-        assert inner.children[0].label == labels.LConst("Coq.Init.Nat.add")
+        assert inner.children[0].label == labels.LConst("Stdlib.Init.Nat.add")
         assert inner.children[1].label == labels.LRel(1)
         # Second arg
         assert result.children[1].label == labels.LRel(2)
@@ -260,11 +260,11 @@ class TestCastStripping:
     def test_cast_strips_to_inner_term(self, constr, c2t, labels):
         """Cast(Const(zero), Ind(nat)) → LConst(zero) — spec example."""
         node = constr.Cast(
-            constr.Const("Coq.Init.Nat.zero"),
-            constr.Ind("Coq.Init.Datatypes.nat"),
+            constr.Const("Stdlib.Init.Nat.zero"),
+            constr.Ind("Stdlib.Init.Datatypes.nat"),
         )
         result = c2t(node)
-        assert result.label == labels.LConst("Coq.Init.Nat.zero")
+        assert result.label == labels.LConst("Stdlib.Init.Nat.zero")
         assert result.children == []
 
     def test_nested_casts_fully_stripped(self, constr, c2t, labels):
@@ -353,7 +353,7 @@ class TestLetIn:
     def test_letin_produces_llet_with_two_children(self, constr, c2t, labels):
         node = constr.LetIn(
             "x",
-            constr.Const("Coq.Init.Nat.zero"),
+            constr.Const("Stdlib.Init.Nat.zero"),
             constr.Ind("nat"),
             constr.Rel(0),
         )
@@ -361,7 +361,7 @@ class TestLetIn:
         assert result.label == labels.LLet()
         assert len(result.children) == 2
         # First child is value
-        assert result.children[0].label == labels.LConst("Coq.Init.Nat.zero")
+        assert result.children[0].label == labels.LConst("Stdlib.Init.Nat.zero")
         # Second child is body
         assert result.children[1].label == labels.LRel(0)
 
@@ -387,14 +387,14 @@ class TestProd:
     def test_prod_produces_lprod_with_two_children(self, constr, c2t, labels):
         node = constr.Prod(
             "x",
-            constr.Ind("Coq.Init.Datatypes.nat"),
-            constr.Ind("Coq.Init.Datatypes.nat"),
+            constr.Ind("Stdlib.Init.Datatypes.nat"),
+            constr.Ind("Stdlib.Init.Datatypes.nat"),
         )
         result = c2t(node)
         assert result.label == labels.LProd()
         assert len(result.children) == 2
-        assert result.children[0].label == labels.LInd("Coq.Init.Datatypes.nat")
-        assert result.children[1].label == labels.LInd("Coq.Init.Datatypes.nat")
+        assert result.children[0].label == labels.LInd("Stdlib.Init.Datatypes.nat")
+        assert result.children[1].label == labels.LInd("Stdlib.Init.Datatypes.nat")
 
     def test_prod_discards_name(self, constr, c2t, labels):
         node_a = constr.Prod("x", constr.Ind("nat"), constr.Rel(0))
@@ -461,15 +461,15 @@ class TestConstruct:
     """Construct(fqn, index) → LConstruct(fqn, index), leaf."""
 
     def test_construct_produces_lconstruct(self, constr, c2t, labels):
-        node = constr.Construct("Coq.Init.Datatypes.nat", 1)
+        node = constr.Construct("Stdlib.Init.Datatypes.nat", 1)
         result = c2t(node)
-        assert result.label == labels.LConstruct("Coq.Init.Datatypes.nat", 1)
+        assert result.label == labels.LConstruct("Stdlib.Init.Datatypes.nat", 1)
         assert result.children == []
 
     def test_construct_zero_index(self, constr, c2t, labels):
-        node = constr.Construct("Coq.Init.Datatypes.nat", 0)
+        node = constr.Construct("Stdlib.Init.Datatypes.nat", 0)
         result = c2t(node)
-        assert result.label == labels.LConstruct("Coq.Init.Datatypes.nat", 0)
+        assert result.label == labels.LConstruct("Stdlib.Init.Datatypes.nat", 0)
         assert result.children == []
 
 
@@ -523,9 +523,9 @@ class TestProj:
     """Proj(name, term) → LProj(name) with 1 child."""
 
     def test_proj_produces_lproj_with_one_child(self, constr, c2t, labels):
-        node = constr.Proj("Coq.Init.Datatypes.fst", constr.Rel(0))
+        node = constr.Proj("Stdlib.Init.Datatypes.fst", constr.Rel(0))
         result = c2t(node)
-        assert result.label == labels.LProj("Coq.Init.Datatypes.fst")
+        assert result.label == labels.LProj("Stdlib.Init.Datatypes.fst")
         assert len(result.children) == 1
         assert result.children[0].label == labels.LRel(0)
 
@@ -578,12 +578,12 @@ class TestCase:
 
     def test_case_with_two_branches(self, constr, c2t, labels):
         node = constr.Case(
-            "Coq.Init.Datatypes.nat",
+            "Stdlib.Init.Datatypes.nat",
             constr.Rel(0),
             [constr.Rel(1), constr.Rel(2)],
         )
         result = c2t(node)
-        assert result.label == labels.LCase("Coq.Init.Datatypes.nat")
+        assert result.label == labels.LCase("Stdlib.Init.Datatypes.nat")
         assert len(result.children) == 3  # 1 scrutinee + 2 branches
 
     def test_case_scrutinee_is_first_child(self, constr, c2t, labels):
@@ -598,9 +598,9 @@ class TestCase:
 
     def test_case_zero_branches(self, constr, c2t, labels):
         """Empty type like False can have 0 branches."""
-        node = constr.Case("Coq.Init.Logic.False", constr.Rel(0), [])
+        node = constr.Case("Stdlib.Init.Logic.False", constr.Rel(0), [])
         result = c2t(node)
-        assert result.label == labels.LCase("Coq.Init.Logic.False")
+        assert result.label == labels.LCase("Stdlib.Init.Logic.False")
         assert len(result.children) == 1  # scrutinee only
 
     def test_case_many_branches(self, constr, c2t, labels):
@@ -628,8 +628,8 @@ class TestCoqNormalize:
         """Prod(_, nat, nat) → 3-node tree with correct metadata."""
         node = constr.Prod(
             "_",
-            constr.Ind("Coq.Init.Datatypes.nat"),
-            constr.Ind("Coq.Init.Datatypes.nat"),
+            constr.Ind("Stdlib.Init.Datatypes.nat"),
+            constr.Ind("Stdlib.Init.Datatypes.nat"),
         )
         result = normalize(node)
         assert result.node_count == 3
@@ -649,7 +649,7 @@ class TestCoqNormalize:
     def test_currified_app_depths_and_ids(self, constr, normalize, labels):
         """App(Nat.add, [Rel(1), Rel(2)]) — spec example as full pipeline."""
         node = constr.App(
-            constr.Const("Coq.Init.Nat.add"),
+            constr.Const("Stdlib.Init.Nat.add"),
             [constr.Rel(1), constr.Rel(2)],
         )
         result = normalize(node)
@@ -707,7 +707,7 @@ class TestDeterminism:
 
     def test_same_input_same_output(self, constr, c2t, labels):
         node = constr.App(
-            constr.Const("Coq.Init.Nat.add"),
+            constr.Const("Stdlib.Init.Nat.add"),
             [constr.Rel(1), constr.Rel(2)],
         )
         result_a = c2t(node)
@@ -717,7 +717,7 @@ class TestDeterminism:
     def test_normalize_deterministic(self, constr, normalize, labels):
         node = constr.Prod(
             "x",
-            constr.Ind("Coq.Init.Datatypes.nat"),
+            constr.Ind("Stdlib.Init.Datatypes.nat"),
             constr.App(constr.Const("f"), [constr.Rel(0), constr.Rel(1)]),
         )
         result_a = normalize(node)
@@ -804,24 +804,24 @@ class TestCombinedTransforms:
     def test_case_with_complex_branches(self, constr, c2t, labels):
         """Case where scrutinee and branches are non-trivial terms."""
         scrutinee = constr.App(constr.Const("match_val"), [constr.Rel(0)])
-        branch0 = constr.Const("Coq.Init.Nat.zero")
+        branch0 = constr.Const("Stdlib.Init.Nat.zero")
         branch1 = constr.Lambda("n", constr.Ind("nat"), constr.Rel(0))
-        node = constr.Case("Coq.Init.Datatypes.nat", scrutinee, [branch0, branch1])
+        node = constr.Case("Stdlib.Init.Datatypes.nat", scrutinee, [branch0, branch1])
         result = c2t(node)
-        assert result.label == labels.LCase("Coq.Init.Datatypes.nat")
+        assert result.label == labels.LCase("Stdlib.Init.Datatypes.nat")
         assert len(result.children) == 3
         # Scrutinee is an App
         assert result.children[0].label == labels.LApp()
         # Branch 0 is a leaf
-        assert result.children[1].label == labels.LConst("Coq.Init.Nat.zero")
+        assert result.children[1].label == labels.LConst("Stdlib.Init.Nat.zero")
         # Branch 1 is LAbs
         assert result.children[2].label == labels.LAbs()
 
     def test_full_pipeline_s_s_o(self, constr, normalize, labels):
         """S (S O) — spec example: App(S, [App(S, [O])]) = 5 nodes after currification."""
-        O = constr.Construct("Coq.Init.Datatypes.nat", 0)
-        S_inner = constr.Construct("Coq.Init.Datatypes.nat", 1)
-        S_outer = constr.Construct("Coq.Init.Datatypes.nat", 1)
+        O = constr.Construct("Stdlib.Init.Datatypes.nat", 0)
+        S_inner = constr.Construct("Stdlib.Init.Datatypes.nat", 1)
+        S_outer = constr.Construct("Stdlib.Init.Datatypes.nat", 1)
         inner_app = constr.App(S_inner, [O])
         outer_app = constr.App(S_outer, [inner_app])
         result = normalize(outer_app)
@@ -829,11 +829,11 @@ class TestCombinedTransforms:
         # Structure: LApp(S, LApp(S, O))
         root = result.root
         assert root.label == labels.LApp()
-        assert root.children[0].label == labels.LConstruct("Coq.Init.Datatypes.nat", 1)
+        assert root.children[0].label == labels.LConstruct("Stdlib.Init.Datatypes.nat", 1)
         inner = root.children[1]
         assert inner.label == labels.LApp()
-        assert inner.children[0].label == labels.LConstruct("Coq.Init.Datatypes.nat", 1)
-        assert inner.children[1].label == labels.LConstruct("Coq.Init.Datatypes.nat", 0)
+        assert inner.children[0].label == labels.LConstruct("Stdlib.Init.Datatypes.nat", 1)
+        assert inner.children[1].label == labels.LConstruct("Stdlib.Init.Datatypes.nat", 0)
 
 
 # ===================================================================

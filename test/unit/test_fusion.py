@@ -116,13 +116,13 @@ class TestNodeCategory:
 
     # ConstantRef: LConst, LInd, LConstruct
     def test_lconst_is_constant_ref(self):
-        assert node_category(LConst("Coq.Init.Nat.add")) == "ConstantRef"
+        assert node_category(LConst("Stdlib.Init.Nat.add")) == "ConstantRef"
 
     def test_lind_is_constant_ref(self):
-        assert node_category(LInd("Coq.Init.Datatypes.nat")) == "ConstantRef"
+        assert node_category(LInd("Stdlib.Init.Datatypes.nat")) == "ConstantRef"
 
     def test_lconstruct_is_constant_ref(self):
-        assert node_category(LConstruct("Coq.Init.Datatypes.nat", 0)) == "ConstantRef"
+        assert node_category(LConstruct("Stdlib.Init.Datatypes.nat", 0)) == "ConstantRef"
 
     # Variable: LRel, LCseVar
     def test_lrel_is_variable(self):

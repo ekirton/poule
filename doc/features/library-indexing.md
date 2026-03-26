@@ -74,7 +74,7 @@ SerAPI (coq-serapi) provides deeper access to Coq kernel terms but is version-lo
 
 coq-lsp does not expose Constr.t kernel terms — it returns type signatures as text strings. Rather than requiring an additional heavy tool (SerAPI) solely for kernel term access, the system parses these text strings into the same ConstrNode intermediate representation.
 
-The text parser initially produces short display names (`Const("nat")`, `Const("+")`) rather than kernel-precise FQNs (`Ind("Coq.Init.Datatypes.nat")`, `Const("Coq.Init.Nat.add")`). A post-parsing symbol resolution step maps these short names to their fully qualified kernel names using coq-lsp `Locate` queries. This ensures that the symbol index uses canonical FQNs, which is essential for the Symbol Overlap retrieval channel to match user queries like `Nat.add` against the correct index entries. Names that cannot be resolved (e.g., user-defined names not in the Coq environment) are stored as-is.
+The text parser initially produces short display names (`Const("nat")`, `Const("+")`) rather than kernel-precise FQNs (`Ind("Corelib.Init.Datatypes.nat")`, `Const("Stdlib.Init.Nat.add")`). A post-parsing symbol resolution step maps these short names to their fully qualified kernel names using coq-lsp `Locate` queries. This ensures that the symbol index uses canonical FQNs, which is essential for the Symbol Overlap retrieval channel to match user queries like `Nat.add` against the correct index entries. Names that cannot be resolved (e.g., user-defined names not in the Coq environment) are stored as-is.
 
 Since both index-time and query-time parsing use the same parser and resolution pipeline, structural representations remain internally consistent.
 
@@ -162,8 +162,8 @@ Since both index-time and query-time parsing use the same parser and resolution 
 **Priority:** P0
 **Stability:** Stable
 
-- GIVEN a declaration whose type mentions `nat` (a short display name) WHEN it is indexed THEN the symbol set stores `Coq.Init.Datatypes.nat` (the fully qualified kernel name)
-- GIVEN a declaration whose type mentions infix `+` (desugared from `Nat.add`) WHEN it is indexed THEN the symbol set stores the FQN of the underlying constant (e.g., `Coq.Init.Nat.add`)
+- GIVEN a declaration whose type mentions `nat` (a short display name) WHEN it is indexed THEN the symbol set stores `Corelib.Init.Datatypes.nat` (the fully qualified kernel name)
+- GIVEN a declaration whose type mentions infix `+` (desugared from `Nat.add`) WHEN it is indexed THEN the symbol set stores the FQN of the underlying constant (e.g., `Stdlib.Init.Nat.add`)
 - GIVEN a declaration extracted via the metadata-only path (coq-lsp Search output with type signature text) WHEN it is indexed THEN its symbol set is populated by parsing the type signature, normalizing the tree, extracting constants, and resolving each to its FQN
 - GIVEN the indexing completes WHEN the `symbol_freq` table is inspected THEN it contains entries keyed by FQN, not short display names
 - GIVEN a symbol that cannot be resolved to an FQN (e.g., a user-defined name not in the environment) WHEN it is indexed THEN it is stored as-is without discarding

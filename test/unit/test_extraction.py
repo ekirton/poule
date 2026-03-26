@@ -280,10 +280,10 @@ class TestPass1SingleDeclaration:
         from Poule.extraction.pipeline import run_extraction
 
         backend = _make_mock_backend(
-            declarations=[("Coq.Init.Nat.add", "Definition", {"mock": "constr"})]
+            declarations=[("Stdlib.Init.Nat.add", "Definition", {"mock": "constr"})]
         )
         writer = _make_mock_writer()
-        writer.batch_insert.return_value = {"Coq.Init.Nat.add": 1}
+        writer.batch_insert.return_value = {"Stdlib.Init.Nat.add": 1}
 
         with (
             patch(
@@ -617,7 +617,7 @@ class TestPass2NameResolution:
     def test_coq_prefix_resolves(self):
         """Dependency name like Init.Nat.add resolves via Coq.Init.Nat.add."""
         r = self._make_result("A.lemma1", [("Init.Nat.add", "uses")])
-        name_to_id = {"A.lemma1": 1, "Coq.Init.Nat.add": 10}
+        name_to_id = {"A.lemma1": 1, "Stdlib.Init.Nat.add": 10}
 
         iw = self._make_writer_and_call([r], name_to_id)
 
@@ -631,7 +631,7 @@ class TestPass2NameResolution:
         Coq.Init.Nat.add when suffix is unambiguous."""
         r = self._make_result("A.lemma1", [("Nat.add", "uses")])
         # Only one FQN ends with .Nat.add, so suffix is unambiguous
-        name_to_id = {"A.lemma1": 1, "Coq.Init.Nat.add": 10}
+        name_to_id = {"A.lemma1": 1, "Stdlib.Init.Nat.add": 10}
 
         iw = self._make_writer_and_call([r], name_to_id)
 
@@ -646,8 +646,8 @@ class TestPass2NameResolution:
         # "add" is a suffix of both FQNs -> ambiguous -> skipped
         name_to_id = {
             "A.lemma1": 1,
-            "Coq.Init.Nat.add": 10,
-            "Coq.Init.List.add": 20,
+            "Stdlib.Init.Nat.add": 10,
+            "Stdlib.Init.List.add": 20,
         }
 
         iw = self._make_writer_and_call([r], name_to_id)
@@ -727,7 +727,7 @@ class TestPass2NameResolution:
         )
         name_to_id = {
             "A.lemma1": 1,
-            "Coq.Init.Nat.add": 10,  # FQN ending in .Nat.add
+            "Stdlib.Init.Nat.add": 10,  # FQN ending in .Nat.add
         }
 
         iw = self._make_writer_and_call([r], name_to_id)
@@ -755,7 +755,7 @@ class TestPass2NameResolution:
         )
         name_to_id = {
             "A.lemma1": 1,
-            "Coq.Init.Nat.add": 10,
+            "Stdlib.Init.Nat.add": 10,
         }
 
         iw = self._make_writer_and_call([r], name_to_id)
@@ -788,11 +788,11 @@ class TestPostProcessingSymbolFreq:
 
         mock_r1 = Mock()
         mock_r1.name = "A.decl1"
-        mock_r1.symbol_set = ["Coq.Init.Nat.add", "Coq.Init.Logic.eq"]
+        mock_r1.symbol_set = ["Stdlib.Init.Nat.add", "Stdlib.Init.Logic.eq"]
         mock_r1.dependency_names = []
         mock_r2 = Mock()
         mock_r2.name = "A.decl2"
-        mock_r2.symbol_set = ["Coq.Init.Nat.add", "Coq.Init.Datatypes.nat"]
+        mock_r2.symbol_set = ["Stdlib.Init.Nat.add", "Stdlib.Init.Datatypes.nat"]
         mock_r2.dependency_names = []
 
         with (
@@ -1608,37 +1608,37 @@ class TestFullRunIntegration:
 
         # 3 declarations: 1 lemma, 1 theorem, 1 notation (excluded)
         decls = [
-            ("Coq.Init.Nat.add_comm", "Lemma", {"mock": "constr1"}),
-            ("Coq.Init.Nat.add_assoc", "Theorem", {"mock": "constr2"}),
-            ("Coq.Init.Nat.add_notation", "Notation", {"mock": "constr3"}),
+            ("Stdlib.Init.Nat.add_comm", "Lemma", {"mock": "constr1"}),
+            ("Stdlib.Init.Nat.add_assoc", "Theorem", {"mock": "constr2"}),
+            ("Stdlib.Init.Nat.add_notation", "Notation", {"mock": "constr3"}),
         ]
         backend = _make_mock_backend(declarations=decls)
         backend.get_dependencies.side_effect = [
-            [("Coq.Init.Nat.add_assoc", "uses")],  # add_comm uses add_assoc
+            [("Stdlib.Init.Nat.add_assoc", "uses")],  # add_comm uses add_assoc
             [],  # add_assoc has no deps
         ]
 
         writer = _make_mock_writer()
         name_to_id = {
-            "Coq.Init.Nat.add_comm": 1,
-            "Coq.Init.Nat.add_assoc": 2,
+            "Stdlib.Init.Nat.add_comm": 1,
+            "Stdlib.Init.Nat.add_assoc": 2,
         }
         writer.batch_insert.return_value = name_to_id
 
         # process_declaration returns None for Notation (excluded),
         # valid results for the other two
         result_comm = Mock()
-        result_comm.name = "Coq.Init.Nat.add_comm"
+        result_comm.name = "Stdlib.Init.Nat.add_comm"
         result_comm.kind = "lemma"
-        result_comm.symbol_set = ["Coq.Init.Nat.add", "Coq.Init.Logic.eq"]
+        result_comm.symbol_set = ["Stdlib.Init.Nat.add", "Stdlib.Init.Logic.eq"]
         result_comm.dependency_names = [
-            ("Coq.Init.Nat.add_assoc", "uses")
+            ("Stdlib.Init.Nat.add_assoc", "uses")
         ]
 
         result_assoc = Mock()
-        result_assoc.name = "Coq.Init.Nat.add_assoc"
+        result_assoc.name = "Stdlib.Init.Nat.add_assoc"
         result_assoc.kind = "theorem"
-        result_assoc.symbol_set = ["Coq.Init.Nat.add"]
+        result_assoc.symbol_set = ["Stdlib.Init.Nat.add"]
         result_assoc.dependency_names = []
 
         db_path = tmp_path / "index.db"
@@ -2468,7 +2468,7 @@ class TestMetadataOnlyConstrT:
 
         backend = _make_mock_backend()
         backend.locate.side_effect = lambda name: {
-            "nat": "Coq.Init.Datatypes.nat",
+            "nat": "Stdlib.Init.Datatypes.nat",
         }.get(name)
         constr_t = {
             "name": "Nat.add",
@@ -2484,7 +2484,7 @@ class TestMetadataOnlyConstrT:
 
         assert result is not None
         assert result.tree is not None
-        assert "Coq.Init.Datatypes.nat" in result.symbol_set
+        assert "Stdlib.Init.Datatypes.nat" in result.symbol_set
         assert len(result.wl_vector) > 0
         # No normalization warning should be logged
         normalization_warnings = [
@@ -2560,7 +2560,7 @@ class TestMetadataOnlyConstrT:
         from Poule.normalization.constr_node import Const
 
         backend = _make_mock_backend()
-        constr_t = Const(fqn="Coq.Init.Nat.add")
+        constr_t = Const(fqn="Stdlib.Init.Nat.add")
 
         result = process_declaration(
             "Nat.add", "Definition", constr_t, backend, "/fake/Nat.vo",
@@ -2584,17 +2584,17 @@ class TestDeclarationDeduplication:
         """Same name from two .vo files → only one process_declaration call."""
         from Poule.extraction.pipeline import run_extraction
 
-        # Two .vo files both contain "Coq.Init.Nat.add"
+        # Two .vo files both contain "Stdlib.Init.Nat.add"
         backend = _make_mock_backend()
         backend.list_declarations.side_effect = [
-            [("Coq.Init.Nat.add", "Definition", {"mock": "constr1"})],
-            [("Coq.Init.Nat.add", "Definition", {"mock": "constr2"})],
+            [("Stdlib.Init.Nat.add", "Definition", {"mock": "constr1"})],
+            [("Stdlib.Init.Nat.add", "Definition", {"mock": "constr2"})],
         ]
         writer = _make_mock_writer()
-        writer.batch_insert.return_value = {"Coq.Init.Nat.add": 1}
+        writer.batch_insert.return_value = {"Stdlib.Init.Nat.add": 1}
 
         result_mock = Mock()
-        result_mock.name = "Coq.Init.Nat.add"
+        result_mock.name = "Stdlib.Init.Nat.add"
         result_mock.kind = "definition"
         result_mock.symbol_set = []
         result_mock.dependency_names = []
@@ -2630,23 +2630,23 @@ class TestDeclarationDeduplication:
 
         backend = _make_mock_backend()
         backend.list_declarations.side_effect = [
-            [("Coq.Init.Nat.add", "Definition", {"mock": "constr1"})],
-            [("Coq.Init.Nat.mul", "Definition", {"mock": "constr2"})],
+            [("Stdlib.Init.Nat.add", "Definition", {"mock": "constr1"})],
+            [("Stdlib.Init.Nat.mul", "Definition", {"mock": "constr2"})],
         ]
         writer = _make_mock_writer()
         writer.batch_insert.return_value = {
-            "Coq.Init.Nat.add": 1,
-            "Coq.Init.Nat.mul": 2,
+            "Stdlib.Init.Nat.add": 1,
+            "Stdlib.Init.Nat.mul": 2,
         }
 
         result_add = Mock()
-        result_add.name = "Coq.Init.Nat.add"
+        result_add.name = "Stdlib.Init.Nat.add"
         result_add.kind = "definition"
         result_add.symbol_set = []
         result_add.dependency_names = []
 
         result_mul = Mock()
-        result_mul.name = "Coq.Init.Nat.mul"
+        result_mul.name = "Stdlib.Init.Nat.mul"
         result_mul.kind = "definition"
         result_mul.symbol_set = []
         result_mul.dependency_names = []
@@ -2693,20 +2693,20 @@ class TestReExportAliasCapture:
         # list_declarations returns DIFFERENT FQNs from different .vo files
         # (this matches real behavior: FQN = canonical_module + short_name)
         backend.list_declarations.side_effect = [
-            [("Coq.Lists.ListDef.map", "Definition", {
+            [("Stdlib.Lists.ListDef.map", "Definition", {
                 "declared_library": "Stdlib.Lists.ListDef",
                 "type_signature": "forall A B, (A -> B) -> list A -> list B",
             })],
-            [("Coq.Lists.List.map", "Definition", {
+            [("Stdlib.Lists.List.map", "Definition", {
                 "declared_library": "Stdlib.Lists.ListDef",
                 "type_signature": "forall A B, (A -> B) -> list A -> list B",
             })],
         ]
         writer = _make_mock_writer()
-        writer.batch_insert.return_value = {"Coq.Lists.ListDef.map": 1}
+        writer.batch_insert.return_value = {"Stdlib.Lists.ListDef.map": 1}
 
         result_mock = Mock()
-        result_mock.name = "Coq.Lists.ListDef.map"
+        result_mock.name = "Stdlib.Lists.ListDef.map"
         result_mock.kind = "definition"
         result_mock.symbol_set = []
         result_mock.dependency_names = []
@@ -2739,8 +2739,8 @@ class TestReExportAliasCapture:
         # writer.insert_re_export_aliases should be called with the alias
         writer.insert_re_export_aliases.assert_called_once()
         aliases = writer.insert_re_export_aliases.call_args[0][0]
-        assert "Coq.Lists.List.map" in aliases
-        assert aliases["Coq.Lists.List.map"] == "Coq.Lists.ListDef.map"
+        assert "Stdlib.Lists.List.map" in aliases
+        assert aliases["Stdlib.Lists.List.map"] == "Stdlib.Lists.ListDef.map"
 
     def test_no_alias_when_same_module(self, tmp_path):
         """When declared_library matches the .vo file's canonical module,
@@ -2749,16 +2749,16 @@ class TestReExportAliasCapture:
 
         backend = _make_mock_backend()
         backend.list_declarations.side_effect = [
-            [("Coq.Init.Nat.add", "Definition", {
+            [("Stdlib.Init.Nat.add", "Definition", {
                 "declared_library": "Corelib.Init.Nat",
                 "type_signature": "nat -> nat -> nat",
             })],
         ]
         writer = _make_mock_writer()
-        writer.batch_insert.return_value = {"Coq.Init.Nat.add": 1}
+        writer.batch_insert.return_value = {"Stdlib.Init.Nat.add": 1}
 
         result_mock = Mock()
-        result_mock.name = "Coq.Init.Nat.add"
+        result_mock.name = "Stdlib.Init.Nat.add"
         result_mock.kind = "definition"
         result_mock.symbol_set = []
         result_mock.dependency_names = []
@@ -2799,14 +2799,14 @@ class TestReExportAliasCapture:
 
         backend = _make_mock_backend()
         backend.list_declarations.side_effect = [
-            [("Coq.Init.Nat.add", "Definition", {"type_signature": "nat -> nat -> nat"})],
-            [("Coq.Init.Nat2.add", "Definition", {"type_signature": "nat -> nat -> nat"})],
+            [("Stdlib.Init.Nat.add", "Definition", {"type_signature": "nat -> nat -> nat"})],
+            [("Stdlib.Init.Nat2.add", "Definition", {"type_signature": "nat -> nat -> nat"})],
         ]
         writer = _make_mock_writer()
-        writer.batch_insert.return_value = {"Coq.Init.Nat.add": 1, "Coq.Init.Nat2.add": 2}
+        writer.batch_insert.return_value = {"Stdlib.Init.Nat.add": 1, "Stdlib.Init.Nat2.add": 2}
 
         result_mock = Mock()
-        result_mock.name = "Coq.Init.Nat.add"
+        result_mock.name = "Stdlib.Init.Nat.add"
         result_mock.kind = "definition"
         result_mock.symbol_set = []
         result_mock.dependency_names = []
@@ -2856,12 +2856,12 @@ class TestNormalizeDeclaredLibrary:
     def test_stdlib_prefix(self):
         from Poule.extraction.pipeline import _normalize_declared_library
 
-        assert _normalize_declared_library("Stdlib.Numbers.NatInt.NZAdd") == "Coq.Numbers.NatInt.NZAdd"
+        assert _normalize_declared_library("Stdlib.Numbers.NatInt.NZAdd") == "Stdlib.Numbers.NatInt.NZAdd"
 
     def test_corelib_prefix(self):
         from Poule.extraction.pipeline import _normalize_declared_library
 
-        assert _normalize_declared_library("Corelib.Init.Nat") == "Coq.Init.Nat"
+        assert _normalize_declared_library("Corelib.Init.Nat") == "Stdlib.Init.Nat"
 
     def test_non_stdlib_unchanged(self):
         from Poule.extraction.pipeline import _normalize_declared_library
@@ -2871,12 +2871,12 @@ class TestNormalizeDeclaredLibrary:
     def test_bare_stdlib(self):
         from Poule.extraction.pipeline import _normalize_declared_library
 
-        assert _normalize_declared_library("Stdlib") == "Coq"
+        assert _normalize_declared_library("Stdlib") == "Stdlib"
 
     def test_bare_corelib(self):
         from Poule.extraction.pipeline import _normalize_declared_library
 
-        assert _normalize_declared_library("Corelib") == "Coq"
+        assert _normalize_declared_library("Corelib") == "Stdlib"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2892,15 +2892,15 @@ class TestVoToLogicalPath:
     user-contrib/, theories/, and version-specific prefixes like Stdlib/).
     """
 
-    def test_stdlib_rocq9_produces_coq_prefix(self):
-        """user-contrib/Stdlib/Arith/PeanoNat.vo → Coq.Arith.PeanoNat (canonical)"""
+    def test_stdlib_rocq9_produces_stdlib_prefix(self):
+        """user-contrib/Stdlib/Arith/PeanoNat.vo → Stdlib.Arith.PeanoNat (canonical)"""
         from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
 
         path = Path("/opt/coq/user-contrib/Stdlib/Arith/PeanoNat.vo")
-        # _vo_to_logical_path returns the import path (no Coq. prefix)
+        # _vo_to_logical_path returns the import path (no Stdlib prefix)
         assert CoqLspBackend._vo_to_logical_path(path) == "Arith.PeanoNat"
-        # _vo_to_canonical_module returns the canonical name (with Coq. prefix)
-        assert CoqLspBackend._vo_to_canonical_module(path) == "Coq.Arith.PeanoNat"
+        # _vo_to_canonical_module returns the canonical name (with Stdlib prefix)
+        assert CoqLspBackend._vo_to_canonical_module(path) == "Stdlib.Arith.PeanoNat"
 
     def test_mathcomp_user_contrib(self):
         """user-contrib/mathcomp/ssreflect/ssrbool.vo → mathcomp.ssreflect.ssrbool"""
@@ -2917,14 +2917,14 @@ class TestVoToLogicalPath:
         assert CoqLspBackend._vo_to_logical_path(path) == "Init.Nat"
 
     def test_stdlib_nested_module(self):
-        """user-contrib/Stdlib/Init/Nat.vo → Coq.Init.Nat (canonical)"""
+        """user-contrib/Stdlib/Init/Nat.vo → Stdlib.Init.Nat (canonical)"""
         from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
 
         path = Path("/opt/coq/user-contrib/Stdlib/Init/Nat.vo")
         # _vo_to_logical_path returns import path (stripped Stdlib prefix)
         assert CoqLspBackend._vo_to_logical_path(path) == "Init.Nat"
         # _vo_to_canonical_module returns canonical name
-        assert CoqLspBackend._vo_to_canonical_module(path) == "Coq.Init.Nat"
+        assert CoqLspBackend._vo_to_canonical_module(path) == "Stdlib.Init.Nat"
 
 
 class TestFQNDerivationInListDeclarations:
@@ -2956,7 +2956,7 @@ class TestFQNDerivationInListDeclarations:
 
         assert len(decls) == 1
         name, _kind, _constr_t = decls[0]
-        assert name == "Coq.Arith.PeanoNat.Nat.add_comm", (
+        assert name == "Stdlib.Arith.PeanoNat.Nat.add_comm", (
             f"Expected FQN, got short name: {name}"
         )
 
@@ -3005,17 +3005,17 @@ class TestModulePathIsLogicalInPipeline:
 
         backend = _make_mock_backend()
         backend.list_declarations.return_value = [
-            ("Coq.Init.Nat.add", "Definition", {"type_signature": "nat -> nat -> nat", "source": "coq-lsp"}),
+            ("Stdlib.Init.Nat.add", "Definition", {"type_signature": "nat -> nat -> nat", "source": "coq-lsp"}),
         ]
 
         result_mock = Mock()
-        result_mock.name = "Coq.Init.Nat.add"
+        result_mock.name = "Stdlib.Init.Nat.add"
         result_mock.kind = "definition"
         result_mock.symbol_set = []
         result_mock.dependency_names = []
 
         writer = _make_mock_writer()
-        writer.batch_insert.return_value = {"Coq.Init.Nat.add": 1}
+        writer.batch_insert.return_value = {"Stdlib.Init.Nat.add": 1}
 
         db_path = tmp_path / "index.db"
 
@@ -3080,7 +3080,7 @@ class TestDependencyRelationValues:
             [{"text": "  Coq.Init.Nat.add : nat -> nat -> nat", "level": 3}],
         ))
 
-        deps = backend.get_dependencies("Coq.Arith.PeanoNat.Nat.add_comm")
+        deps = backend.get_dependencies("Stdlib.Arith.PeanoNat.Nat.add_comm")
         assert len(deps) > 0
         for _target, relation in deps:
             assert relation in _VALID_RELATIONS, (
@@ -3108,9 +3108,9 @@ class TestDependencyRelationValues:
 
         backend._run_vernac_batch = Mock(side_effect=fake_batch)
 
-        data = backend.query_declaration_data(["Coq.Arith.PeanoNat.Nat.add_comm"])
-        assert "Coq.Arith.PeanoNat.Nat.add_comm" in data
-        _statement, deps = data["Coq.Arith.PeanoNat.Nat.add_comm"]
+        data = backend.query_declaration_data(["Stdlib.Arith.PeanoNat.Nat.add_comm"])
+        assert "Stdlib.Arith.PeanoNat.Nat.add_comm" in data
+        _statement, deps = data["Stdlib.Arith.PeanoNat.Nat.add_comm"]
         assert len(deps) > 0
         for _target, relation in deps:
             assert relation in _VALID_RELATIONS, (
@@ -3131,11 +3131,11 @@ class TestResolveSymbols:
         from Poule.extraction.pipeline import resolve_symbols
 
         backend = _make_mock_backend()
-        backend.locate.return_value = "Coq.Init.Datatypes.nat"
+        backend.locate.return_value = "Stdlib.Init.Datatypes.nat"
 
         resolved = resolve_symbols({"nat"}, backend)
 
-        assert "Coq.Init.Datatypes.nat" in resolved
+        assert "Stdlib.Init.Datatypes.nat" in resolved
 
     def test_infix_operators_resolved(self):
         """Infix operators like '+' are resolved via Locate (spec §4.4.1)."""
@@ -3143,14 +3143,14 @@ class TestResolveSymbols:
 
         backend = _make_mock_backend()
         backend.locate.side_effect = lambda name: {
-            "+": "Coq.Init.Nat.add",
-            "nat": "Coq.Init.Datatypes.nat",
+            "+": "Stdlib.Init.Nat.add",
+            "nat": "Stdlib.Init.Datatypes.nat",
         }.get(name)
 
         resolved = resolve_symbols({"+", "nat"}, backend)
 
-        assert "Coq.Init.Nat.add" in resolved
-        assert "Coq.Init.Datatypes.nat" in resolved
+        assert "Stdlib.Init.Nat.add" in resolved
+        assert "Stdlib.Init.Datatypes.nat" in resolved
 
     def test_unresolvable_names_kept_as_is(self):
         """Names that cannot be resolved are stored as-is (spec §4.4.1 fallback)."""
@@ -3189,14 +3189,14 @@ class TestResolveSymbols:
 
         backend = _make_mock_backend()
         backend.locate.return_value = [
-            "Coq.Init.Nat.add",
-            "Coq.ZArith.BinInt.Z.add",
+            "Stdlib.Init.Nat.add",
+            "Stdlib.ZArith.BinInt.Z.add",
         ]
 
         resolved = resolve_symbols({"+"}, backend)
 
-        assert "Coq.Init.Nat.add" in resolved
-        assert "Coq.ZArith.BinInt.Z.add" in resolved
+        assert "Stdlib.Init.Nat.add" in resolved
+        assert "Stdlib.ZArith.BinInt.Z.add" in resolved
 
     def test_empty_input_returns_empty(self):
         """Empty symbol set produces empty result."""
@@ -3518,7 +3518,7 @@ class TestResolveCacheSharedAcrossRun:
         from Poule.extraction.pipeline import resolve_symbols
 
         backend = _make_mock_backend()
-        backend.locate.return_value = "Coq.Init.Datatypes.nat"
+        backend.locate.return_value = "Stdlib.Init.Datatypes.nat"
 
         shared_cache: dict = {}
 
@@ -3549,7 +3549,7 @@ class TestSymbolFreqUsesFQNs:
 
         mock_r1 = Mock()
         mock_r1.name = "A.decl1"
-        mock_r1.symbol_set = ["Coq.Init.Datatypes.nat"]  # FQN
+        mock_r1.symbol_set = ["Stdlib.Init.Datatypes.nat"]  # FQN
         mock_r1.dependency_names = []
 
         with (
@@ -3575,7 +3575,7 @@ class TestSymbolFreqUsesFQNs:
         writer.insert_symbol_freq.assert_called_once()
         freq_dict = writer.insert_symbol_freq.call_args[0][0]
         # The key should be a FQN, not a short name
-        assert "Coq.Init.Datatypes.nat" in freq_dict
+        assert "Stdlib.Init.Datatypes.nat" in freq_dict
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -3594,7 +3594,7 @@ class TestDetectProofBodySignal1Opacity:
         from Poule.extraction.pipeline import detect_proof_body
 
         result = detect_proof_body(
-            "Coq.Arith.PeanoNat.Nat.add_comm", "definition",
+            "Stdlib.Arith.PeanoNat.Nat.add_comm", "definition",
             opacity="opaque",
         )
         assert result == 1
@@ -3607,7 +3607,7 @@ class TestDetectProofBodySignal1Opacity:
         from Poule.extraction.pipeline import detect_proof_body
 
         result = detect_proof_body(
-            "Coq.Arith.PeanoNat.Nat.add_0_l", "definition",
+            "Stdlib.Arith.PeanoNat.Nat.add_0_l", "definition",
             opacity="opaque", declared_library="Stdlib.Numbers.NatInt.NZAdd",
             declared_line=59,
         )
@@ -3957,7 +3957,7 @@ class TestDetectProofBodyKindFilter:
         from Poule.extraction.pipeline import detect_proof_body
 
         result = detect_proof_body(
-            "Coq.Init.Datatypes.nat", "inductive", opacity="opaque",
+            "Stdlib.Init.Datatypes.nat", "inductive", opacity="opaque",
         )
         assert result == 0
 
@@ -3965,7 +3965,7 @@ class TestDetectProofBodyKindFilter:
         from Poule.extraction.pipeline import detect_proof_body
 
         result = detect_proof_body(
-            "Coq.Init.Datatypes.O", "constructor", opacity="opaque",
+            "Stdlib.Init.Datatypes.O", "constructor", opacity="opaque",
         )
         assert result == 0
 
@@ -3973,7 +3973,7 @@ class TestDetectProofBodyKindFilter:
         from Poule.extraction.pipeline import detect_proof_body
 
         result = detect_proof_body(
-            "Coq.Init.Logic.functional_extensionality", "axiom",
+            "Stdlib.Init.Logic.functional_extensionality", "axiom",
             opacity=None,
         )
         assert result == 0
@@ -4005,18 +4005,18 @@ class TestDanglingReExportAliasValidation:
         # PeanoNat.vo yields le_refl declared in NZOrder
         backend.list_declarations.side_effect = [
             [],  # NZOrder.vo — empty (functor body)
-            [("Coq.Arith.PeanoNat.Nat.le_refl", "Definition", {
+            [("Stdlib.Arith.PeanoNat.Nat.le_refl", "Definition", {
                 "declared_library": "Stdlib.Numbers.NatInt.NZOrder",
                 "type_signature": "forall n : nat, n <= n",
             })],
         ]
         writer = _make_mock_writer()
         writer.batch_insert.return_value = {
-            "Coq.Arith.PeanoNat.Nat.le_refl": 1,
+            "Stdlib.Arith.PeanoNat.Nat.le_refl": 1,
         }
 
         result_mock = Mock()
-        result_mock.name = "Coq.Arith.PeanoNat.Nat.le_refl"
+        result_mock.name = "Stdlib.Arith.PeanoNat.Nat.le_refl"
         result_mock.kind = "definition"
         result_mock.symbol_set = []
         result_mock.dependency_names = []
@@ -4053,7 +4053,7 @@ class TestDanglingReExportAliasValidation:
         # The alias should NOT be stored (canonical target doesn't exist)
         writer.insert_re_export_aliases.assert_called_once()
         aliases = writer.insert_re_export_aliases.call_args[0][0]
-        assert "Coq.Arith.PeanoNat.Nat.le_refl" not in aliases
+        assert "Stdlib.Arith.PeanoNat.Nat.le_refl" not in aliases
 
     def test_valid_alias_still_works(self, tmp_path):
         """When canonical_fqn exists, the alias is kept and the
@@ -4062,20 +4062,20 @@ class TestDanglingReExportAliasValidation:
 
         backend = _make_mock_backend()
         backend.list_declarations.side_effect = [
-            [("Coq.Lists.ListDef.map", "Definition", {
+            [("Stdlib.Lists.ListDef.map", "Definition", {
                 "declared_library": "Stdlib.Lists.ListDef",
                 "type_signature": "forall A B, (A -> B) -> list A -> list B",
             })],
-            [("Coq.Lists.List.map", "Definition", {
+            [("Stdlib.Lists.List.map", "Definition", {
                 "declared_library": "Stdlib.Lists.ListDef",
                 "type_signature": "forall A B, (A -> B) -> list A -> list B",
             })],
         ]
         writer = _make_mock_writer()
-        writer.batch_insert.return_value = {"Coq.Lists.ListDef.map": 1}
+        writer.batch_insert.return_value = {"Stdlib.Lists.ListDef.map": 1}
 
         result_mock = Mock()
-        result_mock.name = "Coq.Lists.ListDef.map"
+        result_mock.name = "Stdlib.Lists.ListDef.map"
         result_mock.kind = "definition"
         result_mock.symbol_set = []
         result_mock.dependency_names = []
@@ -4112,5 +4112,5 @@ class TestDanglingReExportAliasValidation:
         # The alias should be stored
         writer.insert_re_export_aliases.assert_called_once()
         aliases = writer.insert_re_export_aliases.call_args[0][0]
-        assert "Coq.Lists.List.map" in aliases
-        assert aliases["Coq.Lists.List.map"] == "Coq.Lists.ListDef.map"
+        assert "Stdlib.Lists.List.map" in aliases
+        assert aliases["Stdlib.Lists.List.map"] == "Stdlib.Lists.ListDef.map"

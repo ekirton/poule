@@ -134,8 +134,8 @@ def _build_resolver(conn: sqlite3.Connection):
         dst_id = name_to_id.get(target_name)
         if dst_id is not None:
             return dst_id
-        coq_name = "Coq." + target_name
-        dst_id = name_to_id.get(coq_name)
+        stdlib_name = "Stdlib." + target_name
+        dst_id = name_to_id.get(stdlib_name)
         if dst_id is not None:
             return dst_id
         fqn = suffix_to_fqn.get(target_name)

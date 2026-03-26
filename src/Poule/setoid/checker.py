@@ -10,12 +10,12 @@ from .types import ExistingInstance, InstanceCheckResult
 
 # Static lookup table for standard library Proper instances (§4.3.3)
 STDLIB_PROPER_INSTANCES: dict[str, tuple[str, str]] = {
-    "and": ("iff ==> iff ==> iff", "Coq.Classes.Morphisms_Prop"),
-    "or": ("iff ==> iff ==> iff", "Coq.Classes.Morphisms_Prop"),
-    "not": ("iff ==> iff", "Coq.Classes.Morphisms_Prop"),
-    "impl": ("iff ==> iff ==> iff", "Coq.Classes.Morphisms_Prop"),
-    "all": ("pointwise_relation A iff ==> iff", "Coq.Classes.Morphisms_Prop"),
-    "ex": ("pointwise_relation A iff ==> iff", "Coq.Classes.Morphisms_Prop"),
+    "and": ("iff ==> iff ==> iff", "Stdlib.Classes.Morphisms_Prop"),
+    "or": ("iff ==> iff ==> iff", "Stdlib.Classes.Morphisms_Prop"),
+    "not": ("iff ==> iff", "Stdlib.Classes.Morphisms_Prop"),
+    "impl": ("iff ==> iff ==> iff", "Stdlib.Classes.Morphisms_Prop"),
+    "all": ("pointwise_relation A iff ==> iff", "Stdlib.Classes.Morphisms_Prop"),
+    "ex": ("pointwise_relation A iff ==> iff", "Stdlib.Classes.Morphisms_Prop"),
 }
 
 

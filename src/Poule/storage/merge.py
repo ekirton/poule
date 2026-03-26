@@ -157,12 +157,12 @@ def merge_indexes(sources: list[tuple[str, Path]], dest: Path) -> dict:
                 suffix_to_fqn[suffix] = fqn
 
     def _resolve(sym: str) -> int | None:
-        """Multi-strategy name resolution: exact, Coq. prefix, suffix."""
+        """Multi-strategy name resolution: exact, Stdlib. prefix, suffix."""
         dst_id = global_name_to_id.get(sym)
         if dst_id is not None:
             return dst_id
-        coq_name = "Coq." + sym
-        dst_id = global_name_to_id.get(coq_name)
+        stdlib_name = "Stdlib." + sym
+        dst_id = global_name_to_id.get(stdlib_name)
         if dst_id is not None:
             return dst_id
         resolved_fqn = suffix_to_fqn.get(sym)

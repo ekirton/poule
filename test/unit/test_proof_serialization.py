@@ -490,9 +490,9 @@ class TestPremiseSerialization:
         (
             _, _, _, _, Premise, *_,
         ) = _import_types()
-        p = Premise(name="Coq.Arith.PeanoNat.Nat.add_comm", kind="lemma")
+        p = Premise(name="Stdlib.Arith.PeanoNat.Nat.add_comm", kind="lemma")
         result = serialize_premise(p)
-        assert result == '{"name":"Coq.Arith.PeanoNat.Nat.add_comm","kind":"lemma"}'
+        assert result == '{"name":"Stdlib.Arith.PeanoNat.Nat.add_comm","kind":"lemma"}'
 
     def test_field_order_is_name_kind(self):
         (
@@ -548,12 +548,12 @@ class TestPremiseAnnotationSerialization:
         ann = PremiseAnnotation(
             step_index=3,
             tactic="rewrite Nat.add_comm.",
-            premises=[Premise(name="Coq.Arith.PeanoNat.Nat.add_comm", kind="lemma")],
+            premises=[Premise(name="Stdlib.Arith.PeanoNat.Nat.add_comm", kind="lemma")],
         )
         result = serialize_premise_annotation(ann)
         expected = (
             '{"step_index":3,"tactic":"rewrite Nat.add_comm.",'
-            '"premises":[{"name":"Coq.Arith.PeanoNat.Nat.add_comm","kind":"lemma"}]}'
+            '"premises":[{"name":"Stdlib.Arith.PeanoNat.Nat.add_comm","kind":"lemma"}]}'
         )
         assert result == expected
 

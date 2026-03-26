@@ -211,7 +211,7 @@ class TestPairExtraction:
         Pair for step 2: (serialize(step[1].goals), step[2].premises) = ("n + 0 = n", [Nat.add_comm])
         """
         record = _make_simple_proof(
-            "Coq.Init.Nat",
+            "Stdlib.Init.Nat",
             "forall n : nat, n + 0 = n",
             [
                 ("intros n.", "n + 0 = n", [("Nat.add_0_r", "lemma")]),
@@ -223,8 +223,8 @@ class TestPairExtraction:
 
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, [
-            (1, "Nat.add_0_r", "stmt1", "Coq.Init.Nat"),
-            (2, "Nat.add_comm", "stmt2", "Coq.Init.Nat"),
+            (1, "Nat.add_0_r", "stmt1", "Stdlib.Init.Nat"),
+            (2, "Nat.add_comm", "stmt2", "Stdlib.Init.Nat"),
         ])
 
         dataset = TrainingDataLoader.load([jsonl_path], db_path)
@@ -245,7 +245,7 @@ class TestPairExtraction:
     def test_skips_steps_with_empty_premises(self, tmp_path):
         """spec §4.1: Steps with empty premise lists shall be skipped."""
         record = _make_simple_proof(
-            "Coq.Init.Nat",
+            "Stdlib.Init.Nat",
             "forall n : nat, n = n",
             [
                 ("intros n.", "n = n", []),  # reflexivity — no premises
@@ -265,7 +265,7 @@ class TestPairExtraction:
     def test_step_0_is_never_used_as_source_of_premises(self, tmp_path):
         """spec §4.1: Step 0 has no tactic and no premises — only used as state source."""
         record = _make_extraction_record(
-            "Coq.Init.Nat",
+            "Stdlib.Init.Nat",
             [
                 _make_step(0, None, [_make_goal("initial goal")]),
                 _make_step(1, "apply P.", [_make_goal("subgoal")],
@@ -325,7 +325,7 @@ class TestPairExtraction:
             _make_step(4, "t4.", [_make_goal("g4")], [_make_premise("P4", "definition")]),
             _make_step(5, "t5.", [_make_goal("g5")], []),  # empty
         ]
-        record = _make_extraction_record("Coq.Init.Nat", steps)
+        record = _make_extraction_record("Stdlib.Init.Nat", steps)
         jsonl_path = tmp_path / "data.jsonl"
         _write_jsonl(jsonl_path, [record])
 
@@ -350,7 +350,7 @@ class TestHypothesisFiltering:
     def test_filters_out_hypothesis_kind_premises(self, tmp_path):
         """spec §4.1: Local hypotheses are excluded from premises_used."""
         record = _make_simple_proof(
-            "Coq.Init.Nat",
+            "Stdlib.Init.Nat",
             "forall n : nat, n + 0 = n",
             [
                 ("rewrite H.", "subgoal", [
@@ -364,7 +364,7 @@ class TestHypothesisFiltering:
 
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, [
-            (1, "Nat.add_comm", "stmt", "Coq.Init.Nat"),
+            (1, "Nat.add_comm", "stmt", "Stdlib.Init.Nat"),
         ])
 
         dataset = TrainingDataLoader.load([jsonl_path], db_path)
@@ -377,7 +377,7 @@ class TestHypothesisFiltering:
     def test_skips_steps_where_all_premises_are_hypotheses(self, tmp_path):
         """spec §4.1 GWT: Step with only hypothesis premises is skipped."""
         record = _make_simple_proof(
-            "Coq.Init.Nat",
+            "Stdlib.Init.Nat",
             "forall n : nat, n = n",
             [
                 ("exact H.", "done", [
@@ -399,7 +399,7 @@ class TestHypothesisFiltering:
     def test_keeps_non_hypothesis_premise_kinds(self, tmp_path):
         """Premises of kind lemma, definition, constructor are kept."""
         record = _make_simple_proof(
-            "Coq.Init.Nat",
+            "Stdlib.Init.Nat",
             "goal",
             [
                 ("t1.", "g1", [("L", "lemma"), ("D", "definition"), ("C", "constructor")]),
@@ -1088,7 +1088,7 @@ class TestVocabularyBuilderSpecialTokens:
     def test_special_tokens_at_fixed_ids(self, tmp_path):
         """spec §4.0: Special tokens are always at IDs 0–4."""
         db_path = tmp_path / "index.db"
-        _make_minimal_index_db(db_path, [(1, "Nat.add", "stmt", "Coq.Init.Nat")])
+        _make_minimal_index_db(db_path, [(1, "Nat.add", "stmt", "Stdlib.Init.Nat")])
         jsonl_path = tmp_path / "data.jsonl"
         _write_jsonl(jsonl_path, [])
         output_path = tmp_path / "vocab.json"
@@ -1232,8 +1232,8 @@ class TestVocabularyBuilderIndexExtraction:
     def test_all_declaration_names_in_vocabulary(self, tmp_path):
         """spec §4.0: Every declaration name in the index appears in the vocabulary."""
         declarations = [
-            (1, "Nat.add_comm", "stmt1", "Coq.Init.Nat"),
-            (2, "List.forall2_cons", "stmt2", "Coq.Lists.List"),
+            (1, "Nat.add_comm", "stmt1", "Stdlib.Init.Nat"),
+            (2, "List.forall2_cons", "stmt2", "Stdlib.Lists.List"),
             (3, "ssralg.GRing.mul", "stmt3", "mathcomp.algebra.ssralg"),
         ]
         db_path = tmp_path / "index.db"
@@ -1251,7 +1251,7 @@ class TestVocabularyBuilderIndexExtraction:
     def test_declaration_ids_after_fixed_tokens(self, tmp_path):
         """spec §4.0: Declaration names get IDs after all fixed token sets."""
         db_path = tmp_path / "index.db"
-        _make_minimal_index_db(db_path, [(1, "Nat.add", "stmt", "Coq.Init.Nat")])
+        _make_minimal_index_db(db_path, [(1, "Nat.add", "stmt", "Stdlib.Init.Nat")])
         jsonl_path = tmp_path / "data.jsonl"
         _write_jsonl(jsonl_path, [])
         output_path = tmp_path / "vocab.json"
@@ -1269,9 +1269,9 @@ class TestVocabularyBuilderIndexExtraction:
     def test_declarations_sorted_lexicographically(self, tmp_path):
         """spec §4.0: Declaration names are sorted lexicographically."""
         declarations = [
-            (1, "Z.add", "stmt1", "Coq.ZArith"),
-            (2, "A.foo", "stmt2", "Coq.Init"),
-            (3, "M.bar", "stmt3", "Coq.Lists"),
+            (1, "Z.add", "stmt1", "Stdlib.ZArith"),
+            (2, "A.foo", "stmt2", "Stdlib.Init"),
+            (3, "M.bar", "stmt3", "Stdlib.Lists"),
         ]
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, declarations)
@@ -1291,10 +1291,10 @@ class TestVocabularyBuilderTrainingDataExtraction:
     def test_hypothesis_variable_names_added(self, tmp_path):
         """spec §4.0: Hypothesis variable names from proof states are included."""
         db_path = tmp_path / "index.db"
-        _make_minimal_index_db(db_path, [(1, "Nat.add", "stmt", "Coq.Init.Nat")])
+        _make_minimal_index_db(db_path, [(1, "Nat.add", "stmt", "Stdlib.Init.Nat")])
 
         record = _make_simple_proof(
-            "Coq.Init.Nat",
+            "Stdlib.Init.Nat",
             "forall n : nat, n + 0 = n",
             [
                 ("intros n.", "n + 0 = n", [("Nat.add", "lemma")]),
@@ -1318,11 +1318,11 @@ class TestVocabularyBuilderTrainingDataExtraction:
     def test_training_data_tokens_no_duplicates(self, tmp_path):
         """spec §4.0: Tokens from training data already in vocab are not duplicated."""
         db_path = tmp_path / "index.db"
-        _make_minimal_index_db(db_path, [(1, "nat", "stmt", "Coq.Init")])
+        _make_minimal_index_db(db_path, [(1, "nat", "stmt", "Stdlib.Init")])
 
         # "nat" appears both in the index and in proof state text
         record = _make_simple_proof(
-            "Coq.Init.Nat",
+            "Stdlib.Init.Nat",
             "forall n : nat, n = n",
             [
                 ("reflexivity.", "", [("nat", "definition")]),
@@ -1475,14 +1475,14 @@ class TestVocabularyBuilderReport:
     def test_report_fields(self, tmp_path):
         """spec §4.0: build returns a VocabularyReport with correct counts."""
         declarations = [
-            (1, "Nat.add", "s1", "Coq.Init.Nat"),
-            (2, "List.map", "s2", "Coq.Lists.List"),
+            (1, "Nat.add", "s1", "Stdlib.Init.Nat"),
+            (2, "List.map", "s2", "Stdlib.Lists.List"),
         ]
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, declarations)
 
         record = _make_simple_proof(
-            "Coq.Init.Nat",
+            "Stdlib.Init.Nat",
             "forall n : nat, True",
             [("auto.", "", [("Nat.add", "lemma")])],
         )
@@ -1762,8 +1762,8 @@ class TestCoqTokenizerIntegration:
         """Vocabulary built by VocabularyBuilder can be loaded by CoqTokenizer."""
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, [
-            (1, "Nat.add", "stmt1", "Coq.Init.Nat"),
-            (2, "nat", "stmt2", "Coq.Init.Datatypes"),
+            (1, "Nat.add", "stmt1", "Stdlib.Init.Nat"),
+            (2, "nat", "stmt2", "Stdlib.Init.Datatypes"),
         ])
         jsonl_path = tmp_path / "data.jsonl"
         _write_jsonl(jsonl_path, [])

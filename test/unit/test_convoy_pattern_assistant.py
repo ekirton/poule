@@ -875,7 +875,7 @@ class TestBoilerplateGeneration:
         all_techniques = [result.recommendation.primary] + result.recommendation.alternatives
         dd = [t for t in all_techniques if t.name == "dependent_destruction"]
         assert len(dd) >= 1
-        assert "JMeq_eq" in dd[0].axioms_introduced or "Coq.Logic.JMeq.JMeq_eq" in dd[0].axioms_introduced
+        assert "JMeq_eq" in dd[0].axioms_introduced or "Stdlib.Logic.JMeq.JMeq_eq" in dd[0].axioms_introduced
 
     @pytest.mark.asyncio
     async def test_revert_destruct_includes_hypothesis_names(self):
@@ -976,10 +976,10 @@ class TestDataModel:
         t = Technique(
             name="dependent_destruction",
             description="desc",
-            axioms_introduced=["Coq.Logic.JMeq.JMeq_eq"],
+            axioms_introduced=["Stdlib.Logic.JMeq.JMeq_eq"],
             requires_plugin=None,
         )
-        assert "Coq.Logic.JMeq.JMeq_eq" in t.axioms_introduced
+        assert "Stdlib.Logic.JMeq.JMeq_eq" in t.axioms_introduced
 
     def test_generated_code_fields(self):
         """GeneratedCode has technique, imports, setup, code, validation_result."""

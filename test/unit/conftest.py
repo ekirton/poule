@@ -72,7 +72,7 @@ def sample_app_tree():
     inner = TreeNode(
         label=LApp(),
         children=[
-            TreeNode(label=LConst("Coq.Init.Nat.add"), children=[]),
+            TreeNode(label=LConst("Stdlib.Init.Nat.add"), children=[]),
             TreeNode(label=LRel(1), children=[]),
         ],
     )

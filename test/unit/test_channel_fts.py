@@ -25,14 +25,14 @@ class TestFtsQueryQualifiedName:
     """Rule 1: query contains '.' -> split on '.', join with AND."""
 
     def test_simple_qualified_name(self):
-        result = fts_query("Coq.Arith.PeanoNat")
-        assert result == "Coq AND Arith AND PeanoNat"
+        result = fts_query("Stdlib.Arith.PeanoNat")
+        assert result == "Stdlib AND Arith AND PeanoNat"
 
     def test_long_qualified_name(self):
-        result = fts_query("Coq.Arith.PeanoNat.Nat.add")
+        result = fts_query("Stdlib.Arith.PeanoNat.Nat.add")
         terms = result.split(" AND ")
         assert len(terms) == 5
-        assert terms == ["Coq", "Arith", "PeanoNat", "Nat", "add"]
+        assert terms == ["Stdlib", "Arith", "PeanoNat", "Nat", "add"]
 
 
 class TestFtsQueryIdentifier:
@@ -68,11 +68,11 @@ class TestFtsQueryClassificationPriority:
     """Rules are evaluated in priority order; first match wins."""
 
     def test_dot_beats_underscore(self):
-        """'Coq.nat_add' contains both '.' and '_'; Rule 1 wins."""
-        result = fts_query("Coq.nat_add")
-        # Rule 1: split on '.', producing "Coq" and "nat_add", joined with AND.
+        """'Stdlib.nat_add' contains both '.' and '_'; Rule 1 wins."""
+        result = fts_query("Stdlib.nat_add")
+        # Rule 1: split on '.', producing "Stdlib" and "nat_add", joined with AND.
         terms = result.split(" AND ")
-        assert terms[0] == "Coq"
+        assert terms[0] == "Stdlib"
         assert "nat_add" in terms[1]  # kept as single token (not split on _)
         assert "OR" not in result
 
@@ -109,12 +109,12 @@ class TestFtsQuerySpecialCharEscaping:
 
     def test_asterisk_quoted(self):
         # A qualified-name token containing '*' must be double-quoted.
-        result = fts_query("Coq.add*helper")
+        result = fts_query("Stdlib.add*helper")
         # The token "add*helper" should appear wrapped in double quotes.
         assert '"add*helper"' in result
 
     def test_parenthesis_quoted(self):
-        result = fts_query("Coq.foo(bar)")
+        result = fts_query("Stdlib.foo(bar)")
         assert '"foo(bar)"' in result
 
     @pytest.mark.parametrize(

@@ -456,7 +456,7 @@ class TestAuditAssumptions:
 
 class TestAuditModule:
     def test_valid_call_returns_success(self, ctx):
-        mock_result = {"module": "Coq.Arith", "results": []}
+        mock_result = {"module": "Stdlib.Arith", "results": []}
         with patch(
             "Poule.auditing.engine.audit_module",
             new_callable=AsyncMock,
@@ -465,11 +465,11 @@ class TestAuditModule:
             result = _dispatch_and_await(
                 ctx,
                 "audit_module",
-                {"module": "Coq.Arith", "session_id": "s1", "flag_categories": []},
+                {"module": "Stdlib.Arith", "session_id": "s1", "flag_categories": []},
             )
         assert result.get("isError") is not True
         parsed = _parse_response(result)
-        assert parsed["module"] == "Coq.Arith"
+        assert parsed["module"] == "Stdlib.Arith"
 
     def test_empty_module_name_returns_error(self, ctx):
         result = _dispatch_and_await(
@@ -483,12 +483,12 @@ class TestAuditModule:
         result = _dispatch_and_await(
             ctx,
             "audit_module",
-            {"module": "Coq.Arith", "session_id": "", "flag_categories": []},
+            {"module": "Stdlib.Arith", "session_id": "", "flag_categories": []},
         )
         assert result.get("isError") is True
 
     def test_with_flag_categories(self, ctx):
-        mock_result = {"module": "Coq.Arith", "results": []}
+        mock_result = {"module": "Stdlib.Arith", "results": []}
         with patch(
             "Poule.auditing.engine.audit_module",
             new_callable=AsyncMock,
@@ -498,7 +498,7 @@ class TestAuditModule:
                 ctx,
                 "audit_module",
                 {
-                    "module": "Coq.Arith",
+                    "module": "Stdlib.Arith",
                     "session_id": "s1",
                     "flag_categories": ["classical"],
                 },
@@ -1733,10 +1733,10 @@ class TestSparseResultHint:
 # ---------------------------------------------------------------------------
 
 class TestNameAliasingImpactAnalysis:
-    """Spec §4.5: MCP handler applies bidirectional Coq.*/Corelib.* aliasing."""
+    """Spec §4.5: MCP handler applies bidirectional Coq.*/Stdlib.* aliasing."""
 
-    def test_coq_prefix_aliased_to_corelib(self, ctx):
-        """When graph has Corelib.* name but user passes Coq.*, handler aliases."""
+    def test_coq_prefix_aliased_to_stdlib(self, ctx):
+        """When graph has Stdlib.* name but user passes Coq.*, handler aliases."""
         from dataclasses import dataclass
 
         @dataclass
@@ -1748,17 +1748,17 @@ class TestNameAliasingImpactAnalysis:
             total_depth: int
 
         fake_result = _FakeImpact(
-            root="Corelib.Init.Nat.add_comm",
-            impacted_nodes={"Corelib.Init.Nat.add_comm", "MyLib.foo"},
-            edges={("MyLib.foo", "Corelib.Init.Nat.add_comm")},
-            depth_map={0: {"Corelib.Init.Nat.add_comm"}, 1: {"MyLib.foo"}},
+            root="Stdlib.Init.Nat.add_comm",
+            impacted_nodes={"Stdlib.Init.Nat.add_comm", "MyLib.foo"},
+            edges={("MyLib.foo", "Stdlib.Init.Nat.add_comm")},
+            depth_map={0: {"Stdlib.Init.Nat.add_comm"}, 1: {"MyLib.foo"}},
             total_depth=1,
         )
-        # Graph contains Corelib.* names, not Coq.*
+        # Graph contains Stdlib.* names (canonical), not Coq.*
         ctx.pipeline.build_graph.return_value = MagicMock(
-            forward_adj={"Corelib.Init.Nat.add_comm": set()},
-            reverse_adj={"Corelib.Init.Nat.add_comm": {"MyLib.foo"}},
-            metadata={"Corelib.Init.Nat.add_comm": MagicMock(module="Corelib.Init.Nat")},
+            forward_adj={"Stdlib.Init.Nat.add_comm": set()},
+            reverse_adj={"Stdlib.Init.Nat.add_comm": {"MyLib.foo"}},
+            metadata={"Stdlib.Init.Nat.add_comm": MagicMock(module="Stdlib.Init.Nat")},
         )
         with patch(
             "Poule.analysis.impact.impact_analysis",
@@ -1771,7 +1771,7 @@ class TestNameAliasingImpactAnalysis:
             # Handler should pass the aliased name to the engine
             mock_ia.assert_called_once()
             call_args = mock_ia.call_args
-            assert call_args[0][1] == "Corelib.Init.Nat.add_comm"
+            assert call_args[0][1] == "Stdlib.Init.Nat.add_comm"
         assert result.get("isError") is not True
 
     def test_corelib_prefix_aliased_to_coq(self, ctx):
@@ -1787,16 +1787,16 @@ class TestNameAliasingImpactAnalysis:
             total_depth: int
 
         fake_result = _FakeImpact(
-            root="Coq.Init.Nat.add_comm",
-            impacted_nodes={"Coq.Init.Nat.add_comm"},
+            root="Stdlib.Init.Nat.add_comm",
+            impacted_nodes={"Stdlib.Init.Nat.add_comm"},
             edges=set(),
-            depth_map={0: {"Coq.Init.Nat.add_comm"}},
+            depth_map={0: {"Stdlib.Init.Nat.add_comm"}},
             total_depth=0,
         )
         ctx.pipeline.build_graph.return_value = MagicMock(
-            forward_adj={"Coq.Init.Nat.add_comm": set()},
-            reverse_adj={"Coq.Init.Nat.add_comm": set()},
-            metadata={"Coq.Init.Nat.add_comm": MagicMock(module="Coq.Init.Nat")},
+            forward_adj={"Stdlib.Init.Nat.add_comm": set()},
+            reverse_adj={"Stdlib.Init.Nat.add_comm": set()},
+            metadata={"Stdlib.Init.Nat.add_comm": MagicMock(module="Stdlib.Init.Nat")},
         )
         with patch(
             "Poule.analysis.impact.impact_analysis",
@@ -1808,7 +1808,7 @@ class TestNameAliasingImpactAnalysis:
             )
             mock_ia.assert_called_once()
             call_args = mock_ia.call_args
-            assert call_args[0][1] == "Coq.Init.Nat.add_comm"
+            assert call_args[0][1] == "Stdlib.Init.Nat.add_comm"
         assert result.get("isError") is not True
 
     def test_no_aliasing_when_name_exists(self, ctx):
@@ -1824,16 +1824,16 @@ class TestNameAliasingImpactAnalysis:
             total_depth: int
 
         fake_result = _FakeImpact(
-            root="Coq.Init.Nat.add_comm",
-            impacted_nodes={"Coq.Init.Nat.add_comm"},
+            root="Stdlib.Init.Nat.add_comm",
+            impacted_nodes={"Stdlib.Init.Nat.add_comm"},
             edges=set(),
-            depth_map={0: {"Coq.Init.Nat.add_comm"}},
+            depth_map={0: {"Stdlib.Init.Nat.add_comm"}},
             total_depth=0,
         )
         ctx.pipeline.build_graph.return_value = MagicMock(
-            forward_adj={"Coq.Init.Nat.add_comm": set()},
-            reverse_adj={"Coq.Init.Nat.add_comm": set()},
-            metadata={"Coq.Init.Nat.add_comm": MagicMock(module="Coq.Init.Nat")},
+            forward_adj={"Stdlib.Init.Nat.add_comm": set()},
+            reverse_adj={"Stdlib.Init.Nat.add_comm": set()},
+            metadata={"Stdlib.Init.Nat.add_comm": MagicMock(module="Stdlib.Init.Nat")},
         )
         with patch(
             "Poule.analysis.impact.impact_analysis",
@@ -1841,11 +1841,11 @@ class TestNameAliasingImpactAnalysis:
         ) as mock_ia:
             result = _dispatch_and_await(
                 ctx, "impact_analysis",
-                {"name": "Coq.Init.Nat.add_comm"},
+                {"name": "Stdlib.Init.Nat.add_comm"},
             )
             mock_ia.assert_called_once()
             call_args = mock_ia.call_args
-            assert call_args[0][1] == "Coq.Init.Nat.add_comm"
+            assert call_args[0][1] == "Stdlib.Init.Nat.add_comm"
         assert result.get("isError") is not True
 
     def test_not_found_when_neither_name_nor_alias_exists(self, ctx):
@@ -1870,10 +1870,10 @@ class TestNameAliasingImpactAnalysis:
 
 
 class TestNameAliasingTransitiveClosure:
-    """Spec §4.3: MCP handler applies bidirectional Coq.*/Corelib.* aliasing."""
+    """Spec §4.3: MCP handler applies bidirectional Coq.*/Stdlib.* aliasing."""
 
-    def test_coq_prefix_aliased_to_corelib(self, ctx):
-        """When graph has Corelib.* name but user passes Coq.*, handler aliases."""
+    def test_coq_prefix_aliased_to_stdlib(self, ctx):
+        """When graph has Stdlib.* name but user passes Coq.*, handler aliases."""
         from dataclasses import dataclass
 
         @dataclass
@@ -1885,16 +1885,16 @@ class TestNameAliasingTransitiveClosure:
             total_depth: int
 
         fake_result = _FakeClosure(
-            root="Corelib.Init.Nat.add_comm",
-            nodes={"Corelib.Init.Nat.add_comm"},
+            root="Stdlib.Init.Nat.add_comm",
+            nodes={"Stdlib.Init.Nat.add_comm"},
             edges=set(),
-            depth_map={0: {"Corelib.Init.Nat.add_comm"}},
+            depth_map={0: {"Stdlib.Init.Nat.add_comm"}},
             total_depth=0,
         )
         ctx.pipeline.build_graph.return_value = MagicMock(
-            forward_adj={"Corelib.Init.Nat.add_comm": set()},
-            reverse_adj={"Corelib.Init.Nat.add_comm": set()},
-            metadata={"Corelib.Init.Nat.add_comm": MagicMock(module="Corelib.Init.Nat")},
+            forward_adj={"Stdlib.Init.Nat.add_comm": set()},
+            reverse_adj={"Stdlib.Init.Nat.add_comm": set()},
+            metadata={"Stdlib.Init.Nat.add_comm": MagicMock(module="Stdlib.Init.Nat")},
         )
         with patch(
             "Poule.analysis.closure.transitive_closure",
@@ -1906,7 +1906,7 @@ class TestNameAliasingTransitiveClosure:
             )
             mock_tc.assert_called_once()
             call_args = mock_tc.call_args
-            assert call_args[0][1] == "Corelib.Init.Nat.add_comm"
+            assert call_args[0][1] == "Stdlib.Init.Nat.add_comm"
         assert result.get("isError") is not True
 
     def test_corelib_prefix_aliased_to_coq(self, ctx):
@@ -1922,16 +1922,16 @@ class TestNameAliasingTransitiveClosure:
             total_depth: int
 
         fake_result = _FakeClosure(
-            root="Coq.Init.Nat.add_comm",
-            nodes={"Coq.Init.Nat.add_comm"},
+            root="Stdlib.Init.Nat.add_comm",
+            nodes={"Stdlib.Init.Nat.add_comm"},
             edges=set(),
-            depth_map={0: {"Coq.Init.Nat.add_comm"}},
+            depth_map={0: {"Stdlib.Init.Nat.add_comm"}},
             total_depth=0,
         )
         ctx.pipeline.build_graph.return_value = MagicMock(
-            forward_adj={"Coq.Init.Nat.add_comm": set()},
-            reverse_adj={"Coq.Init.Nat.add_comm": set()},
-            metadata={"Coq.Init.Nat.add_comm": MagicMock(module="Coq.Init.Nat")},
+            forward_adj={"Stdlib.Init.Nat.add_comm": set()},
+            reverse_adj={"Stdlib.Init.Nat.add_comm": set()},
+            metadata={"Stdlib.Init.Nat.add_comm": MagicMock(module="Stdlib.Init.Nat")},
         )
         with patch(
             "Poule.analysis.closure.transitive_closure",
@@ -1943,5 +1943,5 @@ class TestNameAliasingTransitiveClosure:
             )
             mock_tc.assert_called_once()
             call_args = mock_tc.call_args
-            assert call_args[0][1] == "Coq.Init.Nat.add_comm"
+            assert call_args[0][1] == "Stdlib.Init.Nat.add_comm"
         assert result.get("isError") is not True

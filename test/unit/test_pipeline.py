@@ -48,14 +48,14 @@ def _mock_reader():
         3: {3: {"label_B": 5}},
     }
     reader.load_inverted_index.return_value = {
-        "Coq.Init.Nat.add": {1, 2},
-        "Coq.Init.Datatypes.nat": {1, 2, 3},
-        "Coq.Init.Logic.eq": {1, 3},
+        "Stdlib.Init.Nat.add": {1, 2},
+        "Stdlib.Init.Datatypes.nat": {1, 2, 3},
+        "Stdlib.Init.Logic.eq": {1, 3},
     }
     reader.load_symbol_frequencies.return_value = {
-        "Coq.Init.Nat.add": 2,
-        "Coq.Init.Datatypes.nat": 3,
-        "Coq.Init.Logic.eq": 2,
+        "Stdlib.Init.Nat.add": 2,
+        "Stdlib.Init.Datatypes.nat": 3,
+        "Stdlib.Init.Logic.eq": 2,
     }
     reader.load_declaration_node_counts.return_value = {1: 10, 2: 20, 3: 60}
     return reader
@@ -178,9 +178,9 @@ def _mock_context(parser=None):
     ctx.declaration_node_counts = ctx.reader.load_declaration_node_counts()
     # declaration_symbols derived from inverted index
     ctx.declaration_symbols = {
-        1: {"Coq.Init.Nat.add", "Coq.Init.Datatypes.nat", "Coq.Init.Logic.eq"},
-        2: {"Coq.Init.Nat.add", "Coq.Init.Datatypes.nat"},
-        3: {"Coq.Init.Datatypes.nat", "Coq.Init.Logic.eq"},
+        1: {"Stdlib.Init.Nat.add", "Stdlib.Init.Datatypes.nat", "Stdlib.Init.Logic.eq"},
+        2: {"Stdlib.Init.Nat.add", "Stdlib.Init.Datatypes.nat"},
+        3: {"Stdlib.Init.Datatypes.nat", "Stdlib.Init.Logic.eq"},
     }
     ctx.suffix_index = _build_suffix_index(ctx.inverted_index)
     ctx.parser = parser
@@ -225,8 +225,8 @@ class TestCreateContext:
         # declaration_symbols should map decl_id -> set of symbols
         assert isinstance(ctx.declaration_symbols, dict)
         # decl 1 appears under Nat.add, nat, and eq
-        assert "Coq.Init.Nat.add" in ctx.declaration_symbols[1]
-        assert "Coq.Init.Datatypes.nat" in ctx.declaration_symbols[1]
+        assert "Stdlib.Init.Nat.add" in ctx.declaration_symbols[1]
+        assert "Stdlib.Init.Datatypes.nat" in ctx.declaration_symbols[1]
 
     @patch("Poule.pipeline.context.IndexReader")
     def test_declaration_node_counts_loaded(self, MockIndexReader):
@@ -247,12 +247,12 @@ class TestCreateContext:
 
         assert hasattr(ctx, "suffix_index")
         assert isinstance(ctx.suffix_index, dict)
-        # "Nat.add" is a suffix of "Coq.Init.Nat.add"
+        # "Nat.add" is a suffix of "Stdlib.Init.Nat.add"
         assert "Nat.add" in ctx.suffix_index
-        assert "Coq.Init.Nat.add" in ctx.suffix_index["Nat.add"]
-        # "Init.Datatypes.nat" is a suffix of "Coq.Init.Datatypes.nat"
+        assert "Stdlib.Init.Nat.add" in ctx.suffix_index["Nat.add"]
+        # "Init.Datatypes.nat" is a suffix of "Stdlib.Init.Datatypes.nat"
         assert "Init.Datatypes.nat" in ctx.suffix_index
-        assert "Coq.Init.Datatypes.nat" in ctx.suffix_index["Init.Datatypes.nat"]
+        assert "Stdlib.Init.Datatypes.nat" in ctx.suffix_index["Init.Datatypes.nat"]
 
     @patch("Poule.pipeline.context.IndexReader")
     def test_suffix_index_contains_all_proper_suffixes(self, MockIndexReader):
@@ -262,18 +262,18 @@ class TestCreateContext:
 
         ctx = create_context("/tmp/test.db")
 
-        # "Coq.Init.Nat.add" should produce: "Init.Nat.add", "Nat.add", "add"
+        # "Stdlib.Init.Nat.add" should produce: "Init.Nat.add", "Nat.add", "add"
         for suffix in ["Init.Nat.add", "Nat.add", "add"]:
             assert suffix in ctx.suffix_index, f"Missing suffix: {suffix}"
-            assert "Coq.Init.Nat.add" in ctx.suffix_index[suffix]
+            assert "Stdlib.Init.Nat.add" in ctx.suffix_index[suffix]
 
     @patch("Poule.pipeline.context.IndexReader")
     def test_suffix_index_ambiguous_suffixes_retain_all_fqns(self, MockIndexReader):
         """Ambiguous suffixes (matching multiple FQNs) retain all matches (spec §4.1)."""
         reader = _mock_reader()
-        # Add a second FQN that shares the suffix "eq" with "Coq.Init.Logic.eq"
+        # Add a second FQN that shares the suffix "eq" with "Stdlib.Init.Logic.eq"
         inv_idx = reader.load_inverted_index.return_value
-        inv_idx["Coq.Arith.PeanoNat.Nat.eq"] = {4}
+        inv_idx["Stdlib.Arith.PeanoNat.Nat.eq"] = {4}
         MockIndexReader.return_value = reader
 
         ctx = create_context("/tmp/test.db")
@@ -281,8 +281,8 @@ class TestCreateContext:
         # "eq" is a suffix of both FQNs
         assert "eq" in ctx.suffix_index
         fqns = ctx.suffix_index["eq"]
-        assert "Coq.Init.Logic.eq" in fqns
-        assert "Coq.Arith.PeanoNat.Nat.eq" in fqns
+        assert "Stdlib.Init.Logic.eq" in fqns
+        assert "Stdlib.Arith.PeanoNat.Nat.eq" in fqns
 
     @patch("Poule.pipeline.context.IndexReader")
     def test_suffix_index_enriched_with_re_export_aliases(self, MockIndexReader):
@@ -294,10 +294,10 @@ class TestCreateContext:
         to Coq.Lists.ListDef.map."""
         reader = _mock_reader()
         # Add ListDef.map to the inverted index
-        reader.load_inverted_index.return_value["Coq.Lists.ListDef.map"] = {4}
+        reader.load_inverted_index.return_value["Stdlib.Lists.ListDef.map"] = {4}
         # Add re-export alias
         reader.load_re_export_aliases = MagicMock(
-            return_value={"Coq.Lists.List.map": "Coq.Lists.ListDef.map"}
+            return_value={"Stdlib.Lists.List.map": "Stdlib.Lists.ListDef.map"}
         )
         MockIndexReader.return_value = reader
 
@@ -305,10 +305,10 @@ class TestCreateContext:
 
         # "List.map" should be in the suffix index, mapping to the canonical FQN
         assert "List.map" in ctx.suffix_index
-        assert "Coq.Lists.ListDef.map" in ctx.suffix_index["List.map"]
+        assert "Stdlib.Lists.ListDef.map" in ctx.suffix_index["List.map"]
         # "Lists.List.map" should also be present
         assert "Lists.List.map" in ctx.suffix_index
-        assert "Coq.Lists.ListDef.map" in ctx.suffix_index["Lists.List.map"]
+        assert "Stdlib.Lists.ListDef.map" in ctx.suffix_index["Lists.List.map"]
 
     @patch("Poule.pipeline.context.IndexReader")
     def test_suffix_index_no_aliases_when_reader_has_none(self, MockIndexReader):
@@ -405,9 +405,9 @@ class TestResolveQuerySymbols:
 
         ctx = _mock_context()
 
-        resolved = resolve_query_symbols(ctx, ["Coq.Init.Nat.add"])
+        resolved = resolve_query_symbols(ctx, ["Stdlib.Init.Nat.add"])
 
-        assert "Coq.Init.Nat.add" in resolved
+        assert "Stdlib.Init.Nat.add" in resolved
 
     def test_short_name_resolved_via_suffix_index(self):
         """A short name like 'Nat.add' is resolved to its FQN via suffix match."""
@@ -417,7 +417,7 @@ class TestResolveQuerySymbols:
 
         resolved = resolve_query_symbols(ctx, ["Nat.add"])
 
-        assert "Coq.Init.Nat.add" in resolved
+        assert "Stdlib.Init.Nat.add" in resolved
 
     def test_partial_qualification_resolved(self):
         """A partial qualification like 'Init.Nat.add' is resolved via suffix match."""
@@ -427,23 +427,23 @@ class TestResolveQuerySymbols:
 
         resolved = resolve_query_symbols(ctx, ["Init.Nat.add"])
 
-        assert "Coq.Init.Nat.add" in resolved
+        assert "Stdlib.Init.Nat.add" in resolved
 
     def test_ambiguous_suffix_expands_to_all_fqns(self):
         """An ambiguous short name expands to all matching FQNs (spec §4.5.1)."""
         from Poule.pipeline.search import resolve_query_symbols
 
         ctx = _mock_context()
-        # "nat" is a suffix of "Coq.Init.Datatypes.nat"; add a second FQN
+        # "nat" is a suffix of "Stdlib.Init.Datatypes.nat"; add a second FQN
         ctx.suffix_index["nat"] = [
-            "Coq.Init.Datatypes.nat",
-            "Coq.ZArith.BinInt.Z.nat",
+            "Stdlib.Init.Datatypes.nat",
+            "Stdlib.ZArith.BinInt.Z.nat",
         ]
 
         resolved = resolve_query_symbols(ctx, ["nat"])
 
-        assert "Coq.Init.Datatypes.nat" in resolved
-        assert "Coq.ZArith.BinInt.Z.nat" in resolved
+        assert "Stdlib.Init.Datatypes.nat" in resolved
+        assert "Stdlib.ZArith.BinInt.Z.nat" in resolved
 
     def test_unknown_symbol_passed_through(self):
         """A symbol matching neither the inverted index nor suffix index is included as-is."""
@@ -462,24 +462,24 @@ class TestResolveQuerySymbols:
         ctx = _mock_context()
 
         resolved = resolve_query_symbols(
-            ctx, ["Coq.Init.Nat.add", "Nat.add", "Logic.eq", "unknown"]
+            ctx, ["Stdlib.Init.Nat.add", "Nat.add", "Logic.eq", "unknown"]
         )
 
-        assert "Coq.Init.Nat.add" in resolved
-        assert "Coq.Init.Logic.eq" in resolved
+        assert "Stdlib.Init.Nat.add" in resolved
+        assert "Stdlib.Init.Logic.eq" in resolved
         assert "unknown" in resolved
 
     def test_coq_prefix_resolves_to_corelib_fqn(self):
-        """Coq.* legacy prefix resolves to Corelib.* FQN when index uses Rocq 9.x naming."""
+        """Stdlib.* legacy prefix resolves to Corelib.* FQN when index uses Rocq 9.x naming."""
         from Poule.pipeline.search import resolve_query_symbols
 
         ctx = _mock_context_corelib()
 
-        resolved = resolve_query_symbols(ctx, ["Coq.Init.Nat.add"])
+        resolved = resolve_query_symbols(ctx, ["Stdlib.Init.Nat.add"])
 
         # Must resolve to the Corelib FQN, not pass through as-is
         assert "Corelib.Init.Nat.add" in resolved
-        assert "Coq.Init.Nat.add" not in resolved
+        assert "Stdlib.Init.Nat.add" not in resolved
 
     def test_coq_prefix_resolution_multiple_symbols(self):
         """Multiple Coq.* symbols all resolve to their Corelib.* counterparts."""
@@ -488,20 +488,20 @@ class TestResolveQuerySymbols:
         ctx = _mock_context_corelib()
 
         resolved = resolve_query_symbols(
-            ctx, ["Coq.Init.Nat.add", "Coq.Init.Datatypes.nat"]
+            ctx, ["Stdlib.Init.Nat.add", "Stdlib.Init.Datatypes.nat"]
         )
 
         assert "Corelib.Init.Nat.add" in resolved
         assert "Corelib.Init.Datatypes.nat" in resolved
 
     def test_coq_prefix_mixed_with_short_names(self):
-        """Coq.* prefix resolution works alongside suffix resolution."""
+        """Stdlib.* prefix resolution works alongside suffix resolution."""
         from Poule.pipeline.search import resolve_query_symbols
 
         ctx = _mock_context_corelib()
 
         resolved = resolve_query_symbols(
-            ctx, ["Coq.Init.Nat.add", "Nat.add", "unknown"]
+            ctx, ["Stdlib.Init.Nat.add", "Nat.add", "unknown"]
         )
 
         assert "Corelib.Init.Nat.add" in resolved
@@ -523,9 +523,9 @@ class TestResolveQuerySymbols:
 
         ctx = _mock_context()  # uses Coq.* FQNs in the inverted index
 
-        resolved = resolve_query_symbols(ctx, ["Coq.Init.Nat.add"])
+        resolved = resolve_query_symbols(ctx, ["Stdlib.Init.Nat.add"])
 
-        assert "Coq.Init.Nat.add" in resolved
+        assert "Stdlib.Init.Nat.add" in resolved
 
     def test_fqn_also_resolves_short_form_via_suffix(self):
         """When the index stores both Corelib.Init.Nat.add (few decls) and
@@ -568,7 +568,7 @@ class TestResolveQuerySymbols:
 
         ctx = _mock_context()
         # Add a 'map'-related FQN that would be found via suffix expansion
-        ctx.inverted_index["Coq.Lists.ListDef.map"] = {4}
+        ctx.inverted_index["Stdlib.Lists.ListDef.map"] = {4}
         ctx.suffix_index = _build_suffix_index(ctx.inverted_index)
         # 'List.map' is NOT in the suffix index (no re-export alias)
         assert "List.map" not in ctx.suffix_index
@@ -576,7 +576,7 @@ class TestResolveQuerySymbols:
         resolved = resolve_query_symbols(ctx, ["List.map"])
 
         # Must find 'Coq.Lists.ListDef.map' via suffix expansion of 'map'
-        assert "Coq.Lists.ListDef.map" in resolved
+        assert "Stdlib.Lists.ListDef.map" in resolved
         # Must NOT passthrough the unresolvable name
         assert "List.map" not in resolved
 
@@ -586,14 +586,14 @@ class TestResolveQuerySymbols:
         from Poule.pipeline.search import resolve_query_symbols
 
         ctx = _mock_context()
-        ctx.inverted_index["Coq.Lists.ListDef.map"] = {4}
-        ctx.inverted_index["Coq.Init.Datatypes.map"] = {5}
+        ctx.inverted_index["Stdlib.Lists.ListDef.map"] = {4}
+        ctx.inverted_index["Stdlib.Init.Datatypes.map"] = {5}
         ctx.suffix_index = _build_suffix_index(ctx.inverted_index)
 
         resolved = resolve_query_symbols(ctx, ["List.map"])
 
-        assert "Coq.Lists.ListDef.map" in resolved
-        assert "Coq.Init.Datatypes.map" in resolved
+        assert "Stdlib.Lists.ListDef.map" in resolved
+        assert "Stdlib.Init.Datatypes.map" in resolved
 
 
 class TestAliasPrefix:
@@ -603,13 +603,13 @@ class TestAliasPrefix:
         """Corelib.Arith → Coq.Arith."""
         from Poule.pipeline.search import alias_prefix
 
-        assert alias_prefix("Corelib.Arith") == "Coq.Arith"
+        assert alias_prefix("Corelib.Arith") == "Stdlib.Arith"
 
-    def test_coq_to_corelib(self):
-        """Coq.Init → Corelib.Init."""
+    def test_stdlib_to_coq(self):
+        """Stdlib.Init → Coq.Init (first alias pair, b→a direction)."""
         from Poule.pipeline.search import alias_prefix
 
-        assert alias_prefix("Coq.Init") == "Corelib.Init"
+        assert alias_prefix("Stdlib.Init") == "Coq.Init"
 
     def test_no_alias_for_other_prefix(self):
         """mathcomp.algebra → None (no alias applies)."""
@@ -627,13 +627,13 @@ class TestAliasPrefix:
         """'Corelib.' alone → 'Coq.'."""
         from Poule.pipeline.search import alias_prefix
 
-        assert alias_prefix("Corelib.") == "Coq."
+        assert alias_prefix("Corelib.") == "Stdlib."
 
-    def test_coq_exact_prefix(self):
-        """'Coq.' alone → 'Corelib.'."""
+    def test_stdlib_exact_prefix(self):
+        """'Stdlib.' alone → 'Coq.' (first alias pair, b→a direction)."""
         from Poule.pipeline.search import alias_prefix
 
-        assert alias_prefix("Coq.") == "Corelib."
+        assert alias_prefix("Stdlib.") == "Coq."
 
 
 class TestSearchBySymbols:
@@ -647,7 +647,7 @@ class TestSearchBySymbols:
             {"id": 1, "name": "D.1", "module": "M", "kind": "lemma", "statement": "", "type_expr": ""},
             {"id": 2, "name": "D.2", "module": "M", "kind": "lemma", "statement": "", "type_expr": ""},
         ]
-        symbols = ["Coq.Init.Nat.add", "Coq.Init.Datatypes.nat"]
+        symbols = ["Stdlib.Init.Nat.add", "Stdlib.Init.Datatypes.nat"]
 
         results = search_by_symbols(ctx, symbols, limit=10)
 
@@ -673,8 +673,8 @@ class TestSearchBySymbols:
         mock_mepo.assert_called_once()
         call_args = mock_mepo.call_args
         resolved_set = call_args[0][0]
-        # "Nat.add" should have been resolved to "Coq.Init.Nat.add"
-        assert "Coq.Init.Nat.add" in resolved_set
+        # "Nat.add" should have been resolved to "Stdlib.Init.Nat.add"
+        assert "Stdlib.Init.Nat.add" in resolved_set
 
     @patch("Poule.pipeline.search.mepo_select")
     def test_limits_results(self, mock_mepo):
@@ -685,7 +685,7 @@ class TestSearchBySymbols:
             for i in range(20)
         ]
 
-        results = search_by_symbols(ctx, ["Coq.Init.Nat.add"], limit=5)
+        results = search_by_symbols(ctx, ["Stdlib.Init.Nat.add"], limit=5)
 
         assert len(results) <= 5
 
@@ -850,7 +850,7 @@ class TestSearchByType:
         mock_wl_screen.return_value = [(1, 0.9)]
         mock_score.return_value = [(1, 0.85)]
 
-        mock_extract.return_value = {"Coq.Init.Nat.add"}
+        mock_extract.return_value = {"Stdlib.Init.Nat.add"}
         mock_mepo.return_value = [(2, 0.7)]
         mock_fts_query.return_value = "nat AND nat AND nat"
 
@@ -916,9 +916,9 @@ class TestSearchByTypeRealFusion:
         ctx = _mock_context(parser=parser)
         # reader.search_fts returns dicts with id and score
         ctx.reader.search_fts.return_value = [
-            {"id": 4, "name": "Coq.Init.Nat.add", "module": "Coq.Init.Nat",
+            {"id": 4, "name": "Stdlib.Init.Nat.add", "module": "Stdlib.Init.Nat",
              "kind": "Lemma", "statement": "", "type_expr": "", "score": 0.95},
-            {"id": 5, "name": "Coq.Init.Nat.mul", "module": "Coq.Init.Nat",
+            {"id": 5, "name": "Stdlib.Init.Nat.mul", "module": "Stdlib.Init.Nat",
              "kind": "Lemma", "statement": "", "type_expr": "", "score": 0.80},
         ]
         ctx.reader.get_declarations_by_ids.return_value = [
@@ -934,7 +934,7 @@ class TestSearchByTypeRealFusion:
         mock_wl_screen.return_value = [(1, 0.9), (2, 0.8)]
 
         mock_score.return_value = [(1, 0.85), (2, 0.70)]
-        mock_extract.return_value = {"Coq.Init.Nat.add"}
+        mock_extract.return_value = {"Stdlib.Init.Nat.add"}
         mock_mepo.return_value = [(2, 0.90), (3, 0.60)]
         mock_fts_query.return_value = "nat AND nat AND nat"
 
@@ -980,15 +980,15 @@ class TestSearchByTypeRealFusion:
         mock_wl_hist.return_value = {}
         mock_wl_screen.return_value = [(1, 0.9)]
         mock_score.return_value = [(1, 0.85)]
-        mock_extract.return_value = {"Coq.Init.Nat.add"}
+        mock_extract.return_value = {"Stdlib.Init.Nat.add"}
         mock_mepo.return_value = [(1, 0.70)]
         mock_fts_query.return_value = "nat"
         mock_fts_search.return_value = [
             SearchResult(
-                name="Coq.Init.Nat.add",
+                name="Stdlib.Init.Nat.add",
                 statement="",
                 type="nat -> nat -> nat",
-                module="Coq.Init.Nat",
+                module="Stdlib.Init.Nat",
                 kind="Lemma",
                 score=0.95,
             ),
@@ -1055,7 +1055,7 @@ class TestSearchByTypeMePoResolution:
         # extract_consts returns unresolved qualified names
         mock_extract.return_value = {"List.map", "eq"}
         # resolve_query_symbols resolves them to FQNs
-        mock_resolve.return_value = {"Coq.Lists.ListDef.map", "Coq.Init.Logic.eq"}
+        mock_resolve.return_value = {"Stdlib.Lists.ListDef.map", "Stdlib.Init.Logic.eq"}
         mock_mepo.return_value = []
         mock_fts_query.return_value = "List OR map"
         mock_fts_search.return_value = []
@@ -1071,7 +1071,7 @@ class TestSearchByTypeMePoResolution:
         # mepo_select must receive the RESOLVED symbols, not the raw ones
         mock_mepo.assert_called_once()
         mepo_syms = mock_mepo.call_args[0][0]
-        assert "Coq.Lists.ListDef.map" in mepo_syms
+        assert "Stdlib.Lists.ListDef.map" in mepo_syms
         assert "List.map" not in mepo_syms
 
 
@@ -1180,7 +1180,7 @@ class TestScoreCandidates:
         candidate_tree.node_count = 12
         ctx.reader.get_constr_trees.return_value = {1: candidate_tree}
 
-        mock_extract.return_value = {"Coq.Init.Nat.add"}
+        mock_extract.return_value = {"Stdlib.Init.Nat.add"}
         mock_jaccard.return_value = 0.6
         mock_collapse.return_value = 0.8
         mock_ted.return_value = 0.7
@@ -1210,7 +1210,7 @@ class TestScoreCandidates:
         candidate_tree.node_count = 8
         ctx.reader.get_constr_trees.return_value = {1: candidate_tree, 2: candidate_tree}
 
-        mock_extract.return_value = {"Coq.Init.Nat.add"}
+        mock_extract.return_value = {"Stdlib.Init.Nat.add"}
         mock_jaccard.return_value = 0.5
         mock_collapse.return_value = 0.7
         mock_ted.return_value = 0.6
@@ -1394,7 +1394,7 @@ class TestResultsLimited:
             for i in range(20)
         ]
 
-        results = search_by_symbols(ctx, ["Coq.Init.Nat.add"], limit=3)
+        results = search_by_symbols(ctx, ["Stdlib.Init.Nat.add"], limit=3)
 
         assert len(results) <= 3
 
@@ -1466,7 +1466,7 @@ class TestResultsSortedDescending:
             {"id": 3, "name": "D.3", "module": "M", "kind": "lemma", "statement": "", "type_expr": ""},
         ]
 
-        results = search_by_symbols(ctx, ["Coq.Init.Nat.add"], limit=10)
+        results = search_by_symbols(ctx, ["Stdlib.Init.Nat.add"], limit=10)
 
         scores = [r.score for r in results]
         assert scores == sorted(scores, reverse=True)
@@ -2266,7 +2266,7 @@ class TestPeelNProds:
         from Poule.models.tree import TreeNode, ExprTree
 
         body = TreeNode(
-            label=LConst("Coq.Init.Nat.add"),
+            label=LConst("Stdlib.Init.Nat.add"),
             children=[],
         )
         root = TreeNode(
@@ -2321,7 +2321,7 @@ class TestPeelNProds:
         from Poule.models.enums import SortKind
         from Poule.models.tree import TreeNode, ExprTree
 
-        body = TreeNode(label=LConst("Coq.Init.Nat.add"), children=[])
+        body = TreeNode(label=LConst("Stdlib.Init.Nat.add"), children=[])
         root = TreeNode(
             label=LProd(),
             children=[
@@ -2340,7 +2340,7 @@ class TestPeelNProds:
         from Poule.models.labels import LConst
         from Poule.models.tree import TreeNode, ExprTree
 
-        root = TreeNode(label=LConst("Coq.Init.Nat.add"), children=[])
+        root = TreeNode(label=LConst("Stdlib.Init.Nat.add"), children=[])
         original = ExprTree(root=root, node_count=1)
         result = _peel_n_prods(original, 3)
         assert result.root is root
@@ -2363,10 +2363,10 @@ class TestNormalizeTypeQueryReturnsTuple:
         from Poule.normalization.constr_node import Const
 
         ctx = MagicMock()
-        ctx.inverted_index = {"Coq.Init.Nat.add": {1}}
+        ctx.inverted_index = {"Stdlib.Init.Nat.add": {1}}
         ctx.suffix_index = {}
         # A single resolved const — no free vars
-        constr = Const("Coq.Init.Nat.add")
+        constr = Const("Stdlib.Init.Nat.add")
         result, count = normalize_type_query(ctx, constr)
         assert count == 0
 
@@ -2400,10 +2400,10 @@ class TestNormalizeTypeQueryReturnsTuple:
         from Poule.normalization.constr_node import App, Const, Prod
 
         ctx = MagicMock()
-        ctx.inverted_index = {"Coq.Init.Logic.eq": {1}}
+        ctx.inverted_index = {"Stdlib.Init.Logic.eq": {1}}
         ctx.suffix_index = {}
         # "f a b" has three free variables
-        constr = App(Const("Coq.Init.Logic.eq"), [Const("f"), Const("a"), Const("b")])
+        constr = App(Const("Stdlib.Init.Logic.eq"), [Const("f"), Const("a"), Const("b")])
         result, count = normalize_type_query(ctx, constr)
         assert count == 3
         # Should be wrapped in 3 Prod layers
@@ -2457,7 +2457,7 @@ class TestScoreCandidatesWithAutoBinders:
         # _peel_n_prods returns peeled_query for query, peeled_candidate for cand
         mock_peel.side_effect = [peeled_query, peeled_candidate]
 
-        mock_extract.return_value = {"Coq.Init.Nat.add"}
+        mock_extract.return_value = {"Stdlib.Init.Nat.add"}
         mock_jaccard.return_value = 0.6
         mock_collapse.return_value = 0.8
         mock_ted.return_value = 0.7
@@ -2555,8 +2555,8 @@ class TestSearchReturnsSearchResult:
         ctx = _mock_context(parser=parser)
         # Mock reader to return declaration data
         ctx.reader.get_declarations_by_ids.return_value = [
-            _decl_row(1, "Coq.Init.Nat.add_0_r"),
-            _decl_row(2, "Coq.Init.Nat.add_comm"),
+            _decl_row(1, "Stdlib.Init.Nat.add_0_r"),
+            _decl_row(2, "Stdlib.Init.Nat.add_comm"),
         ]
 
         cse_tree = MagicMock()
@@ -2586,11 +2586,11 @@ class TestSearchReturnsSearchResult:
         # mepo_select returns (decl_id, score) tuples — the real return type
         mock_mepo.return_value = [(1, 0.95), (2, 0.80)]
         ctx.reader.get_declarations_by_ids.return_value = [
-            _decl_row(1, "Coq.Init.Nat.add_0_r"),
-            _decl_row(2, "Coq.Init.Nat.add_comm"),
+            _decl_row(1, "Stdlib.Init.Nat.add_0_r"),
+            _decl_row(2, "Stdlib.Init.Nat.add_comm"),
         ]
 
-        results = search_by_symbols(ctx, ["Coq.Init.Nat.add"], limit=10)
+        results = search_by_symbols(ctx, ["Stdlib.Init.Nat.add"], limit=10)
 
         assert len(results) == 2
         for r in results:
@@ -2606,15 +2606,15 @@ class TestSearchReturnsSearchResult:
         ctx = _mock_context()
         mock_mepo.return_value = [(1, 0.95)]
         ctx.reader.get_declarations_by_ids.return_value = [
-            _decl_row(1, "Coq.Init.Nat.add_0_r", module="Coq.Init.Nat", kind="lemma"),
+            _decl_row(1, "Stdlib.Init.Nat.add_0_r", module="Stdlib.Init.Nat", kind="lemma"),
         ]
 
-        results = search_by_symbols(ctx, ["Coq.Init.Nat.add"], limit=10)
+        results = search_by_symbols(ctx, ["Stdlib.Init.Nat.add"], limit=10)
 
         assert len(results) == 1
         r = results[0]
-        assert r.name == "Coq.Init.Nat.add_0_r"
-        assert r.module == "Coq.Init.Nat"
+        assert r.name == "Stdlib.Init.Nat.add_0_r"
+        assert r.module == "Stdlib.Init.Nat"
         assert r.kind == "lemma"
         assert r.score == 0.95
 
@@ -2630,8 +2630,8 @@ class TestSearchReturnsSearchResult:
         parser = _mock_parser()
         ctx = _mock_context(parser=parser)
         ctx.reader.get_declarations_by_ids.return_value = [
-            _decl_row(1, "Coq.Arith.PeanoNat.Nat.add_comm",
-                       module="Coq.Arith.PeanoNat", kind="theorem"),
+            _decl_row(1, "Stdlib.Arith.PeanoNat.Nat.add_comm",
+                       module="Stdlib.Arith.PeanoNat", kind="theorem"),
         ]
 
         cse_tree = MagicMock()
@@ -2646,8 +2646,8 @@ class TestSearchReturnsSearchResult:
 
         assert len(results) == 1
         r = results[0]
-        assert r.name == "Coq.Arith.PeanoNat.Nat.add_comm"
-        assert r.module == "Coq.Arith.PeanoNat"
+        assert r.name == "Stdlib.Arith.PeanoNat.Nat.add_comm"
+        assert r.module == "Stdlib.Arith.PeanoNat"
         assert r.kind == "theorem"
         assert r.score == 0.85
 
@@ -2684,7 +2684,7 @@ class TestSearchByTypeRRFKeyConsistency:
         ctx = _mock_context(parser=parser)
         # reader.search_fts returns rows with "id" and "score"
         ctx.reader.search_fts.return_value = [
-            {"id": 1, "name": "Coq.Init.Nat.add_0_r", "module": "M",
+            {"id": 1, "name": "Stdlib.Init.Nat.add_0_r", "module": "M",
              "kind": "lemma", "statement": "", "type_expr": "", "score": 0.9},
         ]
 

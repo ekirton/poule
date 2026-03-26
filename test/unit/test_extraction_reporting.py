@@ -443,33 +443,33 @@ class TestScopeFilter:
     def test_both_filters_match_includes_theorem(self):
         from Poule.extraction.types import ScopeFilter
 
-        sf = ScopeFilter(name_pattern=".*comm.*", module_prefixes=["Coq.Arith"])
+        sf = ScopeFilter(name_pattern=".*comm.*", module_prefixes=["Stdlib.Arith"])
 
         assert sf.matches(
-            name="Coq.Arith.PeanoNat.Nat.add_comm",
-            module="Coq.Arith.PeanoNat",
+            name="Stdlib.Arith.PeanoNat.Nat.add_comm",
+            module="Stdlib.Arith.PeanoNat",
         )
 
     def test_name_pattern_mismatch_excludes_theorem(self):
         from Poule.extraction.types import ScopeFilter
 
-        sf = ScopeFilter(name_pattern=".*comm.*", module_prefixes=["Coq.Arith"])
+        sf = ScopeFilter(name_pattern=".*comm.*", module_prefixes=["Stdlib.Arith"])
 
         # "classic" does not match ".*comm.*"
         assert not sf.matches(
-            name="Coq.Logic.Classical.classic",
-            module="Coq.Logic.Classical",
+            name="Stdlib.Logic.Classical.classic",
+            module="Stdlib.Logic.Classical",
         )
 
     def test_module_prefix_mismatch_excludes_theorem(self):
         from Poule.extraction.types import ScopeFilter
 
-        sf = ScopeFilter(name_pattern=".*comm.*", module_prefixes=["Coq.Arith"])
+        sf = ScopeFilter(name_pattern=".*comm.*", module_prefixes=["Stdlib.Arith"])
 
-        # Module "Coq.Logic" does not start with "Coq.Arith".
+        # Module "Stdlib.Logic" does not start with "Stdlib.Arith".
         assert not sf.matches(
-            name="Coq.Logic.SomeModule.add_comm",
-            module="Coq.Logic.SomeModule",
+            name="Stdlib.Logic.SomeModule.add_comm",
+            module="Stdlib.Logic.SomeModule",
         )
 
     def test_neither_filter_set_matches_all(self):
@@ -490,10 +490,10 @@ class TestScopeFilter:
     def test_only_module_prefixes_set(self):
         from Poule.extraction.types import ScopeFilter
 
-        sf = ScopeFilter(name_pattern=None, module_prefixes=["Coq.Arith"])
+        sf = ScopeFilter(name_pattern=None, module_prefixes=["Stdlib.Arith"])
 
-        assert sf.matches(name="Coq.Arith.Nat.add", module="Coq.Arith.Nat")
-        assert not sf.matches(name="Coq.Logic.Foo", module="Coq.Logic")
+        assert sf.matches(name="Stdlib.Arith.Nat.add", module="Stdlib.Arith.Nat")
+        assert not sf.matches(name="Stdlib.Logic.Foo", module="Stdlib.Logic")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -597,15 +597,15 @@ class TestBenchmarkDomainSplit:
     @pytest.mark.parametrize(
         "module_path,expected_domain",
         [
-            ("Coq.Arith.PeanoNat", "arithmetic"),
-            ("Coq.NatDef.Basics", "arithmetic"),
-            ("Coq.ZArith.Zdiv", "arithmetic"),
-            ("Coq.Algebra.Ring", "algebra"),
-            ("Coq.Ring.Theory", "algebra"),
-            ("Coq.Field.Axioms", "algebra"),
-            ("Coq.Logic.Classical", "logic"),
-            ("Coq.Prop.Decidable", "logic"),
-            ("Coq.Lists.List", "other"),
+            ("Stdlib.Arith.PeanoNat", "arithmetic"),
+            ("Stdlib.NatDef.Basics", "arithmetic"),
+            ("Stdlib.ZArith.Zdiv", "arithmetic"),
+            ("Stdlib.Algebra.Ring", "algebra"),
+            ("Stdlib.Ring.Theory", "algebra"),
+            ("Stdlib.Field.Axioms", "algebra"),
+            ("Stdlib.Logic.Classical", "logic"),
+            ("Stdlib.Prop.Decidable", "logic"),
+            ("Stdlib.Lists.List", "other"),
         ],
         ids=[
             "arith", "nat", "zarith",
@@ -645,7 +645,7 @@ class TestBenchmarkDomainSplit:
         from Poule.extraction.reporting import generate_benchmarks
 
         # "Arith" matches arithmetic (first), should not also appear in other bins.
-        records = [_make_extraction_record(module_path="Coq.ArithAlgebra.Foo")]
+        records = [_make_extraction_record(module_path="Stdlib.ArithAlgebra.Foo")]
         input_path = _write_jsonl(tmp_path / "input.jsonl", records)
         output_dir = tmp_path / "benchmarks"
         output_dir.mkdir()

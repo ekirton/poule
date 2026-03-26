@@ -109,7 +109,7 @@ def _make_premises():
             step_index=2,
             tactic="ring.",
             premises=[
-                Premise(name="Coq.setoid_ring.Ring_theory.ring_theory", kind="lemma"),
+                Premise(name="Stdlib.setoid_ring.Ring_theory.ring_theory", kind="lemma"),
             ],
         ),
     ]

@@ -655,9 +655,9 @@ class CoqLspBackend:
     def _vo_to_canonical_module(vo_path: Path) -> str:
         """Derive the canonical module name for storage from a ``.vo`` path.
 
-        For Rocq 9.x stdlib (``user-contrib/Stdlib/``), the canonical
-        prefix is ``Coq`` — e.g.
-        ``user-contrib/Stdlib/Init/Nat.vo`` → ``Coq.Init.Nat``.
+        For Rocq 9.x stdlib (``user-contrib/Stdlib/``), the ``Stdlib``
+        prefix is kept as the canonical namespace — e.g.
+        ``user-contrib/Stdlib/Init/Nat.vo`` → ``Stdlib.Init.Nat``.
 
         For other packages (e.g. MathComp), the canonical module is
         the same as the import path.
@@ -669,9 +669,7 @@ class CoqLspBackend:
                 break
             if part == "user-contrib":
                 relevant = parts[marker_idx + 1 :]
-                if relevant and relevant[0] == "Stdlib":
-                    # Stdlib → Coq prefix for canonical names
-                    relevant = ("Coq",) + relevant[1:]
+                # Keep Stdlib prefix as-is for canonical names
                 break
         else:
             relevant = parts[-2:] if len(parts) >= 2 else parts
@@ -889,7 +887,7 @@ class CoqLspBackend:
         return result or None
 
     # Patterns for parsing Locate output
-    _LOCATE_CATEGORIES = frozenset({"Constant", "Inductive", "Constructor"})
+    _LOCATE_CATEGORIES = frozenset({"Constant", "Inductive", "Constructor", "Class", "Instance"})
     # Pattern to extract FQN from notation body: Notation "x + y" := (Nat.add x y)
     _NOTATION_BODY_RE = __import__("re").compile(
         r'Notation\b.*?:=\s*\((\S+)'

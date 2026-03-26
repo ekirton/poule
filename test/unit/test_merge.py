@@ -75,24 +75,24 @@ def _stdlib_declarations():
     """Return sample stdlib declarations."""
     return [
         {
-            "name": "Coq.Init.Nat.add",
-            "module": "Coq.Init.Nat",
+            "name": "Stdlib.Init.Nat.add",
+            "module": "Stdlib.Init.Nat",
             "kind": "definition",
             "statement": "fix add (n m : nat) : nat",
             "type_expr": "nat -> nat -> nat",
             "constr_tree": None,
             "node_count": 5,
-            "symbol_set": ["Coq.Init.Nat.add", "Coq.Init.Datatypes.nat"],
+            "symbol_set": ["Stdlib.Init.Nat.add", "Stdlib.Init.Datatypes.nat"],
         },
         {
-            "name": "Coq.Init.Nat.mul",
-            "module": "Coq.Init.Nat",
+            "name": "Stdlib.Init.Nat.mul",
+            "module": "Stdlib.Init.Nat",
             "kind": "definition",
             "statement": "fix mul (n m : nat) : nat",
             "type_expr": "nat -> nat -> nat",
             "constr_tree": None,
             "node_count": 6,
-            "symbol_set": ["Coq.Init.Nat.mul", "Coq.Init.Nat.add", "Coq.Init.Datatypes.nat"],
+            "symbol_set": ["Stdlib.Init.Nat.mul", "Stdlib.Init.Nat.add", "Stdlib.Init.Datatypes.nat"],
         },
     ]
 
@@ -108,7 +108,7 @@ def _mathcomp_declarations():
             "type_expr": "bool -> bool",
             "constr_tree": None,
             "node_count": 4,
-            "symbol_set": ["Coq.Init.Datatypes.bool"],
+            "symbol_set": ["Stdlib.Init.Datatypes.bool"],
         },
     ]
 
@@ -178,7 +178,7 @@ class TestMergeBasic:
         merge_indexes([("stdlib", stdlib_path)], dest)
         reader = IndexReader.open(dest)
         # Should be able to read declarations
-        decl = reader.get_declaration("Coq.Init.Nat.add")
+        decl = reader.get_declaration("Stdlib.Init.Nat.add")
         assert decl is not None
 
     def test_deletes_existing_dest(self, tmp_path):
@@ -206,7 +206,7 @@ class TestMergeDependencies:
         decls = _stdlib_declarations()
         stdlib_path = _create_per_library_db(
             tmp_path / "index-stdlib.db", "stdlib", decls,
-            dependencies=[("Coq.Init.Nat.mul", "Coq.Init.Nat.add")],
+            dependencies=[("Stdlib.Init.Nat.mul", "Stdlib.Init.Nat.add")],
             library_version="8.19.2",
         )
         dest = tmp_path / "index.db"
@@ -242,11 +242,11 @@ class TestMergeDependencies:
 
     def test_cross_library_deps_from_symbol_set_exact_fqn(self, tmp_path):
         """§4.8: Cross-library edges created from symbol_set exact FQN match."""
-        # mathcomp's negb has symbol_set=["Coq.Init.Datatypes.bool"]
+        # mathcomp's negb has symbol_set=["Stdlib.Init.Datatypes.bool"]
         # which exactly matches stdlib's Coq.Init.Datatypes.bool (if it existed)
         stdlib_decls = _stdlib_declarations() + [{
-            "name": "Coq.Init.Datatypes.bool",
-            "module": "Coq.Init.Datatypes",
+            "name": "Stdlib.Init.Datatypes.bool",
+            "module": "Stdlib.Init.Datatypes",
             "kind": "inductive",
             "statement": "Inductive bool : Set := true | false",
             "type_expr": "Set",
@@ -272,7 +272,7 @@ class TestMergeDependencies:
             "JOIN declarations d1 ON d1.id = dep.src "
             "JOIN declarations d2 ON d2.id = dep.dst "
             "WHERE d1.name = 'mathcomp.ssreflect.ssrbool.negb' "
-            "AND d2.name = 'Coq.Init.Datatypes.bool'"
+            "AND d2.name = 'Stdlib.Init.Datatypes.bool'"
         ).fetchone()
         conn.close()
         assert edge is not None, "Cross-library edge negb→bool should exist"
@@ -280,7 +280,7 @@ class TestMergeDependencies:
     def test_cross_library_deps_suffix_resolution(self, tmp_path):
         """§4.8: Cross-library edges created via suffix match on short names."""
         # A declaration with symbol_set containing a short name "Nat.add"
-        # should resolve to Coq.Init.Nat.add via suffix matching
+        # should resolve to Stdlib.Init.Nat.add via suffix matching
         other_decls = [{
             "name": "Other.Lib.uses_add",
             "module": "Other.Lib",
@@ -308,7 +308,7 @@ class TestMergeDependencies:
             "JOIN declarations d1 ON d1.id = dep.src "
             "JOIN declarations d2 ON d2.id = dep.dst "
             "WHERE d1.name = 'Other.Lib.uses_add' "
-            "AND d2.name = 'Coq.Init.Nat.add'"
+            "AND d2.name = 'Stdlib.Init.Nat.add'"
         ).fetchone()
         conn.close()
         assert edge is not None, "Short name 'Nat.add' should resolve via suffix"
@@ -316,14 +316,14 @@ class TestMergeDependencies:
     def test_cross_library_deps_skip_self_references(self, tmp_path):
         """§4.8: Symbol-set resolution skips self-references."""
         decls = [{
-            "name": "Coq.Init.Nat.add",
-            "module": "Coq.Init.Nat",
+            "name": "Stdlib.Init.Nat.add",
+            "module": "Stdlib.Init.Nat",
             "kind": "definition",
             "statement": "fix add (n m : nat) : nat",
             "type_expr": "nat -> nat -> nat",
             "constr_tree": None,
             "node_count": 5,
-            "symbol_set": ["Coq.Init.Nat.add"],  # self-reference
+            "symbol_set": ["Stdlib.Init.Nat.add"],  # self-reference
         }]
         db_path = _create_per_library_db(
             tmp_path / "index-stdlib.db", "stdlib", decls,
@@ -524,15 +524,15 @@ class TestMergeFTS:
         merge_indexes([("stdlib", stdlib_path), ("mathcomp", mc_path)], dest)
 
         conn = sqlite3.connect(str(dest))
-        # Coq.Init.Datatypes.nat appears in stdlib decls; bool in mathcomp
+        # Stdlib.Init.Datatypes.nat appears in stdlib decls; bool in mathcomp
         nat_freq = conn.execute(
-            "SELECT freq FROM symbol_freq WHERE symbol = 'Coq.Init.Datatypes.nat'",
+            "SELECT freq FROM symbol_freq WHERE symbol = 'Stdlib.Init.Datatypes.nat'",
         ).fetchone()
         assert nat_freq is not None
         assert nat_freq[0] >= 2  # appears in both stdlib declarations
 
         bool_freq = conn.execute(
-            "SELECT freq FROM symbol_freq WHERE symbol = 'Coq.Init.Datatypes.bool'",
+            "SELECT freq FROM symbol_freq WHERE symbol = 'Stdlib.Init.Datatypes.bool'",
         ).fetchone()
         assert bool_freq is not None
         assert bool_freq[0] >= 1  # appears in mathcomp declaration

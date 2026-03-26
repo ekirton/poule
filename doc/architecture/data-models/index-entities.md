@@ -14,7 +14,7 @@ The core indexing unit representing one Coq/Rocq declaration extracted from a co
 |-------|------|-------------|
 | `id` | identifier | Primary key; auto-assigned |
 | `name` | qualified name | Unique; required; must be fully qualified canonical form |
-| `module` | qualified name | Required; must be a valid module path (e.g., `Coq.Arith.PeanoNat`) |
+| `module` | qualified name | Required; must be a valid module path (e.g., `Stdlib.Arith.PeanoNat`) |
 | `kind` | enumeration | Required; one of: `lemma`, `theorem`, `definition`, `instance`, `inductive`, `constructor`, `axiom` |
 | `statement` | text | Required; pretty-printed for display and full-text search |
 | `type_expr` | text | Optional; pretty-printed type signature; null when type extraction is unsupported for this kind |
@@ -151,8 +151,8 @@ A mapping from a Coq re-export path to the canonical definition FQN. Captured du
 
 | Field | Type | Constraints |
 |-------|------|-------------|
-| `alias_fqn` | qualified name | Primary key; the module-qualified re-export path (e.g., `Coq.Lists.List.map`) |
-| `canonical_fqn` | qualified name | Required; the canonical definition FQN (e.g., `Coq.Lists.ListDef.map`); must exist as a key in the inverted index |
+| `alias_fqn` | qualified name | Primary key; the module-qualified re-export path (e.g., `Stdlib.Lists.List.map`) |
+| `canonical_fqn` | qualified name | Required; the canonical definition FQN (e.g., `Stdlib.Lists.ListDef.map`); must exist as a key in the inverted index |
 
 ### Relationships
 

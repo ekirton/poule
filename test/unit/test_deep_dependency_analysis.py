@@ -269,7 +269,7 @@ class TestBuildGraphFromDpdgraph:
 
         dot_content = textwrap.dedent("""\
             digraph dependencies {
-              "Coq.Arith.Plus.add_comm" -> "Coq.Arith.Plus.add_assoc";
+              "Stdlib.Arith.Plus.add_comm" -> "Stdlib.Arith.Plus.add_assoc";
             }
         """)
         dot_path = _make_dot_file(dot_content)
@@ -278,8 +278,8 @@ class TestBuildGraphFromDpdgraph:
 
         assert graph.node_count == 2
         assert graph.edge_count == 1
-        assert "Coq.Arith.Plus.add_assoc" in graph.forward_adj["Coq.Arith.Plus.add_comm"]
-        assert "Coq.Arith.Plus.add_comm" in graph.reverse_adj["Coq.Arith.Plus.add_assoc"]
+        assert "Stdlib.Arith.Plus.add_assoc" in graph.forward_adj["Stdlib.Arith.Plus.add_comm"]
+        assert "Stdlib.Arith.Plus.add_comm" in graph.reverse_adj["Stdlib.Arith.Plus.add_assoc"]
 
     def test_module_inferred_from_qualified_name(self):
         """Node modules are inferred as the prefix before the last dot component."""
@@ -287,15 +287,15 @@ class TestBuildGraphFromDpdgraph:
 
         dot_content = textwrap.dedent("""\
             digraph dependencies {
-              "Coq.Arith.Plus.add_comm" -> "Coq.Arith.Plus.add_assoc";
+              "Stdlib.Arith.Plus.add_comm" -> "Stdlib.Arith.Plus.add_assoc";
             }
         """)
         dot_path = _make_dot_file(dot_content)
 
         graph = build_graph(dot_file_path=dot_path)
 
-        assert graph.metadata["Coq.Arith.Plus.add_comm"].module == "Coq.Arith.Plus"
-        assert graph.metadata["Coq.Arith.Plus.add_assoc"].module == "Coq.Arith.Plus"
+        assert graph.metadata["Stdlib.Arith.Plus.add_comm"].module == "Stdlib.Arith.Plus"
+        assert graph.metadata["Stdlib.Arith.Plus.add_assoc"].module == "Stdlib.Arith.Plus"
 
     def test_malformed_dot_returns_parse_error(self):
         """Given a malformed DOT file, a PARSE_ERROR is returned."""
@@ -548,74 +548,74 @@ class TestScopeFiltering:
     """Section 4.4: scope filter predicates and their composition."""
 
     def test_exclude_prefix_blocks_traversal(self):
-        """exclude_prefix("Coq.Init") blocks B in Coq.Init, so C is unreachable."""
+        """exclude_prefix("Stdlib.Init") blocks B in Coq.Init, so C is unreachable."""
         transitive_closure, _ = _import_transitive_closure()
         _, exclude_prefix, _ = _import_filters()
 
         metadata = {
             "A": ("MyLib", "lemma"),
-            "B": ("Coq.Init", "definition"),
-            "C": ("Coq.Arith", "lemma"),
+            "B": ("Stdlib.Init", "definition"),
+            "C": ("Stdlib.Arith", "lemma"),
         }
         graph = _make_graph([("A", "B"), ("B", "C")], metadata=metadata)
 
         result = transitive_closure(
             graph, root="A", max_depth=None,
-            scope_filter=[exclude_prefix("Coq.Init")],
+            scope_filter=[exclude_prefix("Stdlib.Init")],
         )
 
         assert result.nodes == {"A"}
 
     def test_module_prefix_includes_only_matching(self):
-        """module_prefix("Coq.Arith") includes only nodes in that prefix."""
+        """module_prefix("Stdlib.Arith") includes only nodes in that prefix."""
         transitive_closure, _ = _import_transitive_closure()
         module_prefix, _, _ = _import_filters()
 
         metadata = {
-            "Coq.Arith.Plus.add_comm": ("Coq.Arith.Plus", "lemma"),
-            "Coq.Init.Nat.add": ("Coq.Init.Nat", "definition"),
-            "Coq.Arith.Mult.mul_comm": ("Coq.Arith.Mult", "lemma"),
+            "Stdlib.Arith.Plus.add_comm": ("Stdlib.Arith.Plus", "lemma"),
+            "Stdlib.Init.Nat.add": ("Stdlib.Init.Nat", "definition"),
+            "Stdlib.Arith.Mult.mul_comm": ("Stdlib.Arith.Mult", "lemma"),
         }
         graph = _make_graph(
-            [("Coq.Arith.Plus.add_comm", "Coq.Init.Nat.add"),
-             ("Coq.Arith.Plus.add_comm", "Coq.Arith.Mult.mul_comm")],
+            [("Stdlib.Arith.Plus.add_comm", "Stdlib.Init.Nat.add"),
+             ("Stdlib.Arith.Plus.add_comm", "Stdlib.Arith.Mult.mul_comm")],
             metadata=metadata,
         )
 
         result = transitive_closure(
-            graph, root="Coq.Arith.Plus.add_comm", max_depth=None,
-            scope_filter=[module_prefix("Coq.Arith")],
+            graph, root="Stdlib.Arith.Plus.add_comm", max_depth=None,
+            scope_filter=[module_prefix("Stdlib.Arith")],
         )
 
-        assert "Coq.Arith.Mult.mul_comm" in result.nodes
-        assert "Coq.Init.Nat.add" not in result.nodes
+        assert "Stdlib.Arith.Mult.mul_comm" in result.nodes
+        assert "Stdlib.Init.Nat.add" not in result.nodes
 
     def test_filters_compose_as_conjunction(self):
         """Multiple filters compose: node must pass all.
-        module_prefix("Coq.Arith") AND exclude_prefix("Coq.Arith.Div")."""
+        module_prefix("Stdlib.Arith") AND exclude_prefix("Stdlib.Arith.Div")."""
         transitive_closure, _ = _import_transitive_closure()
         module_prefix, exclude_prefix, _ = _import_filters()
 
         metadata = {
             "Root.x": ("Root", "lemma"),
-            "Coq.Arith.Plus.add_comm": ("Coq.Arith.Plus", "lemma"),
-            "Coq.Arith.Div.div_mod": ("Coq.Arith.Div", "lemma"),
+            "Stdlib.Arith.Plus.add_comm": ("Stdlib.Arith.Plus", "lemma"),
+            "Stdlib.Arith.Div.div_mod": ("Stdlib.Arith.Div", "lemma"),
         }
         graph = _make_graph(
-            [("Root.x", "Coq.Arith.Plus.add_comm"),
-             ("Root.x", "Coq.Arith.Div.div_mod")],
+            [("Root.x", "Stdlib.Arith.Plus.add_comm"),
+             ("Root.x", "Stdlib.Arith.Div.div_mod")],
             metadata=metadata,
         )
 
         result = transitive_closure(
             graph, root="Root.x", max_depth=None,
-            scope_filter=[module_prefix("Coq.Arith"), exclude_prefix("Coq.Arith.Div")],
+            scope_filter=[module_prefix("Stdlib.Arith"), exclude_prefix("Stdlib.Arith.Div")],
         )
 
         # Root always included regardless of filters
         assert "Root.x" in result.nodes
-        assert "Coq.Arith.Plus.add_comm" in result.nodes
-        assert "Coq.Arith.Div.div_mod" not in result.nodes
+        assert "Stdlib.Arith.Plus.add_comm" in result.nodes
+        assert "Stdlib.Arith.Div.div_mod" not in result.nodes
 
     def test_root_always_included_regardless_of_filters(self):
         """Root node is included even when it would be excluded by filters."""
@@ -623,22 +623,22 @@ class TestScopeFiltering:
         _, exclude_prefix, _ = _import_filters()
 
         metadata = {
-            "Coq.Init.Root": ("Coq.Init", "lemma"),
-            "Coq.Init.Dep": ("Coq.Init", "lemma"),
+            "Stdlib.Init.Root": ("Stdlib.Init", "lemma"),
+            "Stdlib.Init.Dep": ("Stdlib.Init", "lemma"),
         }
         graph = _make_graph(
-            [("Coq.Init.Root", "Coq.Init.Dep")],
+            [("Stdlib.Init.Root", "Stdlib.Init.Dep")],
             metadata=metadata,
         )
 
         result = transitive_closure(
-            graph, root="Coq.Init.Root", max_depth=None,
-            scope_filter=[exclude_prefix("Coq.Init")],
+            graph, root="Stdlib.Init.Root", max_depth=None,
+            scope_filter=[exclude_prefix("Stdlib.Init")],
         )
 
         # Root is included; neighbor is excluded
-        assert "Coq.Init.Root" in result.nodes
-        assert "Coq.Init.Dep" not in result.nodes
+        assert "Stdlib.Init.Root" in result.nodes
+        assert "Stdlib.Init.Dep" not in result.nodes
 
     def test_same_project_filter(self):
         """same_project includes only nodes sharing root's top-level namespace."""
@@ -648,11 +648,11 @@ class TestScopeFiltering:
         metadata = {
             "MyLib.Foo.bar": ("MyLib.Foo", "lemma"),
             "MyLib.Baz.qux": ("MyLib.Baz", "definition"),
-            "Coq.Init.Nat.add": ("Coq.Init.Nat", "definition"),
+            "Stdlib.Init.Nat.add": ("Stdlib.Init.Nat", "definition"),
         }
         graph = _make_graph(
             [("MyLib.Foo.bar", "MyLib.Baz.qux"),
-             ("MyLib.Foo.bar", "Coq.Init.Nat.add")],
+             ("MyLib.Foo.bar", "Stdlib.Init.Nat.add")],
             metadata=metadata,
         )
 
@@ -662,7 +662,7 @@ class TestScopeFiltering:
         )
 
         assert "MyLib.Baz.qux" in result.nodes
-        assert "Coq.Init.Nat.add" not in result.nodes
+        assert "Stdlib.Init.Nat.add" not in result.nodes
 
 
 # ===========================================================================
@@ -724,22 +724,22 @@ class TestImpactAnalysis:
         _, exclude_prefix, _ = _import_filters()
 
         metadata = {
-            "Coq.Init.Nat.nat": ("Coq.Init.Nat", "inductive"),
-            "Coq.Arith.Plus.add_comm": ("Coq.Arith.Plus", "lemma"),
+            "Stdlib.Init.Nat.nat": ("Stdlib.Init.Nat", "inductive"),
+            "Stdlib.Arith.Plus.add_comm": ("Stdlib.Arith.Plus", "lemma"),
             "External.Lib.thing": ("External.Lib", "definition"),
         }
         graph = _make_graph(
-            [("Coq.Arith.Plus.add_comm", "Coq.Init.Nat.nat"),
-             ("External.Lib.thing", "Coq.Init.Nat.nat")],
+            [("Stdlib.Arith.Plus.add_comm", "Stdlib.Init.Nat.nat"),
+             ("External.Lib.thing", "Stdlib.Init.Nat.nat")],
             metadata=metadata,
         )
 
         result = impact_analysis(
-            graph, root="Coq.Init.Nat.nat", max_depth=None,
+            graph, root="Stdlib.Init.Nat.nat", max_depth=None,
             scope_filter=[exclude_prefix("External")],
         )
 
-        assert "Coq.Arith.Plus.add_comm" in result.impacted_nodes
+        assert "Stdlib.Arith.Plus.add_comm" in result.impacted_nodes
         assert "External.Lib.thing" not in result.impacted_nodes
 
     def test_empty_root_string_returns_invalid_input(self):
@@ -1004,11 +1004,11 @@ class TestDataModel:
     def test_node_metadata_is_named_tuple(self):
         """NodeMetadata is a NamedTuple with module and kind."""
         _, NodeMetadata = _import_graph_types()
-        meta = NodeMetadata(module="Coq.Arith", kind="lemma")
-        assert meta.module == "Coq.Arith"
+        meta = NodeMetadata(module="Stdlib.Arith", kind="lemma")
+        assert meta.module == "Stdlib.Arith"
         assert meta.kind == "lemma"
         # NamedTuple supports indexing
-        assert meta[0] == "Coq.Arith"
+        assert meta[0] == "Stdlib.Arith"
         assert meta[1] == "lemma"
 
     def test_transitive_closure_fields(self):

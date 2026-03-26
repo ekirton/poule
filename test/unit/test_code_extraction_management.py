@@ -304,11 +304,11 @@ class TestBuildCommand:
         """Spec example: fully qualified name with Scheme recursive (Section 4.2)."""
         build_command = _import_build_command()
         cmd = build_command(
-            definition_name="Coq.Init.Nat.add",
+            definition_name="Stdlib.Init.Nat.add",
             language="Scheme",
             recursive=True,
         )
-        assert cmd == "Extraction Language Scheme. Recursive Extraction Coq.Init.Nat.add."
+        assert cmd == "Extraction Language Scheme. Recursive Extraction Stdlib.Init.Nat.add."
 
     def test_definition_name_passed_verbatim(self):
         """The definition name is included verbatim -- no quoting, escaping, or qualification (Section 4.2)."""
@@ -437,14 +437,14 @@ class TestExtractCodeEntryPoint:
         await extract_code(
             session_manager=manager,
             session_id="s1",
-            definition_name="Coq.Init.Nat.add",
+            definition_name="Stdlib.Init.Nat.add",
             language="OCaml",
             recursive=False,
         )
         manager.submit_command.assert_called_once()
         call_args = manager.submit_command.call_args
         submitted = str(call_args)
-        assert "Coq.Init.Nat.add" in submitted
+        assert "Stdlib.Init.Nat.add" in submitted
 
 
 # ===========================================================================
@@ -930,7 +930,7 @@ class TestNonFunctionalRequirements:
         start = time.perf_counter_ns()
         for _ in range(1000):
             build_command(
-                definition_name="Coq.Init.Nat.add",
+                definition_name="Stdlib.Init.Nat.add",
                 language="OCaml",
                 recursive=True,
             )

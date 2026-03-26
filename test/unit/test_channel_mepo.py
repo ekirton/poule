@@ -285,9 +285,9 @@ class TestExtractConsts:
         from Poule.models.labels import LConstruct
 
         # LConstruct stores the parent inductive FQN, not the constructor name.
-        tree = make_tree(make_leaf(LConstruct("Coq.Init.Datatypes.bool", 1)))
+        tree = make_tree(make_leaf(LConstruct("Stdlib.Init.Datatypes.bool", 1)))
         result = extract_consts(tree)
-        assert "Coq.Init.Datatypes.bool" in result
+        assert "Stdlib.Init.Datatypes.bool" in result
 
     def test_tree_with_no_constants_returns_empty_set(
         self, make_leaf, make_node, make_tree,

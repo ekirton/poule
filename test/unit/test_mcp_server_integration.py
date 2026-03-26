@@ -60,41 +60,41 @@ def _populate_integration_db(writer: IndexWriter) -> dict[str, int]:
     and symbols — suitable for integration testing of the pipeline facade."""
     decls = [
         {
-            "name": "Coq.Arith.PeanoNat.Nat.add_comm",
-            "module": "Coq.Arith.PeanoNat",
+            "name": "Stdlib.Arith.PeanoNat.Nat.add_comm",
+            "module": "Stdlib.Arith.PeanoNat",
             "kind": "lemma",
             "statement": "forall n m : nat, n + m = m + n",
             "type_expr": "forall n m : nat, n + m = m + n",
             "constr_tree": None,
             "node_count": 7,
-            "symbol_set": ["Coq.Init.Nat.add", "Coq.Init.Logic.eq"],
+            "symbol_set": ["Stdlib.Init.Nat.add", "Stdlib.Init.Logic.eq"],
         },
         {
-            "name": "Coq.Arith.PeanoNat.Nat.add_assoc",
-            "module": "Coq.Arith.PeanoNat",
+            "name": "Stdlib.Arith.PeanoNat.Nat.add_assoc",
+            "module": "Stdlib.Arith.PeanoNat",
             "kind": "lemma",
             "statement": "forall n m p : nat, n + (m + p) = n + m + p",
             "type_expr": "forall n m p : nat, n + (m + p) = n + m + p",
             "constr_tree": None,
             "node_count": 11,
-            "symbol_set": ["Coq.Init.Nat.add", "Coq.Init.Logic.eq"],
+            "symbol_set": ["Stdlib.Init.Nat.add", "Stdlib.Init.Logic.eq"],
         },
         {
-            "name": "Coq.Init.Nat.add",
-            "module": "Coq.Init.Nat",
+            "name": "Stdlib.Init.Nat.add",
+            "module": "Stdlib.Init.Nat",
             "kind": "definition",
             "statement": "fix add (n m : nat) : nat := ...",
             "type_expr": "nat -> nat -> nat",
             "constr_tree": None,
             "node_count": 5,
-            "symbol_set": ["Coq.Init.Datatypes.nat"],
+            "symbol_set": ["Stdlib.Init.Datatypes.nat"],
         },
     ]
     ids = writer.insert_declarations(decls)
 
-    id_comm = ids["Coq.Arith.PeanoNat.Nat.add_comm"]
-    id_assoc = ids["Coq.Arith.PeanoNat.Nat.add_assoc"]
-    id_add = ids["Coq.Init.Nat.add"]
+    id_comm = ids["Stdlib.Arith.PeanoNat.Nat.add_comm"]
+    id_assoc = ids["Stdlib.Arith.PeanoNat.Nat.add_assoc"]
+    id_add = ids["Stdlib.Init.Nat.add"]
 
     # add_comm uses add; add_assoc uses add
     writer.insert_dependencies([
@@ -110,9 +110,9 @@ def _populate_integration_db(writer: IndexWriter) -> dict[str, int]:
     ])
 
     writer.insert_symbol_freq({
-        "Coq.Init.Nat.add": 3,
-        "Coq.Init.Logic.eq": 2,
-        "Coq.Init.Datatypes.nat": 1,
+        "Stdlib.Init.Nat.add": 3,
+        "Stdlib.Init.Logic.eq": 2,
+        "Stdlib.Init.Datatypes.nat": 1,
     })
 
     writer.write_meta("schema_version", "1")
@@ -149,14 +149,14 @@ class TestGetLemmaIntegration:
     """_PipelineFacade.get_lemma returns spec-compliant LemmaDetail dicts."""
 
     def test_name_is_fully_qualified(self, facade):
-        result = facade.get_lemma("Coq.Arith.PeanoNat.Nat.add_comm")
+        result = facade.get_lemma("Stdlib.Arith.PeanoNat.Nat.add_comm")
         assert result is not None
         assert _is_fully_qualified(result["name"]), (
             f"Expected fully qualified name, got: {result['name']}"
         )
 
     def test_module_is_logical_path(self, facade):
-        result = facade.get_lemma("Coq.Arith.PeanoNat.Nat.add_comm")
+        result = facade.get_lemma("Stdlib.Arith.PeanoNat.Nat.add_comm")
         assert result is not None
         assert _is_logical_module_path(result["module"]), (
             f"Expected logical module path, got: {result['module']}"
@@ -164,16 +164,16 @@ class TestGetLemmaIntegration:
 
     def test_dependencies_populated(self, facade):
         """add_comm uses add — dependencies list must not be empty."""
-        result = facade.get_lemma("Coq.Arith.PeanoNat.Nat.add_comm")
+        result = facade.get_lemma("Stdlib.Arith.PeanoNat.Nat.add_comm")
         assert result is not None
         assert len(result["dependencies"]) > 0, (
             "Expected non-empty dependencies for Nat.add_comm"
         )
-        assert "Coq.Init.Nat.add" in result["dependencies"]
+        assert "Stdlib.Init.Nat.add" in result["dependencies"]
 
     def test_dependents_populated(self, facade):
         """add is used by add_comm and add_assoc — dependents must not be empty."""
-        result = facade.get_lemma("Coq.Init.Nat.add")
+        result = facade.get_lemma("Stdlib.Init.Nat.add")
         assert result is not None
         assert len(result["dependents"]) > 0, (
             "Expected non-empty dependents for Coq.Init.Nat.add"
@@ -181,30 +181,30 @@ class TestGetLemmaIntegration:
 
     def test_symbols_populated(self, facade):
         """add_comm has a non-empty symbol_set in the DB."""
-        result = facade.get_lemma("Coq.Arith.PeanoNat.Nat.add_comm")
+        result = facade.get_lemma("Stdlib.Arith.PeanoNat.Nat.add_comm")
         assert result is not None
         assert len(result["symbols"]) > 0, (
             "Expected non-empty symbols for Nat.add_comm"
         )
-        assert "Coq.Init.Nat.add" in result["symbols"]
+        assert "Stdlib.Init.Nat.add" in result["symbols"]
 
     def test_node_count_positive(self, facade):
-        result = facade.get_lemma("Coq.Arith.PeanoNat.Nat.add_comm")
+        result = facade.get_lemma("Stdlib.Arith.PeanoNat.Nat.add_comm")
         assert result is not None
         assert result["node_count"] > 0
 
     def test_score_is_1_point_0(self, facade):
-        result = facade.get_lemma("Coq.Arith.PeanoNat.Nat.add_comm")
+        result = facade.get_lemma("Stdlib.Arith.PeanoNat.Nat.add_comm")
         assert result is not None
         assert result["score"] == 1.0
 
     def test_proof_sketch_empty_in_phase_1(self, facade):
-        result = facade.get_lemma("Coq.Arith.PeanoNat.Nat.add_comm")
+        result = facade.get_lemma("Stdlib.Arith.PeanoNat.Nat.add_comm")
         assert result is not None
         assert result["proof_sketch"] == ""
 
     def test_all_required_fields_present(self, facade):
-        result = facade.get_lemma("Coq.Arith.PeanoNat.Nat.add_comm")
+        result = facade.get_lemma("Stdlib.Arith.PeanoNat.Nat.add_comm")
         assert result is not None
         required = {
             "name", "statement", "type", "module", "kind", "score",
@@ -220,7 +220,7 @@ class TestGetLemmaIntegration:
         assert result is None
 
     def test_dependency_names_are_fully_qualified(self, facade):
-        result = facade.get_lemma("Coq.Arith.PeanoNat.Nat.add_comm")
+        result = facade.get_lemma("Stdlib.Arith.PeanoNat.Nat.add_comm")
         assert result is not None
         for dep_name in result["dependencies"]:
             assert _is_fully_qualified(dep_name), (
@@ -228,7 +228,7 @@ class TestGetLemmaIntegration:
             )
 
     def test_dependent_names_are_fully_qualified(self, facade):
-        result = facade.get_lemma("Coq.Init.Nat.add")
+        result = facade.get_lemma("Stdlib.Init.Nat.add")
         assert result is not None
         for dep_name in result["dependents"]:
             assert _is_fully_qualified(dep_name), (
@@ -246,32 +246,32 @@ class TestFindRelatedIntegration:
 
     def test_uses_returns_dependencies(self, facade):
         results = facade.find_related(
-            "Coq.Arith.PeanoNat.Nat.add_comm", "uses"
+            "Stdlib.Arith.PeanoNat.Nat.add_comm", "uses"
         )
         assert results is not None
         assert len(results) > 0
         names = [r["name"] for r in results]
-        assert "Coq.Init.Nat.add" in names
+        assert "Stdlib.Init.Nat.add" in names
 
     def test_used_by_returns_dependents(self, facade):
-        results = facade.find_related("Coq.Init.Nat.add", "used_by")
+        results = facade.find_related("Stdlib.Init.Nat.add", "used_by")
         assert results is not None
         assert len(results) > 0
         names = [r["name"] for r in results]
-        assert "Coq.Arith.PeanoNat.Nat.add_comm" in names
+        assert "Stdlib.Arith.PeanoNat.Nat.add_comm" in names
 
     def test_same_module_returns_siblings(self, facade):
         results = facade.find_related(
-            "Coq.Arith.PeanoNat.Nat.add_comm", "same_module"
+            "Stdlib.Arith.PeanoNat.Nat.add_comm", "same_module"
         )
         assert results is not None
         assert len(results) > 0
         names = [r["name"] for r in results]
-        assert "Coq.Arith.PeanoNat.Nat.add_assoc" in names
+        assert "Stdlib.Arith.PeanoNat.Nat.add_assoc" in names
 
     def test_result_names_are_fully_qualified(self, facade):
         results = facade.find_related(
-            "Coq.Arith.PeanoNat.Nat.add_comm", "uses"
+            "Stdlib.Arith.PeanoNat.Nat.add_comm", "uses"
         )
         assert results is not None
         for r in results:
@@ -281,7 +281,7 @@ class TestFindRelatedIntegration:
 
     def test_result_modules_are_logical_paths(self, facade):
         results = facade.find_related(
-            "Coq.Arith.PeanoNat.Nat.add_comm", "same_module"
+            "Stdlib.Arith.PeanoNat.Nat.add_comm", "same_module"
         )
         assert results is not None
         for r in results:
@@ -291,7 +291,7 @@ class TestFindRelatedIntegration:
 
     def test_all_scores_are_1_point_0(self, facade):
         results = facade.find_related(
-            "Coq.Arith.PeanoNat.Nat.add_comm", "uses"
+            "Stdlib.Arith.PeanoNat.Nat.add_comm", "uses"
         )
         assert results is not None
         for r in results:
@@ -303,7 +303,7 @@ class TestFindRelatedIntegration:
 
     def test_result_has_all_search_result_fields(self, facade):
         results = facade.find_related(
-            "Coq.Arith.PeanoNat.Nat.add_comm", "uses"
+            "Stdlib.Arith.PeanoNat.Nat.add_comm", "uses"
         )
         assert results is not None and len(results) > 0
         required = {"name", "statement", "type", "module", "kind", "score"}
@@ -330,18 +330,18 @@ class TestListModulesIntegration:
             )
 
     def test_prefix_filtering(self, facade):
-        modules = facade.list_modules("Coq.Arith")
+        modules = facade.list_modules("Stdlib.Arith")
         assert len(modules) > 0
         for m in modules:
-            assert m["name"].startswith("Coq.Arith"), (
+            assert m["name"].startswith("Stdlib.Arith"), (
                 f"Module {m['name']} doesn't match prefix 'Coq.Arith'"
             )
 
     def test_empty_prefix_returns_all_modules(self, facade):
         modules = facade.list_modules("")
         names = {m["name"] for m in modules}
-        assert "Coq.Arith.PeanoNat" in names
-        assert "Coq.Init.Nat" in names
+        assert "Stdlib.Arith.PeanoNat" in names
+        assert "Stdlib.Init.Nat" in names
 
     def test_each_module_has_decl_count(self, facade):
         modules = facade.list_modules("")
@@ -353,13 +353,13 @@ class TestListModulesIntegration:
         modules = facade.list_modules("")
         by_name = {m["name"]: m["decl_count"] for m in modules}
         # Coq.Arith.PeanoNat has add_comm and add_assoc
-        assert by_name.get("Coq.Arith.PeanoNat") == 2
+        assert by_name.get("Stdlib.Arith.PeanoNat") == 2
         # Coq.Init.Nat has add
-        assert by_name.get("Coq.Init.Nat") == 1
+        assert by_name.get("Stdlib.Init.Nat") == 1
 
     def test_corelib_prefix_returns_same_as_coq(self, facade):
         """Corelib.Arith prefix returns the same modules as Coq.Arith."""
-        coq_modules = facade.list_modules("Coq.Arith")
+        coq_modules = facade.list_modules("Stdlib.Arith")
         corelib_modules = facade.list_modules("Corelib.Arith")
         assert len(corelib_modules) > 0
         assert len(corelib_modules) == len(coq_modules)
@@ -372,7 +372,7 @@ class TestListModulesIntegration:
         modules = facade.list_modules("Corelib.Init")
         assert len(modules) > 0
         for m in modules:
-            assert m["name"].startswith("Coq.Init"), (
+            assert m["name"].startswith("Stdlib.Init"), (
                 f"Module {m['name']} doesn't start with 'Coq.Init'"
             )
 
@@ -451,7 +451,7 @@ class TestDispatchToolIntegration:
 
         result = _dispatch_tool(
             server_ctx, "get_lemma",
-            {"name": "Coq.Arith.PeanoNat.Nat.add_comm"},
+            {"name": "Stdlib.Arith.PeanoNat.Nat.add_comm"},
         )
         assert result.get("isError") is not True
         parsed = json.loads(result["content"][0]["text"])
@@ -462,7 +462,7 @@ class TestDispatchToolIntegration:
 
         result = _dispatch_tool(
             server_ctx, "get_lemma",
-            {"name": "Coq.Arith.PeanoNat.Nat.add_comm"},
+            {"name": "Stdlib.Arith.PeanoNat.Nat.add_comm"},
         )
         parsed = json.loads(result["content"][0]["text"])
         assert _is_logical_module_path(parsed["module"])
@@ -472,18 +472,18 @@ class TestDispatchToolIntegration:
 
         result = _dispatch_tool(
             server_ctx, "get_lemma",
-            {"name": "Coq.Arith.PeanoNat.Nat.add_comm"},
+            {"name": "Stdlib.Arith.PeanoNat.Nat.add_comm"},
         )
         parsed = json.loads(result["content"][0]["text"])
         assert len(parsed["dependencies"]) > 0
-        assert "Coq.Init.Nat.add" in parsed["dependencies"]
+        assert "Stdlib.Init.Nat.add" in parsed["dependencies"]
 
     def test_get_lemma_has_populated_symbols(self, server_ctx):
         from Poule.server.__main__ import _dispatch_tool
 
         result = _dispatch_tool(
             server_ctx, "get_lemma",
-            {"name": "Coq.Arith.PeanoNat.Nat.add_comm"},
+            {"name": "Stdlib.Arith.PeanoNat.Nat.add_comm"},
         )
         parsed = json.loads(result["content"][0]["text"])
         assert len(parsed["symbols"]) > 0
@@ -492,7 +492,7 @@ class TestDispatchToolIntegration:
         from Poule.server.__main__ import _dispatch_tool
 
         result = _dispatch_tool(
-            server_ctx, "list_modules", {"prefix": "Coq.Arith"},
+            server_ctx, "list_modules", {"prefix": "Stdlib.Arith"},
         )
         assert result.get("isError") is not True
         parsed = json.loads(result["content"][0]["text"])
@@ -507,7 +507,7 @@ class TestDispatchToolIntegration:
 
         result = _dispatch_tool(
             server_ctx, "find_related",
-            {"name": "Coq.Arith.PeanoNat.Nat.add_comm", "relation": "uses"},
+            {"name": "Stdlib.Arith.PeanoNat.Nat.add_comm", "relation": "uses"},
         )
         assert result.get("isError") is not True
         parsed = json.loads(result["content"][0]["text"])

@@ -38,8 +38,8 @@ from Poule.storage.errors import (
 
 
 def _sample_declaration(
-    name="Coq.Init.Nat.add",
-    module="Coq.Init.Nat",
+    name="Stdlib.Init.Nat.add",
+    module="Stdlib.Init.Nat",
     kind="definition",
     statement="forall n m : nat, n + m = m + n",
     type_expr="Prop",
@@ -57,7 +57,7 @@ def _sample_declaration(
         "type_expr": type_expr,
         "constr_tree": constr_tree,
         "node_count": node_count,
-        "symbol_set": symbol_set or ["Coq.Init.Nat.add", "Coq.Init.Logic.eq"],
+        "symbol_set": symbol_set or ["Stdlib.Init.Nat.add", "Stdlib.Init.Logic.eq"],
         "has_proof_body": has_proof_body,
     }
 
@@ -66,21 +66,21 @@ def _populate_minimal_db(writer):
     """Insert a minimal dataset (2 declarations, 1 dependency, WL vectors,
     symbol freq, metadata) via IndexWriter and finalize."""
     decl_a = _sample_declaration(
-        name="Coq.Init.Nat.add",
-        module="Coq.Init.Nat",
+        name="Stdlib.Init.Nat.add",
+        module="Stdlib.Init.Nat",
         kind="definition",
-        symbol_set=["Coq.Init.Nat.add"],
+        symbol_set=["Stdlib.Init.Nat.add"],
     )
     decl_b = _sample_declaration(
-        name="Coq.Init.Nat.mul",
-        module="Coq.Init.Nat",
+        name="Stdlib.Init.Nat.mul",
+        module="Stdlib.Init.Nat",
         kind="definition",
-        symbol_set=["Coq.Init.Nat.mul", "Coq.Init.Nat.add"],
+        symbol_set=["Stdlib.Init.Nat.mul", "Stdlib.Init.Nat.add"],
     )
     ids = writer.insert_declarations([decl_a, decl_b])
 
-    id_a = ids["Coq.Init.Nat.add"]
-    id_b = ids["Coq.Init.Nat.mul"]
+    id_a = ids["Stdlib.Init.Nat.add"]
+    id_b = ids["Stdlib.Init.Nat.mul"]
 
     writer.insert_wl_vectors([
         {"decl_id": id_a, "h": 1, "histogram": {"LConst": 2, "LApp": 1}},
@@ -95,7 +95,7 @@ def _populate_minimal_db(writer):
         {"src": id_b, "dst": id_a, "relation": "uses"},
     ])
 
-    writer.insert_symbol_freq({"Coq.Init.Nat.add": 2, "Coq.Init.Nat.mul": 1})
+    writer.insert_symbol_freq({"Stdlib.Init.Nat.add": 2, "Stdlib.Init.Nat.mul": 1})
 
     writer.write_meta("schema_version", "1")
     writer.write_meta("coq_version", "8.19")
@@ -279,8 +279,8 @@ class TestInsertDeclarations:
         ids = writer.insert_declarations([decl])
         writer.finalize()
 
-        assert "Coq.Init.Nat.add" in ids
-        assert isinstance(ids["Coq.Init.Nat.add"], int)
+        assert "Stdlib.Init.Nat.add" in ids
+        assert isinstance(ids["Stdlib.Init.Nat.add"], int)
 
     def test_multiple_declarations_in_batch(self, tmp_db_path):
         writer = IndexWriter.create(tmp_db_path)
@@ -316,7 +316,7 @@ class TestInsertWlVectors:
     def test_vectors_inserted(self, tmp_db_path):
         writer = IndexWriter.create(tmp_db_path)
         ids = writer.insert_declarations([_sample_declaration()])
-        decl_id = ids["Coq.Init.Nat.add"]
+        decl_id = ids["Stdlib.Init.Nat.add"]
 
         writer.insert_wl_vectors([
             {"decl_id": decl_id, "h": 1, "histogram": {"LConst": 2}},
@@ -362,7 +362,7 @@ class TestInsertDependencies:
     def test_self_loop_rejected(self, tmp_db_path):
         writer = IndexWriter.create(tmp_db_path)
         ids = writer.insert_declarations([_sample_declaration()])
-        decl_id = ids["Coq.Init.Nat.add"]
+        decl_id = ids["Stdlib.Init.Nat.add"]
 
         with pytest.raises(ValueError):
             writer.insert_dependencies([
@@ -376,7 +376,7 @@ class TestInsertSymbolFreq:
 
     def test_entries_inserted(self, tmp_db_path):
         writer = IndexWriter.create(tmp_db_path)
-        writer.insert_symbol_freq({"Coq.Init.Nat.add": 5, "Coq.Init.Logic.eq": 3})
+        writer.insert_symbol_freq({"Stdlib.Init.Nat.add": 5, "Stdlib.Init.Logic.eq": 3})
         writer.finalize()
 
         conn = sqlite3.connect(tmp_db_path)
@@ -384,8 +384,8 @@ class TestInsertSymbolFreq:
         conn.close()
 
         freq_map = dict(rows)
-        assert freq_map["Coq.Init.Nat.add"] == 5
-        assert freq_map["Coq.Init.Logic.eq"] == 3
+        assert freq_map["Stdlib.Init.Nat.add"] == 5
+        assert freq_map["Stdlib.Init.Logic.eq"] == 3
 
 
 class TestWriteMeta:
@@ -430,7 +430,7 @@ class TestBatchTransactionProtocol:
     def test_declarations_and_wl_vectors_coinserted(self, tmp_db_path):
         writer = IndexWriter.create(tmp_db_path)
         ids = writer.insert_declarations([_sample_declaration()])
-        decl_id = ids["Coq.Init.Nat.add"]
+        decl_id = ids["Stdlib.Init.Nat.add"]
 
         writer.insert_wl_vectors([
             {"decl_id": decl_id, "h": 3, "histogram": {"LConst": 1}},
@@ -503,7 +503,7 @@ class TestLoadWlHistograms:
         ids = reader._ids
         histograms = reader.load_wl_histograms()
 
-        id_a = ids["Coq.Init.Nat.add"]
+        id_a = ids["Stdlib.Init.Nat.add"]
         assert id_a in histograms
         assert set(histograms[id_a].keys()) == {1, 3, 5}
         assert isinstance(histograms[id_a][3], dict)
@@ -512,7 +512,7 @@ class TestLoadWlHistograms:
         ids = reader._ids
         histograms = reader.load_wl_histograms()
 
-        id_a = ids["Coq.Init.Nat.add"]
+        id_a = ids["Stdlib.Init.Nat.add"]
         assert histograms[id_a][1] == {"LConst": 2, "LApp": 1}
 
 
@@ -523,18 +523,18 @@ class TestLoadInvertedIndex:
         ids = reader._ids
         inv = reader.load_inverted_index()
 
-        # "Coq.Init.Nat.add" appears in both declarations' symbol_set
-        assert "Coq.Init.Nat.add" in inv
-        assert ids["Coq.Init.Nat.add"] in inv["Coq.Init.Nat.add"]
-        assert ids["Coq.Init.Nat.mul"] in inv["Coq.Init.Nat.add"]
+        # "Stdlib.Init.Nat.add" appears in both declarations' symbol_set
+        assert "Stdlib.Init.Nat.add" in inv
+        assert ids["Stdlib.Init.Nat.add"] in inv["Stdlib.Init.Nat.add"]
+        assert ids["Stdlib.Init.Nat.mul"] in inv["Stdlib.Init.Nat.add"]
 
     def test_unique_symbol_maps_to_single_decl(self, reader):
         ids = reader._ids
         inv = reader.load_inverted_index()
 
-        # "Coq.Init.Nat.mul" only in mul's symbol_set
-        assert "Coq.Init.Nat.mul" in inv
-        assert inv["Coq.Init.Nat.mul"] == {ids["Coq.Init.Nat.mul"]}
+        # "Stdlib.Init.Nat.mul" only in mul's symbol_set
+        assert "Stdlib.Init.Nat.mul" in inv
+        assert inv["Stdlib.Init.Nat.mul"] == {ids["Stdlib.Init.Nat.mul"]}
 
 
 class TestLoadSymbolFrequencies:
@@ -543,8 +543,8 @@ class TestLoadSymbolFrequencies:
     def test_returns_frequencies(self, reader):
         freqs = reader.load_symbol_frequencies()
 
-        assert freqs["Coq.Init.Nat.add"] == 2
-        assert freqs["Coq.Init.Nat.mul"] == 1
+        assert freqs["Stdlib.Init.Nat.add"] == 2
+        assert freqs["Stdlib.Init.Nat.mul"] == 1
 
 
 class TestLoadDeclarationNodeCounts:
@@ -554,8 +554,8 @@ class TestLoadDeclarationNodeCounts:
         ids = reader._ids
         counts = reader.load_declaration_node_counts()
 
-        assert ids["Coq.Init.Nat.add"] in counts
-        assert ids["Coq.Init.Nat.mul"] in counts
+        assert ids["Stdlib.Init.Nat.add"] in counts
+        assert ids["Stdlib.Init.Nat.mul"] in counts
 
     def test_values_are_integers(self, reader):
         counts = reader.load_declaration_node_counts()
@@ -568,19 +568,19 @@ class TestLoadDeclarationNodeCounts:
         counts = reader.load_declaration_node_counts()
 
         # Both declarations use default node_count=5
-        assert counts[ids["Coq.Init.Nat.add"]] == 5
-        assert counts[ids["Coq.Init.Nat.mul"]] == 5
+        assert counts[ids["Stdlib.Init.Nat.add"]] == 5
+        assert counts[ids["Stdlib.Init.Nat.mul"]] == 5
 
 
 class TestGetDeclaration:
     """get_declaration returns a single row by name, or None."""
 
     def test_returns_existing_declaration(self, reader):
-        decl = reader.get_declaration("Coq.Init.Nat.add")
+        decl = reader.get_declaration("Stdlib.Init.Nat.add")
 
         assert decl is not None
-        assert decl["name"] == "Coq.Init.Nat.add"
-        assert decl["module"] == "Coq.Init.Nat"
+        assert decl["name"] == "Stdlib.Init.Nat.add"
+        assert decl["module"] == "Stdlib.Init.Nat"
         assert decl["kind"] == "definition"
 
     def test_returns_none_for_missing(self, reader):
@@ -599,7 +599,7 @@ class TestGetDeclarationsByIds:
 
     def test_missing_ids_silently_omitted(self, reader):
         ids = reader._ids
-        results = reader.get_declarations_by_ids([ids["Coq.Init.Nat.add"], 99999])
+        results = reader.get_declarations_by_ids([ids["Stdlib.Init.Nat.add"], 99999])
 
         assert len(results) == 1
 
@@ -611,7 +611,7 @@ class TestSearchFts:
         results = reader.search_fts("add", limit=10)
 
         assert len(results) >= 1
-        assert any(r["name"] == "Coq.Init.Nat.add" for r in results)
+        assert any(r["name"] == "Stdlib.Init.Nat.add" for r in results)
 
     def test_scores_normalized_zero_to_one(self, reader):
         results = reader.search_fts("Nat", limit=10)
@@ -640,7 +640,7 @@ class TestGetDependencies:
 
         # mul depends on add (outgoing from mul)
         deps = reader.get_dependencies(
-            ids["Coq.Init.Nat.mul"], direction="outgoing", relation=None
+            ids["Stdlib.Init.Nat.mul"], direction="outgoing", relation=None
         )
         assert len(deps) == 1
 
@@ -649,7 +649,7 @@ class TestGetDependencies:
 
         # add is depended on by mul (incoming to add)
         deps = reader.get_dependencies(
-            ids["Coq.Init.Nat.add"], direction="incoming", relation=None
+            ids["Stdlib.Init.Nat.add"], direction="incoming", relation=None
         )
         assert len(deps) == 1
 
@@ -657,12 +657,12 @@ class TestGetDependencies:
         ids = reader._ids
 
         deps = reader.get_dependencies(
-            ids["Coq.Init.Nat.mul"], direction="outgoing", relation="uses"
+            ids["Stdlib.Init.Nat.mul"], direction="outgoing", relation="uses"
         )
         assert len(deps) == 1
 
         deps = reader.get_dependencies(
-            ids["Coq.Init.Nat.mul"], direction="outgoing", relation="instance_of"
+            ids["Stdlib.Init.Nat.mul"], direction="outgoing", relation="instance_of"
         )
         assert len(deps) == 0
 
@@ -671,18 +671,18 @@ class TestGetDeclarationsByModule:
     """get_declarations_by_module returns all declarations in a module."""
 
     def test_returns_module_declarations(self, reader):
-        results = reader.get_declarations_by_module("Coq.Init.Nat", exclude_id=None)
+        results = reader.get_declarations_by_module("Stdlib.Init.Nat", exclude_id=None)
 
         assert len(results) == 2
 
     def test_excludes_specified_id(self, reader):
         ids = reader._ids
         results = reader.get_declarations_by_module(
-            "Coq.Init.Nat", exclude_id=ids["Coq.Init.Nat.add"]
+            "Stdlib.Init.Nat", exclude_id=ids["Stdlib.Init.Nat.add"]
         )
 
         assert len(results) == 1
-        assert results[0]["name"] == "Coq.Init.Nat.mul"
+        assert results[0]["name"] == "Stdlib.Init.Nat.mul"
 
 
 class TestListModules:
@@ -692,11 +692,11 @@ class TestListModules:
         modules = reader.list_modules("")
 
         assert len(modules) >= 1
-        mod = next(m for m in modules if m["module"] == "Coq.Init.Nat")
+        mod = next(m for m in modules if m["module"] == "Stdlib.Init.Nat")
         assert mod["count"] == 2
 
     def test_filters_by_prefix(self, reader):
-        results = reader.list_modules("Coq.Init")
+        results = reader.list_modules("Stdlib.Init")
         assert len(results) >= 1
 
         results = reader.list_modules("Nonexistent")
@@ -823,7 +823,7 @@ class TestConcurrentReaders:
             try:
                 r = IndexReader.open(db_path)
                 r.load_symbol_frequencies()
-                r.get_declaration("Coq.Init.Nat.add")
+                r.get_declaration("Stdlib.Init.Nat.add")
                 r.close()
             except Exception as exc:
                 errors.append(exc)
@@ -932,7 +932,7 @@ class TestQueryAfterClose:
         r.close()
 
         with pytest.raises(StorageError):
-            r.get_declaration("Coq.Init.Nat.add")
+            r.get_declaration("Stdlib.Init.Nat.add")
 
     def test_search_fts_after_close_raises_storage_error(self, populated_db):
         db_path, _ids = populated_db
@@ -1261,8 +1261,8 @@ class TestInsertReExportAliases:
     def test_inserts_aliases(self, tmp_db_path):
         writer = IndexWriter.create(tmp_db_path)
         aliases = {
-            "Coq.Lists.List.map": "Coq.Lists.ListDef.map",
-            "Coq.Lists.List.filter": "Coq.Lists.ListDef.filter",
+            "Stdlib.Lists.List.map": "Stdlib.Lists.ListDef.map",
+            "Stdlib.Lists.List.filter": "Stdlib.Lists.ListDef.filter",
         }
         writer.insert_re_export_aliases(aliases)
         writer.write_meta("schema_version", "1")
@@ -1275,8 +1275,8 @@ class TestInsertReExportAliases:
         conn.close()
 
         assert len(rows) == 2
-        assert rows[0] == ("Coq.Lists.List.filter", "Coq.Lists.ListDef.filter")
-        assert rows[1] == ("Coq.Lists.List.map", "Coq.Lists.ListDef.map")
+        assert rows[0] == ("Stdlib.Lists.List.filter", "Stdlib.Lists.ListDef.filter")
+        assert rows[1] == ("Stdlib.Lists.List.map", "Stdlib.Lists.ListDef.map")
 
     def test_empty_aliases_is_noop(self, tmp_db_path):
         writer = IndexWriter.create(tmp_db_path)
@@ -1293,22 +1293,22 @@ class TestInsertReExportAliases:
         """Duplicate alias_fqn keys are silently ignored (first write wins)."""
         writer = IndexWriter.create(tmp_db_path)
         writer.insert_re_export_aliases({
-            "Coq.Lists.List.map": "Coq.Lists.ListDef.map",
+            "Stdlib.Lists.List.map": "Stdlib.Lists.ListDef.map",
         })
         # Second insert with same key, different value
         writer.insert_re_export_aliases({
-            "Coq.Lists.List.map": "SomethingElse.map",
+            "Stdlib.Lists.List.map": "SomethingElse.map",
         })
         writer.write_meta("schema_version", "1")
         writer.finalize()
 
         conn = sqlite3.connect(tmp_db_path)
         rows = conn.execute(
-            "SELECT canonical_fqn FROM re_export_aliases WHERE alias_fqn = 'Coq.Lists.List.map'"
+            "SELECT canonical_fqn FROM re_export_aliases WHERE alias_fqn = 'Stdlib.Lists.List.map'"
         ).fetchall()
         conn.close()
         assert len(rows) == 1
-        assert rows[0][0] == "Coq.Lists.ListDef.map"
+        assert rows[0][0] == "Stdlib.Lists.ListDef.map"
 
 
 class TestLoadReExportAliases:
@@ -1317,14 +1317,14 @@ class TestLoadReExportAliases:
     def test_loads_aliases(self, tmp_db_path):
         writer = IndexWriter.create(tmp_db_path)
         writer.insert_re_export_aliases({
-            "Coq.Lists.List.map": "Coq.Lists.ListDef.map",
+            "Stdlib.Lists.List.map": "Stdlib.Lists.ListDef.map",
         })
         _populate_minimal_db_after_writer_created(writer)
 
         with IndexReader.open(tmp_db_path) as r:
             aliases = r.load_re_export_aliases()
 
-        assert aliases == {"Coq.Lists.List.map": "Coq.Lists.ListDef.map"}
+        assert aliases == {"Stdlib.Lists.List.map": "Stdlib.Lists.ListDef.map"}
 
     def test_empty_table_returns_empty_dict(self, tmp_db_path):
         writer = IndexWriter.create(tmp_db_path)
@@ -1358,12 +1358,12 @@ def _populate_minimal_db_after_writer_created(writer):
     Assumes writer was already created via IndexWriter.create().
     """
     decl = _sample_declaration(
-        "Coq.Init.Nat.add", "Coq.Init.Nat", "lemma",
+        "Stdlib.Init.Nat.add", "Stdlib.Init.Nat", "lemma",
         "forall n m, n + m = m + n",
         "nat -> nat -> Prop",
     )
     writer.insert_declarations([decl])
-    writer.insert_symbol_freq({"Coq.Init.Nat.add": 1})
+    writer.insert_symbol_freq({"Stdlib.Init.Nat.add": 1})
     writer.write_meta("schema_version", "1")
     writer.write_meta("coq_version", "9.1.1")
     writer.write_meta("created_at", "2026-01-01T00:00:00Z")

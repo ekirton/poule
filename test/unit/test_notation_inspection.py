@@ -91,7 +91,7 @@ def _make_notation_info(
     arg_levels=None,
     fmt=None,
     scope="list_scope",
-    defining_module="Coq.Lists.List",
+    defining_module="Stdlib.Lists.List",
     only_parsing=False,
     only_printing=False,
 ):
@@ -115,7 +115,7 @@ def _make_notation_info(
 def _make_notation_interpretation(
     expansion="Nat.add ?n ?m",
     scope="nat_scope",
-    defining_module="Coq.Init.Nat",
+    defining_module="Stdlib.Init.Nat",
     priority_rank=0,
     is_default=True,
 ):
@@ -156,14 +156,14 @@ def _make_notation_ambiguity(
             _make_notation_interpretation(
                 expansion="Nat.add ?n ?m",
                 scope="nat_scope",
-                defining_module="Coq.Init.Nat",
+                defining_module="Stdlib.Init.Nat",
                 priority_rank=0,
                 is_default=True,
             ),
             _make_notation_interpretation(
                 expansion="Z.add ?n ?m",
                 scope="Z_scope",
-                defining_module="Coq.ZArith.BinIntDef",
+                defining_module="Stdlib.ZArith.BinIntDef",
                 priority_rank=1,
                 is_default=False,
             ),

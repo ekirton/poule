@@ -46,7 +46,7 @@ class TestExtractTacticsRegexWithFQN:
             "Lemma add_comm : forall n m, n + m = m + n.\n"
             "Proof. intros n m. ring. Qed.\n"
         )
-        tactics = backend._extract_tactics_regex(text, "Coq.Arith.PeanoNat.Nat.add_comm")
+        tactics = backend._extract_tactics_regex(text, "Stdlib.Arith.PeanoNat.Nat.add_comm")
         assert len(tactics) >= 1
         assert any("intros" in t for t in tactics)
 
@@ -67,7 +67,7 @@ class TestExtractTacticsRegexWithFQN:
             "Definition decidable_eq : forall x y : nat, {x = y} + {x <> y}.\n"
             "Proof. decide equality. Qed.\n"
         )
-        tactics = backend._extract_tactics_regex(text, "Coq.Arith.Decidable.decidable_eq")
+        tactics = backend._extract_tactics_regex(text, "Stdlib.Arith.Decidable.decidable_eq")
         assert len(tactics) >= 1
 
     def test_short_name_still_works(self):
@@ -202,7 +202,7 @@ class TestExtractTacticsFromSpansWithFQN:
         spans = self._make_spans(texts)
 
         tactics = backend._extract_tactics_from_spans(
-            full_text, spans, "Coq.Arith.PeanoNat.Nat.add_comm",
+            full_text, spans, "Stdlib.Arith.PeanoNat.Nat.add_comm",
         )
         assert len(tactics) == 2
         assert "intros" in tactics[0]

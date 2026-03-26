@@ -27,7 +27,7 @@ class TestJaccardSimilarity:
 
     def test_identical_sets_return_one(self):
         """Identical nonempty sets -> 1.0."""
-        s = {"Coq.Init.Nat.add", "Coq.Init.Datatypes.nat"}
+        s = {"Stdlib.Init.Nat.add", "Stdlib.Init.Datatypes.nat"}
         assert self.jaccard_similarity(s, s.copy()) == 1.0
 
     def test_partial_overlap(self):
@@ -101,28 +101,28 @@ class TestExtractConsts:
         root = self._node(
             LApp(),
             [
-                self._leaf(LConst("Coq.Init.Nat.add")),
-                self._leaf(LConst("Coq.Init.Nat.mul")),
+                self._leaf(LConst("Stdlib.Init.Nat.add")),
+                self._leaf(LConst("Stdlib.Init.Nat.mul")),
             ],
         )
         result = self.extract_consts(self._tree(root))
-        assert result == {"Coq.Init.Nat.add", "Coq.Init.Nat.mul"}
+        assert result == {"Stdlib.Init.Nat.add", "Stdlib.Init.Nat.mul"}
 
     def test_lind_nodes_extracted(self):
         """Tree with LInd node -> its FQN is in the result set."""
         from Poule.models.labels import LInd
 
-        root = self._leaf(LInd("Coq.Init.Datatypes.nat"))
+        root = self._leaf(LInd("Stdlib.Init.Datatypes.nat"))
         result = self.extract_consts(self._tree(root))
-        assert result == {"Coq.Init.Datatypes.nat"}
+        assert result == {"Stdlib.Init.Datatypes.nat"}
 
     def test_lconstruct_extracts_parent_inductive_fqn(self):
         """LConstruct contributes the parent inductive FQN (name field)."""
         from Poule.models.labels import LConstruct
 
-        root = self._leaf(LConstruct("Coq.Init.Datatypes.nat", 0))
+        root = self._leaf(LConstruct("Stdlib.Init.Datatypes.nat", 0))
         result = self.extract_consts(self._tree(root))
-        assert result == {"Coq.Init.Datatypes.nat"}
+        assert result == {"Stdlib.Init.Datatypes.nat"}
 
     def test_mixed_labels_only_constants(self):
         """Only LConst, LInd, LConstruct contribute; LApp, LProd, LRel do not."""
@@ -199,6 +199,35 @@ class TestExtractConsts:
         root = self._node(LApp(), [inner, self._leaf(LConst("deep.c"))])
         result = self.extract_consts(self._tree(root))
         assert result == {"deep.a", "deep.b", "deep.c"}
+
+    def test_parser_placeholders_excluded(self):
+        """Parser placeholder constants (_match_, _if_, etc.) are excluded.
+
+        Spec: channel-const-jaccard.md §4.1 — names matching _*_ pattern
+        are parser artifacts and shall be excluded."""
+        from Poule.models.labels import LApp, LConst
+
+        root = self._node(
+            LApp(),
+            [
+                self._leaf(LConst("Nat.add")),
+                self._leaf(LConst("_match_")),
+                self._leaf(LConst("_if_")),
+                self._leaf(LConst("_unit_")),
+                self._leaf(LConst("_nil_")),
+                self._leaf(LConst("_record_")),
+            ],
+        )
+        result = self.extract_consts(self._tree(root))
+        assert result == {"Nat.add"}
+
+    def test_underscored_non_placeholder_kept(self):
+        """Names with underscores that don't match _*_ pattern are kept."""
+        from Poule.models.labels import LConst
+
+        root = self._leaf(LConst("my_function"))
+        result = self.extract_consts(self._tree(root))
+        assert result == {"my_function"}
 
 
 # ---------------------------------------------------------------------------

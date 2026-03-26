@@ -372,7 +372,7 @@ class TestExecutionRouting:
             process_pool=pool,
         )
 
-        assert "Nat.add" in result.output or "Coq.Init" in result.output
+        assert "Nat.add" in result.output or "Stdlib.Init" in result.output
 
     @pytest.mark.asyncio
     async def test_session_aware_read_only(self):

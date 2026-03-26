@@ -24,7 +24,7 @@ class TechniqueSelector:
     DEPENDENT_DESTRUCTION = Technique(
         name="dependent_destruction",
         description="Use dependent destruction from Program.Equality.",
-        axioms_introduced=["Coq.Logic.JMeq.JMeq_eq"],
+        axioms_introduced=["Stdlib.Logic.JMeq.JMeq_eq"],
         requires_plugin=None,
     )
 

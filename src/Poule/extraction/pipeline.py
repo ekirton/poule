@@ -190,9 +190,9 @@ class PipelineWriter:
             dst_id = name_to_id.get(target_name)
             if dst_id is not None:
                 return dst_id
-            # 2. Try Coq. prefix
-            coq_name = "Coq." + target_name
-            dst_id = name_to_id.get(coq_name)
+            # 2. Try Stdlib. prefix
+            stdlib_name = "Stdlib." + target_name
+            dst_id = name_to_id.get(stdlib_name)
             if dst_id is not None:
                 return dst_id
             # 3. Suffix match via reverse lookup
@@ -490,6 +490,54 @@ def detect_proof_body(
     return 0
 
 
+# Kind refinement keyword mapping (Rocq 9.x — spec §4.2.1).
+_KIND_REFINE_MAP: dict[str, str] = {
+    "Lemma": "lemma",
+    "Proposition": "lemma",
+    "Corollary": "lemma",
+    "Fact": "lemma",
+    "Remark": "lemma",
+    "Theorem": "theorem",
+    "Instance": "instance",
+}
+
+
+def refine_kind(
+    kind: str,
+    *,
+    declared_line: int | None = None,
+    declared_library: str | None = None,
+    lib_root: Path | None = None,
+) -> str:
+    """Refine a generic ``"definition"`` kind using the source Vernacular keyword.
+
+    In Rocq 9.x, About-based kind detection maps all Constants to
+    ``"definition"``.  This function reads the ``.v`` source file at the
+    declared line to recover the original keyword (Lemma, Theorem, Instance).
+
+    Returns the refined kind, or the original *kind* unchanged if
+    refinement is not applicable or the source is unavailable.
+    """
+    if kind != "definition":
+        return kind
+    if declared_line is None:
+        return kind
+    v_path = _resolve_v_path(declared_library, lib_root)
+    if v_path is None:
+        return kind
+    v_text = _get_v_text(v_path)
+    if v_text is None:
+        return kind
+    lines = v_text.splitlines()
+    if declared_line < 1 or declared_line > len(lines):
+        return kind
+    line = lines[declared_line - 1]
+    m = _VERNAC_KEYWORD_RE.match(line)
+    if m is None:
+        return kind
+    return _KIND_REFINE_MAP.get(m.group(1), kind)
+
+
 def process_declaration(
     name: str,
     kind: str,
@@ -625,6 +673,15 @@ def process_declaration(
                 lib_root = parent
                 break
 
+    # Kind refinement: recover lemma/theorem/instance from source keyword
+    # when About reports generic "definition" (Rocq 9.x — spec §4.2.1).
+    storage_kind = refine_kind(
+        storage_kind,
+        declared_line=about_declared_line,
+        declared_library=about_declared_lib,
+        lib_root=lib_root,
+    )
+
     has_body = detect_proof_body(
         name, storage_kind,
         opacity=about_opacity,
@@ -739,16 +796,14 @@ def _normalize_declared_library(lib: str) -> str:
     """Convert a ``declared_library`` string to canonical module format.
 
     The ``About`` command reports ``Stdlib.X.Y`` or ``Corelib.X.Y`` for
-    stdlib declarations, while ``_vo_to_canonical_module`` produces
-    ``Coq.X.Y``.  This function normalizes to the latter convention so
-    the two can be compared during re-export detection (spec §4.4).
+    stdlib declarations.  ``_vo_to_canonical_module`` produces
+    ``Stdlib.X.Y``.  This function normalizes ``Corelib`` to ``Stdlib``
+    so the two can be compared during re-export detection (spec §4.4).
     """
-    if lib.startswith("Stdlib."):
-        return "Coq." + lib[len("Stdlib."):]
     if lib.startswith("Corelib."):
-        return "Coq." + lib[len("Corelib."):]
-    if lib in ("Stdlib", "Corelib"):
-        return "Coq"
+        return "Stdlib." + lib[len("Corelib."):]
+    if lib == "Corelib":
+        return "Stdlib"
     return lib
 
 

@@ -83,12 +83,12 @@ def fqn_to_proof_name(fqn: str, source_file: str) -> str:
 def module_to_source_file(module: str, module_prefix: str) -> str:
     """Convert a dot-separated module path to a relative source file path.
 
-    Strips *module_prefix* (e.g. ``"Coq."``) from *module*, replaces dots
+    Strips *module_prefix* (e.g. ``"Stdlib."``) from *module*, replaces dots
     with ``/``, and appends ``.v``.  Handles ``Corelib.`` as an alias for
-    ``Coq.`` (Rocq 9.x compatibility).
+    ``Stdlib.`` (Rocq 9.x compatibility).
     """
     # Handle Corelib alias for stdlib
-    if module_prefix == "Coq." and module.startswith("Corelib."):
+    if module_prefix == "Stdlib." and module.startswith("Corelib."):
         module = module[len("Corelib."):]
     elif module.startswith(module_prefix):
         module = module[len(module_prefix):]
@@ -309,7 +309,7 @@ async def _do_extraction(
         # Resolve to absolute path for the backend (§4.2, §10).
         abs_file = str(Path(project_path) / source_file) if project_path else source_file
         # Convert FQN to document-internal name for Petanque (§4.2).
-        # The index stores "Coq.Arith.PeanoNat.Nat.add_comm" but Petanque
+        # The index stores "Stdlib.Arith.PeanoNat.Nat.add_comm" but Petanque
         # needs "Nat.add_comm" — the name resolvable within the document.
         proof_name = fqn_to_proof_name(theorem_name, source_file)
         session_id, _initial_state = await session_manager.create_session(

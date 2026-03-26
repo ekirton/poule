@@ -73,10 +73,10 @@ def _import_handlers():
 # ---------------------------------------------------------------------------
 
 def _make_search_result(
-    name: str = "Coq.Arith.PeanoNat.Nat.add_comm",
+    name: str = "Stdlib.Arith.PeanoNat.Nat.add_comm",
     statement: str = "forall n m : nat, n + m = m + n",
     type_: str = "forall n m : nat, n + m = m + n",
-    module: str = "Coq.Arith.PeanoNat",
+    module: str = "Stdlib.Arith.PeanoNat",
     kind: str = "lemma",
     score: float = 0.95,
 ) -> dict:
@@ -92,10 +92,10 @@ def _make_search_result(
 
 
 def _make_lemma_detail(
-    name: str = "Coq.Arith.PeanoNat.Nat.add_comm",
+    name: str = "Stdlib.Arith.PeanoNat.Nat.add_comm",
     statement: str = "forall n m : nat, n + m = m + n",
     type_: str = "forall n m : nat, n + m = m + n",
-    module: str = "Coq.Arith.PeanoNat",
+    module: str = "Stdlib.Arith.PeanoNat",
     kind: str = "lemma",
     score: float = 1.0,
     dependencies: list[str] | None = None,
@@ -360,7 +360,7 @@ class TestHandleSearchByName:
         parsed = json.loads(content_text)
         assert isinstance(parsed, list)
         assert len(parsed) == 1
-        assert parsed[0]["name"] == "Coq.Arith.PeanoNat.Nat.add_comm"
+        assert parsed[0]["name"] == "Stdlib.Arith.PeanoNat.Nat.add_comm"
 
     def test_empty_pattern_returns_parse_error(self):
         (handle_search_by_name, *_) = _import_handlers()
@@ -405,7 +405,7 @@ class TestHandleSearchByType:
         (_, handle_search_by_type, *_) = _import_handlers()
         ctx = _make_mock_pipeline_context()
         ctx.pipeline.search_by_type.return_value = [
-            _make_search_result(name="Coq.Init.Nat.add", score=0.8)
+            _make_search_result(name="Stdlib.Init.Nat.add", score=0.8)
         ]
 
         result = handle_search_by_type(ctx, type_expr="nat -> nat -> nat", limit=50)
@@ -520,11 +520,11 @@ class TestHandleGetLemma:
             node_count=5,
         )
 
-        result = handle_get_lemma(ctx, name="Coq.Arith.PeanoNat.Nat.add_comm")
+        result = handle_get_lemma(ctx, name="Stdlib.Arith.PeanoNat.Nat.add_comm")
 
         assert result.get("isError") is not True
         parsed = json.loads(result["content"][0]["text"])
-        assert parsed["name"] == "Coq.Arith.PeanoNat.Nat.add_comm"
+        assert parsed["name"] == "Stdlib.Arith.PeanoNat.Nat.add_comm"
         assert parsed["proof_sketch"] == ""
         assert parsed["score"] == 1.0
         assert isinstance(parsed["dependencies"], list)
@@ -559,7 +559,7 @@ class TestHandleGetLemma:
         ctx = _make_mock_pipeline_context()
         ctx.pipeline.get_lemma.return_value = _make_lemma_detail()
 
-        result = handle_get_lemma(ctx, name="Coq.Arith.PeanoNat.Nat.add_comm")
+        result = handle_get_lemma(ctx, name="Stdlib.Arith.PeanoNat.Nat.add_comm")
 
         parsed = json.loads(result["content"][0]["text"])
         assert parsed["proof_sketch"] == ""
@@ -569,7 +569,7 @@ class TestHandleGetLemma:
         ctx = _make_mock_pipeline_context()
         ctx.pipeline.get_lemma.return_value = _make_lemma_detail()
 
-        result = handle_get_lemma(ctx, name="Coq.Arith.PeanoNat.Nat.add_comm")
+        result = handle_get_lemma(ctx, name="Stdlib.Arith.PeanoNat.Nat.add_comm")
 
         parsed = json.loads(result["content"][0]["text"])
         assert parsed["score"] == 1.0
@@ -591,7 +591,7 @@ class TestHandleFindRelated:
         ]
 
         result = handle_find_related(
-            ctx, name="Coq.Arith.PeanoNat.Nat.add_comm", relation=relation, limit=50
+            ctx, name="Stdlib.Arith.PeanoNat.Nat.add_comm", relation=relation, limit=50
         )
 
         assert result.get("isError") is not True
@@ -607,7 +607,7 @@ class TestHandleFindRelated:
         ]
 
         result = handle_find_related(
-            ctx, name="Coq.Arith.PeanoNat.Nat.add_comm", relation="uses", limit=50
+            ctx, name="Stdlib.Arith.PeanoNat.Nat.add_comm", relation="uses", limit=50
         )
 
         parsed = json.loads(result["content"][0]["text"])
@@ -619,7 +619,7 @@ class TestHandleFindRelated:
         ctx = _make_mock_pipeline_context()
 
         result = handle_find_related(
-            ctx, name="Coq.Arith.PeanoNat.Nat.add_comm", relation="invalid", limit=50
+            ctx, name="Stdlib.Arith.PeanoNat.Nat.add_comm", relation="invalid", limit=50
         )
 
         assert result["isError"] is True
@@ -655,7 +655,7 @@ class TestHandleFindRelated:
         ctx.pipeline.find_related.return_value = []
 
         result = handle_find_related(
-            ctx, name="Coq.Some.Decl", relation="uses", limit=50
+            ctx, name="Stdlib.Some.Decl", relation="uses", limit=50
         )
 
         assert result.get("isError") is not True
@@ -674,8 +674,8 @@ class TestHandleListModules:
         (*_, handle_list_modules) = _import_handlers()
         ctx = _make_mock_pipeline_context()
         ctx.pipeline.list_modules.return_value = [
-            {"name": "Coq.Arith.PeanoNat", "decl_count": 42},
-            {"name": "Coq.Init.Nat", "decl_count": 15},
+            {"name": "Stdlib.Arith.PeanoNat", "decl_count": 42},
+            {"name": "Stdlib.Init.Nat", "decl_count": 15},
         ]
 
         result = handle_list_modules(ctx, prefix="")
@@ -688,14 +688,14 @@ class TestHandleListModules:
         (*_, handle_list_modules) = _import_handlers()
         ctx = _make_mock_pipeline_context()
         ctx.pipeline.list_modules.return_value = [
-            {"name": "Coq.Arith.PeanoNat", "decl_count": 42},
+            {"name": "Stdlib.Arith.PeanoNat", "decl_count": 42},
         ]
 
-        result = handle_list_modules(ctx, prefix="Coq.Arith")
+        result = handle_list_modules(ctx, prefix="Stdlib.Arith")
 
         parsed = json.loads(result["content"][0]["text"])
         assert len(parsed) == 1
-        assert parsed[0]["name"] == "Coq.Arith.PeanoNat"
+        assert parsed[0]["name"] == "Stdlib.Arith.PeanoNat"
 
     def test_empty_result_is_not_error(self):
         (*_, handle_list_modules) = _import_handlers()
@@ -712,7 +712,7 @@ class TestHandleListModules:
         (*_, handle_list_modules) = _import_handlers()
         ctx = _make_mock_pipeline_context()
         ctx.pipeline.list_modules.return_value = [
-            {"name": "Coq.Init.Nat", "decl_count": 15},
+            {"name": "Stdlib.Init.Nat", "decl_count": 15},
         ]
 
         result = handle_list_modules(ctx, prefix="")
@@ -876,7 +876,7 @@ class TestLimitClampingAllSearchHandlers:
         ctx.pipeline.find_related.return_value = []
 
         handle_find_related(
-            ctx, name="Coq.Some.Decl", relation="uses", limit=300
+            ctx, name="Stdlib.Some.Decl", relation="uses", limit=300
         )
 
         limit = self._get_pipeline_limit(ctx.pipeline.find_related)
@@ -942,7 +942,7 @@ class TestResponseFormatting:
         ctx = _make_mock_pipeline_context()
         ctx.pipeline.get_lemma.return_value = _make_lemma_detail()
 
-        result = handle_get_lemma(ctx, name="Coq.Arith.PeanoNat.Nat.add_comm")
+        result = handle_get_lemma(ctx, name="Stdlib.Arith.PeanoNat.Nat.add_comm")
 
         parsed = json.loads(result["content"][0]["text"])
         required_fields = {
@@ -983,7 +983,7 @@ class TestDataclassSerialization:
                 name="Nat.add_comm",
                 statement="forall n m, n + m = m + n",
                 type="forall n m, n + m = m + n",
-                module="Coq.Arith.PeanoNat",
+                module="Stdlib.Arith.PeanoNat",
                 kind="lemma",
                 score=0.95,
             )
@@ -1007,7 +1007,7 @@ class TestDataclassSerialization:
                 name="Nat.add",
                 statement="",
                 type="nat -> nat -> nat",
-                module="Coq.Init.Nat",
+                module="Stdlib.Init.Nat",
                 kind="definition",
                 score=0.8,
             )
@@ -1028,7 +1028,7 @@ class TestDataclassSerialization:
                 name="Nat.add_0_r",
                 statement="forall n, n + 0 = n",
                 type="forall n, n + 0 = n",
-                module="Coq.Arith.PeanoNat",
+                module="Stdlib.Arith.PeanoNat",
                 kind="lemma",
                 score=0.75,
             )
@@ -1049,7 +1049,7 @@ class TestDataclassSerialization:
                 name="Nat.add_comm",
                 statement="",
                 type="",
-                module="Coq.Arith.PeanoNat",
+                module="Stdlib.Arith.PeanoNat",
                 kind="lemma",
                 score=0.9,
             )
@@ -1069,7 +1069,7 @@ class TestDataclassSerialization:
             name="Nat.add_comm",
             statement="forall n m, n + m = m + n",
             type="forall n m, n + m = m + n",
-            module="Coq.Arith.PeanoNat",
+            module="Stdlib.Arith.PeanoNat",
             kind="lemma",
             score=1.0,
             dependencies=["Nat.add"],
@@ -1096,7 +1096,7 @@ class TestDataclassSerialization:
                 name="Nat.add_assoc",
                 statement="",
                 type="",
-                module="Coq.Arith.PeanoNat",
+                module="Stdlib.Arith.PeanoNat",
                 kind="lemma",
                 score=1.0,
             )
@@ -1113,8 +1113,8 @@ class TestDataclassSerialization:
         _, _, Module = _import_response_types()
         ctx = _make_mock_pipeline_context()
         ctx.pipeline.list_modules.return_value = [
-            Module(name="Coq.Arith.PeanoNat", decl_count=42),
-            Module(name="Coq.Init.Nat", decl_count=15),
+            Module(name="Stdlib.Arith.PeanoNat", decl_count=42),
+            Module(name="Stdlib.Init.Nat", decl_count=15),
         ]
 
         result = handle_list_modules(ctx, prefix="")
@@ -1122,7 +1122,7 @@ class TestDataclassSerialization:
         assert result.get("isError") is not True
         parsed = json.loads(result["content"][0]["text"])
         assert len(parsed) == 2
-        assert parsed[0]["name"] == "Coq.Arith.PeanoNat"
+        assert parsed[0]["name"] == "Stdlib.Arith.PeanoNat"
         assert parsed[0]["decl_count"] == 42
 
     def test_empty_list_of_dataclasses_serializes(self):

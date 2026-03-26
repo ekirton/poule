@@ -1381,8 +1381,8 @@ class TestGetDependencies:
             line=0,
             messages=[
                 _make_sentence_message(
-                    "Coq.Init.Logic.eq_refl : forall (A : Type) (x : A), x = x\n"
-                    "Coq.Init.Peano.nat_ind : forall P, P 0 -> ..."
+                    "Stdlib.Init.Logic.eq_refl : forall (A : Type) (x : A), x = x\n"
+                    "Stdlib.Init.Peano.nat_ind : forall P, P 0 -> ..."
                 ),
             ],
         )
@@ -1907,8 +1907,8 @@ class TestBatchedListDeclarations:
         kinds = {r[0]: r[1] for r in result}
         # list_declarations returns FQNs: canonical_module + "." + short_name
         # For /coq/user-contrib/Stdlib/Init/Nat.vo, canonical module is Coq.Init.Nat
-        assert kinds["Coq.Init.Nat.Nat.add"] == "definition"
-        assert kinds["Coq.Init.Nat.nat"] == "inductive"
+        assert kinds["Stdlib.Init.Nat.Nat.add"] == "definition"
+        assert kinds["Stdlib.Init.Nat.nat"] == "inductive"
 
     def test_batch_about_includes_require_import(self):
         """Batch About documents must include Require Import so short names resolve."""
@@ -1953,7 +1953,7 @@ class TestBatchedListDeclarations:
         # Result should have the declaration with correct metadata
         assert len(result) == 1
         fqn, kind, constr_t = result[0]
-        assert fqn == "Coq.Arith.PeanoNat.Nat.add_comm"
+        assert fqn == "Stdlib.Arith.PeanoNat.Nat.add_comm"
         assert kind == "definition"
         assert constr_t["opacity"] == "opaque"
         assert constr_t["declared_library"] == "Stdlib.Numbers.NatInt.NZAdd"
@@ -2513,14 +2513,14 @@ class TestLocate:
 
         # Mock _run_vernac_query to return a Locate response
         def fake_query(text, query_line=0):
-            return ([], [{"text": "Inductive Coq.Init.Datatypes.nat", "level": 3}])
+            return ([], [{"text": "Inductive Stdlib.Init.Datatypes.nat", "level": 3}])
 
         backend._run_vernac_query = fake_query
         backend._ensure_alive = lambda: None
 
         result = backend.locate("nat")
 
-        assert result == "Coq.Init.Datatypes.nat"
+        assert result == "Stdlib.Init.Datatypes.nat"
 
     def test_locate_infix_operator(self):
         """Locate '+' returns the FQN of the underlying constant."""
@@ -2530,14 +2530,52 @@ class TestLocate:
         backend._proc = None
 
         def fake_query(text, query_line=0):
-            return ([], [{"text": "Constant Coq.Init.Nat.add", "level": 3}])
+            return ([], [{"text": "Constant Stdlib.Init.Nat.add", "level": 3}])
 
         backend._run_vernac_query = fake_query
         backend._ensure_alive = lambda: None
 
         result = backend.locate("+")
 
-        assert result == "Coq.Init.Nat.add"
+        assert result == "Stdlib.Init.Nat.add"
+
+    def test_locate_class_returns_fqn(self):
+        """Locate for a typeclass returns the FQN (Rocq 9.x 'Class' category).
+
+        Spec: extraction.md §4.1 locate() — Class <fqn> response pattern."""
+        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        backend = CoqLspBackend.__new__(CoqLspBackend)
+        backend._proc = None
+
+        def fake_query(text, query_line=0):
+            return ([], [{"text": "Class stdpp.decidable.EqDecision", "level": 3}])
+
+        backend._run_vernac_query = fake_query
+        backend._ensure_alive = lambda: None
+
+        result = backend.locate("EqDecision")
+
+        assert result == "stdpp.decidable.EqDecision"
+
+    def test_locate_instance_returns_fqn(self):
+        """Locate for a typeclass instance returns the FQN (Rocq 9.x 'Instance' category).
+
+        Spec: extraction.md §4.1 locate() — Instance <fqn> response pattern."""
+        from Poule.extraction.backends.coqlsp_backend import CoqLspBackend
+
+        backend = CoqLspBackend.__new__(CoqLspBackend)
+        backend._proc = None
+
+        def fake_query(text, query_line=0):
+            return ([], [{"text": "Instance stdpp.base.nat_eq_dec", "level": 3}])
+
+        backend._run_vernac_query = fake_query
+        backend._ensure_alive = lambda: None
+
+        result = backend.locate("nat_eq_dec")
+
+        assert result == "stdpp.base.nat_eq_dec"
 
     def test_locate_not_found_returns_none(self):
         """Locate for unknown name returns None."""
@@ -2599,8 +2637,8 @@ class TestLocate:
 
         def fake_query(text, query_line=0):
             return ([], [
-                {"text": "Constant Coq.Init.Nat.add", "level": 3},
-                {"text": "Constant Coq.ZArith.BinInt.Z.add", "level": 3},
+                {"text": "Constant Stdlib.Init.Nat.add", "level": 3},
+                {"text": "Constant Stdlib.ZArith.BinInt.Z.add", "level": 3},
             ])
 
         backend._run_vernac_query = fake_query
@@ -2609,8 +2647,8 @@ class TestLocate:
         result = backend.locate("+")
 
         assert isinstance(result, list)
-        assert "Coq.Init.Nat.add" in result
-        assert "Coq.ZArith.BinInt.Z.add" in result
+        assert "Stdlib.Init.Nat.add" in result
+        assert "Stdlib.ZArith.BinInt.Z.add" in result
 
     def test_locate_mixed_notation_and_constant(self):
         """When Locate returns both Notation and Constant, only Constant FQNs are kept."""
@@ -2621,8 +2659,8 @@ class TestLocate:
 
         def fake_query(text, query_line=0):
             return ([], [
-                {"text": "Notation Coq.Init.Peano.plus", "level": 3},
-                {"text": "Constant Coq.Init.Nat.add", "level": 3},
+                {"text": "Notation Stdlib.Init.Peano.plus", "level": 3},
+                {"text": "Constant Stdlib.Init.Nat.add", "level": 3},
             ])
 
         backend._run_vernac_query = fake_query
@@ -2630,7 +2668,7 @@ class TestLocate:
 
         result = backend.locate("+")
 
-        assert result == "Coq.Init.Nat.add"
+        assert result == "Stdlib.Init.Nat.add"
 
     def test_locate_uses_quoted_form_for_operators(self):
         """Infix operators should be queried as Locate \"+\". not Locate +."""

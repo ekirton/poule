@@ -630,8 +630,8 @@ class TestNeuralQueryText:
     def test_search_by_symbols_joins_with_spaces(self):
         """spec §4.7: search_by_symbols passes space-joined symbol names."""
         from Poule.neural.channel import neural_query_text_for_symbols
-        result = neural_query_text_for_symbols(["Coq.Init.Nat.add", "Coq.Init.Nat.mul"])
-        assert result == "Coq.Init.Nat.add Coq.Init.Nat.mul"
+        result = neural_query_text_for_symbols(["Stdlib.Init.Nat.add", "Stdlib.Init.Nat.mul"])
+        assert result == "Stdlib.Init.Nat.add Stdlib.Init.Nat.mul"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

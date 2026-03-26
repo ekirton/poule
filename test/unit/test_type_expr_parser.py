@@ -114,8 +114,8 @@ class TestTokenizer:
         assert tokens[0] == Token(TokenKind.NUMBER, "42", 0)
 
     def test_qualified_name(self):
-        tokens = tokenize("Coq.Init.Nat.add")
-        assert tokens[0] == Token(TokenKind.IDENT, "Coq.Init.Nat.add", 0)
+        tokens = tokenize("Stdlib.Init.Nat.add")
+        assert tokens[0] == Token(TokenKind.IDENT, "Stdlib.Init.Nat.add", 0)
 
     def test_fun_and_darrow(self):
         tokens = tokenize("fun x => x")
@@ -577,13 +577,13 @@ class TestQualifiedNames:
         self.parser = TypeExprParser()
 
     def test_qualified_const(self):
-        result = self.parser.parse("Coq.Init.Nat.add")
-        assert result == Const("Coq.Init.Nat.add")
+        result = self.parser.parse("Stdlib.Init.Nat.add")
+        assert result == Const("Stdlib.Init.Nat.add")
 
     def test_qualified_in_application(self):
-        result = self.parser.parse("Coq.Init.Nat.add n m")
+        result = self.parser.parse("Stdlib.Init.Nat.add n m")
         assert result == App(
-            Const("Coq.Init.Nat.add"),
+            Const("Stdlib.Init.Nat.add"),
             [Const("n"), Const("m")],
         )
 
@@ -1148,3 +1148,53 @@ class TestPatternLambda:
             "filter (fun '(_, b), b) n"
         )
         assert isinstance(result, App)
+
+
+class TestIfThenElse:
+    """Spec §4.4: if c then a else b → Const("_if_").
+
+    The if-then-else construct should be skipped and replaced with
+    a placeholder, similar to match-with-end."""
+
+    def setup_method(self):
+        self.parser = TypeExprParser()
+
+    def test_if_then_else_produces_placeholder(self):
+        """Simple if/then/else → Const("_if_")."""
+        result = self.parser.parse("if x then nat else bool")
+        # The if-then-else should NOT produce Const("if"), Const("then"), Const("else")
+        assert not isinstance(result, App) or not any(
+            isinstance(c, Const) and c.fqn in ("if", "then", "else")
+            for c in (result.args if isinstance(result, App) else [])
+        )
+
+    def test_if_keywords_not_in_consts(self):
+        """if/then/else keywords must not leak into extract_consts output."""
+        from Poule.normalization.normalize import coq_normalize
+        from Poule.channels.const_jaccard import extract_consts
+
+        result = self.parser.parse("if x then nat else bool")
+        tree = coq_normalize(result)
+        consts = extract_consts(tree)
+        assert "if" not in consts
+        assert "then" not in consts
+        assert "else" not in consts
+
+
+class TestMatchPlaceholder:
+    """Spec §4.4: match ... with ... end → Const("_match_").
+
+    The _match_ placeholder must not leak into extract_consts output."""
+
+    def setup_method(self):
+        self.parser = TypeExprParser()
+
+    def test_match_placeholder_not_in_consts(self):
+        """_match_ placeholder must be filtered by extract_consts."""
+        from Poule.normalization.normalize import coq_normalize
+        from Poule.channels.const_jaccard import extract_consts
+
+        result = self.parser.parse("match x with end")
+        tree = coq_normalize(result)
+        consts = extract_consts(tree)
+        assert "_match_" not in consts

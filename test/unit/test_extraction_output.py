@@ -165,7 +165,7 @@ def _make_campaign_metadata(
 
 
 def _make_extraction_record(
-    theorem_name="Coq.Init.Logic.eq_refl",
+    theorem_name="Stdlib.Init.Logic.eq_refl",
     source_file="theories/Init/Logic.v",
     project_id="coq-stdlib",
     total_steps=1,
@@ -186,7 +186,7 @@ def _make_extraction_record(
 
 
 def _make_extraction_error(
-    theorem_name="Coq.Arith.PeanoNat.Nat.sub_diag",
+    theorem_name="Stdlib.Arith.PeanoNat.Nat.sub_diag",
     source_file="theories/Arith/PeanoNat.v",
     project_id="coq-stdlib",
     error_kind="timeout",

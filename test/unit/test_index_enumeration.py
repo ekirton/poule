@@ -89,7 +89,7 @@ class TestModuleToSourceFile:
     def test_stdlib_prefix(self):
         from Poule.extraction.campaign import module_to_source_file
 
-        result = module_to_source_file("Coq.Reals.Ranalysis1", "Coq.")
+        result = module_to_source_file("Stdlib.Reals.Ranalysis1", "Stdlib.")
         assert result == "Reals/Ranalysis1.v"
 
     def test_mathcomp_prefix(self):
@@ -126,14 +126,14 @@ class TestModuleToSourceFile:
         """Rocq 9.x uses Corelib. as an alias for Coq. (§4.1)."""
         from Poule.extraction.campaign import module_to_source_file
 
-        result = module_to_source_file("Corelib.Init.Logic", "Coq.")
+        result = module_to_source_file("Corelib.Init.Logic", "Stdlib.")
         assert result == "Init/Logic.v"
 
     def test_deeply_nested_module(self):
         from Poule.extraction.campaign import module_to_source_file
 
         result = module_to_source_file(
-            "Coq.Arith.PeanoNat", "Coq."
+            "Stdlib.Arith.PeanoNat", "Stdlib."
         )
         assert result == "Arith/PeanoNat.v"
 
@@ -154,11 +154,11 @@ class TestEnumerateFromIndex:
         proj.mkdir()
 
         _create_test_index_db(db_path, [
-            {"name": "Coq.Init.Logic.eq_refl", "module": "Coq.Init.Logic", "kind": "lemma"},
-            {"name": "Coq.Arith.PeanoNat.Nat.add_comm", "module": "Coq.Arith.PeanoNat", "kind": "theorem"},
+            {"name": "Stdlib.Init.Logic.eq_refl", "module": "Stdlib.Init.Logic", "kind": "lemma"},
+            {"name": "Stdlib.Arith.PeanoNat.Nat.add_comm", "module": "Stdlib.Arith.PeanoNat", "kind": "theorem"},
         ])
 
-        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Coq.")
+        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Stdlib.")
         assert len(targets) == 2
 
     def test_includes_instances(self, tmp_path):
@@ -170,10 +170,10 @@ class TestEnumerateFromIndex:
         proj.mkdir()
 
         _create_test_index_db(db_path, [
-            {"name": "Coq.Classes.Morphisms.eq_Reflexive", "module": "Coq.Classes.Morphisms", "kind": "instance"},
+            {"name": "Stdlib.Classes.Morphisms.eq_Reflexive", "module": "Stdlib.Classes.Morphisms", "kind": "instance"},
         ])
 
-        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Coq.")
+        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Stdlib.")
         assert len(targets) == 1
         assert targets[0][3] == "instance"  # decl_kind
 
@@ -186,10 +186,10 @@ class TestEnumerateFromIndex:
         proj.mkdir()
 
         _create_test_index_db(db_path, [
-            {"name": "Coq.Init.Datatypes.andb", "module": "Coq.Init.Datatypes", "kind": "definition"},
+            {"name": "Stdlib.Init.Datatypes.andb", "module": "Stdlib.Init.Datatypes", "kind": "definition"},
         ])
 
-        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Coq.")
+        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Stdlib.")
         assert len(targets) == 1
         assert targets[0][3] == "definition"
 
@@ -202,15 +202,15 @@ class TestEnumerateFromIndex:
         proj.mkdir()
 
         _create_test_index_db(db_path, [
-            {"name": "Coq.Init.Datatypes.nat", "module": "Coq.Init.Datatypes", "kind": "inductive"},
-            {"name": "Coq.Init.Datatypes.O", "module": "Coq.Init.Datatypes", "kind": "constructor"},
-            {"name": "Coq.Init.Logic.eq_refl", "module": "Coq.Init.Logic", "kind": "lemma"},
+            {"name": "Stdlib.Init.Datatypes.nat", "module": "Stdlib.Init.Datatypes", "kind": "inductive"},
+            {"name": "Stdlib.Init.Datatypes.O", "module": "Stdlib.Init.Datatypes", "kind": "constructor"},
+            {"name": "Stdlib.Init.Logic.eq_refl", "module": "Stdlib.Init.Logic", "kind": "lemma"},
         ])
 
-        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Coq.")
+        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Stdlib.")
         assert len(targets) == 1
         names = [t[2] for t in targets]
-        assert "Coq.Init.Logic.eq_refl" in names
+        assert "Stdlib.Init.Logic.eq_refl" in names
 
     def test_excludes_axioms(self, tmp_path):
         """Axioms have no proof body — exclude them."""
@@ -221,11 +221,11 @@ class TestEnumerateFromIndex:
         proj.mkdir()
 
         _create_test_index_db(db_path, [
-            {"name": "Coq.Logic.ClassicalFacts.prop_degen", "module": "Coq.Logic.ClassicalFacts", "kind": "axiom"},
-            {"name": "Coq.Init.Logic.eq_refl", "module": "Coq.Init.Logic", "kind": "lemma"},
+            {"name": "Stdlib.Logic.ClassicalFacts.prop_degen", "module": "Stdlib.Logic.ClassicalFacts", "kind": "axiom"},
+            {"name": "Stdlib.Init.Logic.eq_refl", "module": "Stdlib.Init.Logic", "kind": "lemma"},
         ])
 
-        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Coq.")
+        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Stdlib.")
         assert len(targets) == 1
 
     def test_targets_contain_fqn(self, tmp_path):
@@ -237,11 +237,11 @@ class TestEnumerateFromIndex:
         proj.mkdir()
 
         _create_test_index_db(db_path, [
-            {"name": "Coq.Arith.PeanoNat.Nat.add_comm", "module": "Coq.Arith.PeanoNat", "kind": "lemma"},
+            {"name": "Stdlib.Arith.PeanoNat.Nat.add_comm", "module": "Stdlib.Arith.PeanoNat", "kind": "lemma"},
         ])
 
-        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Coq.")
-        assert targets[0][2] == "Coq.Arith.PeanoNat.Nat.add_comm"
+        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Stdlib.")
+        assert targets[0][2] == "Stdlib.Arith.PeanoNat.Nat.add_comm"
 
     def test_targets_contain_source_file(self, tmp_path):
         """Source file is derived from module path."""
@@ -252,10 +252,10 @@ class TestEnumerateFromIndex:
         proj.mkdir()
 
         _create_test_index_db(db_path, [
-            {"name": "Coq.Arith.PeanoNat.Nat.add_comm", "module": "Coq.Arith.PeanoNat", "kind": "lemma"},
+            {"name": "Stdlib.Arith.PeanoNat.Nat.add_comm", "module": "Stdlib.Arith.PeanoNat", "kind": "lemma"},
         ])
 
-        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Coq.")
+        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Stdlib.")
         assert targets[0][1] == "Arith/PeanoNat.v"
 
     def test_targets_ordered_by_module_then_name(self, tmp_path):
@@ -267,17 +267,17 @@ class TestEnumerateFromIndex:
         proj.mkdir()
 
         _create_test_index_db(db_path, [
-            {"name": "Coq.Arith.PeanoNat.Nat.mul_comm", "module": "Coq.Arith.PeanoNat", "kind": "lemma"},
-            {"name": "Coq.Init.Logic.eq_refl", "module": "Coq.Init.Logic", "kind": "lemma"},
-            {"name": "Coq.Arith.PeanoNat.Nat.add_comm", "module": "Coq.Arith.PeanoNat", "kind": "lemma"},
+            {"name": "Stdlib.Arith.PeanoNat.Nat.mul_comm", "module": "Stdlib.Arith.PeanoNat", "kind": "lemma"},
+            {"name": "Stdlib.Init.Logic.eq_refl", "module": "Stdlib.Init.Logic", "kind": "lemma"},
+            {"name": "Stdlib.Arith.PeanoNat.Nat.add_comm", "module": "Stdlib.Arith.PeanoNat", "kind": "lemma"},
         ])
 
-        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Coq.")
+        targets = _enumerate_from_index(str(db_path), [str(proj)], module_prefix="Stdlib.")
         names = [t[2] for t in targets]
         # Within Coq.Arith.PeanoNat, add_comm before mul_comm (alphabetical)
         # Coq.Arith before Coq.Init
-        assert names.index("Coq.Arith.PeanoNat.Nat.add_comm") < names.index("Coq.Arith.PeanoNat.Nat.mul_comm")
-        assert names.index("Coq.Arith.PeanoNat.Nat.mul_comm") < names.index("Coq.Init.Logic.eq_refl")
+        assert names.index("Stdlib.Arith.PeanoNat.Nat.add_comm") < names.index("Stdlib.Arith.PeanoNat.Nat.mul_comm")
+        assert names.index("Stdlib.Arith.PeanoNat.Nat.mul_comm") < names.index("Stdlib.Init.Logic.eq_refl")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -315,16 +315,16 @@ class TestGetProvableDeclarations:
 
         db_path = tmp_path / "index.db"
         _create_test_index_db(db_path, [
-            {"name": "Coq.Init.Logic.eq_refl", "module": "Coq.Init.Logic", "kind": "lemma"},
+            {"name": "Stdlib.Init.Logic.eq_refl", "module": "Stdlib.Init.Logic", "kind": "lemma"},
             {"name": "mathcomp.algebra.ring.mulrC", "module": "mathcomp.algebra.ring", "kind": "lemma"},
         ])
 
         reader = IndexReader.open(db_path)
-        decls = reader.get_provable_declarations(module_prefix="Coq.")
+        decls = reader.get_provable_declarations(module_prefix="Stdlib.")
         reader.close()
 
         assert len(decls) == 1
-        assert decls[0]["name"] == "Coq.Init.Logic.eq_refl"
+        assert decls[0]["name"] == "Stdlib.Init.Logic.eq_refl"
 
     def test_ordered_by_module_then_name(self, tmp_path):
         from Poule.storage.reader import IndexReader
@@ -404,17 +404,17 @@ class TestHasProofBodyFiltering:
 
         db_path = tmp_path / "index.db"
         _create_test_index_db(db_path, [
-            {"name": "Coq.A.thm1", "module": "Coq.A", "kind": "lemma", "has_proof_body": 1},
-            {"name": "Coq.A.def1", "module": "Coq.A", "kind": "definition", "has_proof_body": 0},
+            {"name": "Stdlib.A.thm1", "module": "Stdlib.A", "kind": "lemma", "has_proof_body": 1},
+            {"name": "Stdlib.A.def1", "module": "Stdlib.A", "kind": "definition", "has_proof_body": 0},
             {"name": "mc.B.thm1", "module": "mc.B", "kind": "lemma", "has_proof_body": 1},
         ])
 
         reader = IndexReader.open(db_path)
-        decls = reader.get_provable_declarations(module_prefix="Coq.", has_proof_body=True)
+        decls = reader.get_provable_declarations(module_prefix="Stdlib.", has_proof_body=True)
         reader.close()
 
         assert len(decls) == 1
-        assert decls[0]["name"] == "Coq.A.thm1"
+        assert decls[0]["name"] == "Stdlib.A.thm1"
 
 
 class TestCampaignPlanFiltersOnProofBody:
@@ -427,16 +427,16 @@ class TestCampaignPlanFiltersOnProofBody:
         proj.mkdir()
         db_path = tmp_path / "index.db"
         _create_test_index_db(db_path, [
-            {"name": "Coq.A.thm1", "module": "Coq.A", "kind": "lemma", "has_proof_body": 1},
-            {"name": "Coq.A.def1", "module": "Coq.A", "kind": "definition", "has_proof_body": 0},
-            {"name": "Coq.A.included", "module": "Coq.A", "kind": "theorem", "has_proof_body": 0},
+            {"name": "Stdlib.A.thm1", "module": "Stdlib.A", "kind": "lemma", "has_proof_body": 1},
+            {"name": "Stdlib.A.def1", "module": "Stdlib.A", "kind": "definition", "has_proof_body": 0},
+            {"name": "Stdlib.A.included", "module": "Stdlib.A", "kind": "theorem", "has_proof_body": 0},
         ])
 
         plan = build_campaign_plan(
-            [str(proj)], index_db_path=str(db_path), module_prefix="Coq."
+            [str(proj)], index_db_path=str(db_path), module_prefix="Stdlib."
         )
         assert len(plan.targets) == 1
-        assert plan.targets[0][2] == "Coq.A.thm1"
+        assert plan.targets[0][2] == "Stdlib.A.thm1"
 
     def test_plan_fallback_when_all_zero(self, tmp_path):
         """Backward compat: if all has_proof_body=0, fall back to unfiltered."""
@@ -446,12 +446,12 @@ class TestCampaignPlanFiltersOnProofBody:
         proj.mkdir()
         db_path = tmp_path / "index.db"
         _create_test_index_db(db_path, [
-            {"name": "Coq.A.thm1", "module": "Coq.A", "kind": "lemma", "has_proof_body": 0},
-            {"name": "Coq.A.thm2", "module": "Coq.A", "kind": "theorem", "has_proof_body": 0},
+            {"name": "Stdlib.A.thm1", "module": "Stdlib.A", "kind": "lemma", "has_proof_body": 0},
+            {"name": "Stdlib.A.thm2", "module": "Stdlib.A", "kind": "theorem", "has_proof_body": 0},
         ])
 
         plan = build_campaign_plan(
-            [str(proj)], index_db_path=str(db_path), module_prefix="Coq."
+            [str(proj)], index_db_path=str(db_path), module_prefix="Stdlib."
         )
         # Fallback: returns all provable declarations
         assert len(plan.targets) == 2
@@ -477,7 +477,7 @@ class TestNoProofBodyErrorKind:
         sm.close_session = AsyncMock()
 
         result = asyncio.run(extract_single_proof(
-            sm, "proj", "Init/Datatypes.v", "Coq.Init.Datatypes.andb",
+            sm, "proj", "Init/Datatypes.v", "Stdlib.Init.Datatypes.andb",
         ))
 
         assert isinstance(result, ExtractionError)
@@ -506,12 +506,12 @@ class TestBuildCampaignPlanWithIndex:
         proj.mkdir()
         db_path = tmp_path / "index.db"
         _create_test_index_db(db_path, [
-            {"name": "Coq.Init.Logic.eq_refl", "module": "Coq.Init.Logic", "kind": "lemma"},
+            {"name": "Stdlib.Init.Logic.eq_refl", "module": "Stdlib.Init.Logic", "kind": "lemma"},
         ])
 
         # Should work with index_db_path
         plan = build_campaign_plan(
-            [str(proj)], index_db_path=str(db_path), module_prefix="Coq."
+            [str(proj)], index_db_path=str(db_path), module_prefix="Stdlib."
         )
         assert len(plan.targets) >= 1
 
@@ -525,7 +525,7 @@ class TestBuildCampaignPlanWithIndex:
         with pytest.raises(Exception):
             build_campaign_plan(
                 [str(proj)], index_db_path=str(tmp_path / "missing.db"),
-                module_prefix="Coq."
+                module_prefix="Stdlib."
             )
 
     def test_targets_use_fqn_from_index(self, tmp_path):
@@ -536,14 +536,14 @@ class TestBuildCampaignPlanWithIndex:
         proj.mkdir()
         db_path = tmp_path / "index.db"
         _create_test_index_db(db_path, [
-            {"name": "Coq.Arith.PeanoNat.Nat.add_comm", "module": "Coq.Arith.PeanoNat", "kind": "lemma"},
+            {"name": "Stdlib.Arith.PeanoNat.Nat.add_comm", "module": "Stdlib.Arith.PeanoNat", "kind": "lemma"},
         ])
 
         plan = build_campaign_plan(
-            [str(proj)], index_db_path=str(db_path), module_prefix="Coq."
+            [str(proj)], index_db_path=str(db_path), module_prefix="Stdlib."
         )
         # Targets are now 4-tuples: (project_id, source_file, fqn, decl_kind)
-        assert plan.targets[0][2] == "Coq.Arith.PeanoNat.Nat.add_comm"
+        assert plan.targets[0][2] == "Stdlib.Arith.PeanoNat.Nat.add_comm"
 
     def test_targets_include_decl_kind(self, tmp_path):
         """Campaign targets include declaration kind as fourth element."""
@@ -553,12 +553,12 @@ class TestBuildCampaignPlanWithIndex:
         proj.mkdir()
         db_path = tmp_path / "index.db"
         _create_test_index_db(db_path, [
-            {"name": "Coq.Init.Logic.eq_refl", "module": "Coq.Init.Logic", "kind": "lemma"},
-            {"name": "Coq.Classes.Morphisms.eq_Reflexive", "module": "Coq.Classes.Morphisms", "kind": "instance"},
+            {"name": "Stdlib.Init.Logic.eq_refl", "module": "Stdlib.Init.Logic", "kind": "lemma"},
+            {"name": "Stdlib.Classes.Morphisms.eq_Reflexive", "module": "Stdlib.Classes.Morphisms", "kind": "instance"},
         ])
 
         plan = build_campaign_plan(
-            [str(proj)], index_db_path=str(db_path), module_prefix="Coq."
+            [str(proj)], index_db_path=str(db_path), module_prefix="Stdlib."
         )
         kinds = {t[3] for t in plan.targets}
         assert "lemma" in kinds
@@ -575,20 +575,20 @@ class TestFqnToProofName:
     document-internal name that Petanque can resolve (§4.2 line 129)."""
 
     def test_strips_module_prefix_from_fqn(self):
-        """Coq.Arith.PeanoNat.Nat.add_comm with source Arith/PeanoNat.v → Nat.add_comm"""
+        """Stdlib.Arith.PeanoNat.Nat.add_comm with source Arith/PeanoNat.v → Nat.add_comm"""
         from Poule.extraction.campaign import fqn_to_proof_name
 
         result = fqn_to_proof_name(
-            "Coq.Arith.PeanoNat.Nat.add_comm", "Arith/PeanoNat.v"
+            "Stdlib.Arith.PeanoNat.Nat.add_comm", "Arith/PeanoNat.v"
         )
         assert result == "Nat.add_comm"
 
     def test_top_level_name_in_module(self):
-        """Coq.Init.Logic.eq_refl with source Init/Logic.v → eq_refl"""
+        """Stdlib.Init.Logic.eq_refl with source Init/Logic.v → eq_refl"""
         from Poule.extraction.campaign import fqn_to_proof_name
 
         result = fqn_to_proof_name(
-            "Coq.Init.Logic.eq_refl", "Init/Logic.v"
+            "Stdlib.Init.Logic.eq_refl", "Init/Logic.v"
         )
         assert result == "eq_refl"
 
@@ -647,7 +647,7 @@ class TestDoExtractionUsesProofName:
 
         asyncio.run(extract_single_proof(
             sm, "stdlib", "Arith/PeanoNat.v",
-            "Coq.Arith.PeanoNat.Nat.add_comm",
+            "Stdlib.Arith.PeanoNat.Nat.add_comm",
             project_path="/data/stdlib",
         ))
 
@@ -674,12 +674,12 @@ class TestDoExtractionUsesProofName:
 
         result = asyncio.run(extract_single_proof(
             sm, "stdlib", "Arith/PeanoNat.v",
-            "Coq.Arith.PeanoNat.Nat.add_comm",
+            "Stdlib.Arith.PeanoNat.Nat.add_comm",
             project_path="/data/stdlib",
         ))
 
         assert isinstance(result, ExtractionRecord)
-        assert result.theorem_name == "Coq.Arith.PeanoNat.Nat.add_comm"
+        assert result.theorem_name == "Stdlib.Arith.PeanoNat.Nat.add_comm"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -34,7 +34,7 @@ The system shall define a `Backend` protocol with operations:
 #### list_declarations(vo_path, *, rss_check=None)
 
 - REQUIRES: `vo_path` is a path to a compiled `.vo` file. `rss_check`, when provided, is a callable taking no arguments that may stop and restart the backend to reclaim memory.
-- ENSURES: Returns a list of `(name, kind, constr_t)` tuples for all declarations in the file. Each `name` shall be a fully qualified canonical name (e.g., `Coq.Arith.PeanoNat.Nat.add_comm`), matching the format required by the `declarations.name` field (see [index-entities.md](../doc/architecture/data-models/index-entities.md)). The `constr_t` value is backend-dependent: backends that provide kernel terms return a `ConstrNode`; backends that provide only metadata (e.g., coq-lsp Search output) return a dict containing at minimum `{"type_signature": str, "source": str}`. When `rss_check` is provided, the backend shall invoke it after the initial Search query and between About batches (§4.12).
+- ENSURES: Returns a list of `(name, kind, constr_t)` tuples for all declarations in the file. Each `name` shall be a fully qualified canonical name (e.g., `Stdlib.Arith.PeanoNat.Nat.add_comm`), matching the format required by the `declarations.name` field (see [index-entities.md](../doc/architecture/data-models/index-entities.md)). The `constr_t` value is backend-dependent: backends that provide kernel terms return a `ConstrNode`; backends that provide only metadata (e.g., coq-lsp Search output) return a dict containing at minimum `{"type_signature": str, "source": str}`. When `rss_check` is provided, the backend shall invoke it after the initial Search query and between About batches (§4.12).
 - MAINTAINS: The `kind` value for each declaration is determined by the kind detection mechanism (§4.1.1).
 
 #### 4.1.1 Kind Detection
@@ -112,11 +112,11 @@ The backend shall return `(kind, opacity, declared_library, declared_line)` tupl
 
 Backends that do not return fully qualified names directly (e.g., coq-lsp `Search` returns short names like `Nat.add_comm`) shall derive them during `list_declarations`. The derivation mechanism is backend-dependent:
 
-**coq-lsp backend:** The fully qualified name is constructed by prepending the `.vo` file's logical module path to the short name returned by `Search`. The logical module path is derived from the `.vo` file path using heuristic path parsing (stripping known prefixes such as `user-contrib/`, `theories/`, and version-specific prefixes like `Stdlib/`). The resulting name has the form `<logical_module_path>.<short_name>` (e.g., `Coq.Arith.PeanoNat` + `Nat.add_comm` → `Coq.Arith.PeanoNat.Nat.add_comm`).
+**coq-lsp backend:** The fully qualified name is constructed by prepending the `.vo` file's canonical module path to the short name returned by `Search`. The canonical module path is derived from the `.vo` file path using heuristic path parsing (stripping known prefixes such as `user-contrib/` and `theories/`, keeping library prefixes like `Stdlib/`). For Rocq 9.x stdlib files under `user-contrib/Stdlib/`, the `Stdlib` prefix is kept as the canonical namespace — not replaced with `Coq`. The `Corelib` prefix (used internally by Rocq 9.x for preloaded modules) is normalized to `Stdlib`. The resulting name has the form `<canonical_module_path>.<short_name>` (e.g., `Stdlib.Arith.PeanoNat` + `Nat.add_comm` → `Stdlib.Arith.PeanoNat.Nat.add_comm`).
 
 > **Given** a `.vo` file at `/path/to/user-contrib/Stdlib/Arith/PeanoNat.vo` containing a declaration `Nat.add_comm`,
 > **When** `list_declarations` processes this file,
-> **Then** the returned name is `Coq.Arith.PeanoNat.Nat.add_comm`.
+> **Then** the returned name is `Stdlib.Arith.PeanoNat.Nat.add_comm`.
 
 > **Given** a `.vo` file at `/path/to/user-contrib/mathcomp/ssreflect/ssrbool.vo` containing a declaration `negb_involutive`,
 > **When** `list_declarations` processes this file,
@@ -157,8 +157,8 @@ The remaining messages are joined with `"\n"` and stripped. This filter applies 
 
 - REQUIRES: `name` is a short display name or infix operator string (e.g., `"nat"`, `"+"`, `"list"`).
 - ENSURES: Returns the resolution result:
-  - A single FQN string when the name resolves unambiguously (e.g., `"Coq.Init.Datatypes.nat"`).
-  - A list of FQN strings when the name is ambiguous (e.g., `[\"Coq.Init.Nat.add\", \"Coq.ZArith.BinInt.Z.add\"]`).
+  - A single FQN string when the name resolves unambiguously (e.g., `"Corelib.Init.Datatypes.nat"`).
+  - A list of FQN strings when the name is ambiguous (e.g., `[\"Stdlib.Init.Nat.add\", \"Stdlib.ZArith.BinInt.Z.add\"]`).
   - `None` when the name cannot be resolved (e.g., user-defined name not in the Coq environment).
 
 **coq-lsp backend:** Issues a `Locate <name>.` Vernac command (or `Locate "<op>".` for infix operators). Parses the response to extract the FQN(s). `Locate` queries may be batched into shared synthetic documents (≤100 commands per document) following the same pattern as kind detection (§4.1.1). The response format is version-dependent:
@@ -168,17 +168,19 @@ The remaining messages are joined with `"\n"` and stripped. This filter applies 
 | `Constant <fqn>` | Single FQN; return `<fqn>` |
 | `Inductive <fqn>` | Single FQN; return `<fqn>` |
 | `Constructor <fqn>` | Single FQN; return `<fqn>` |
+| `Class <fqn>` | Single FQN; return `<fqn>` (Rocq 9.x typeclass declarations) |
+| `Instance <fqn>` | Single FQN; return `<fqn>` (Rocq 9.x typeclass instances) |
 | `Notation <path>` | Skip — notations are not indexable symbols |
-| Multiple `Constant`/`Inductive`/`Constructor` lines | Ambiguous; return list of all FQNs |
+| Multiple indexable-category lines | Ambiguous; return list of all FQNs |
 | Error or `"<name> not a defined object"` | Unresolvable; return `None` |
 
 > **Given** a Coq environment where `nat` is defined,
 > **When** `locate("nat")` is called,
-> **Then** it returns `"Coq.Init.Datatypes.nat"`.
+> **Then** it returns `"Corelib.Init.Datatypes.nat"`.
 
 > **Given** a Coq environment where `+` resolves to `Nat.add`,
 > **When** `locate("+")` is called,
-> **Then** it returns `"Coq.Init.Nat.add"`.
+> **Then** it returns `"Stdlib.Init.Nat.add"`.
 
 > **Given** a name `my_custom_def` not in the Coq environment,
 > **When** `locate("my_custom_def")` is called,
@@ -206,15 +208,44 @@ Excluded forms have no kernel term and shall be silently skipped.
 
 **Unknown kinds:** When the detected kind string does not match any row in the table above (including the excluded forms), `map_kind` shall return `"definition"`. The `map_kind` function shall return `None` only for explicitly excluded forms (Notation, Abbreviation, Section Variable, Ltac, Module). This prevents unknown kinds from silently dropping declarations from the index.
 
+### 4.2.1 Kind Refinement (Rocq 9.x)
+
+In Rocq 9.x, About-based kind detection maps all Constant declarations to `"definition"`, losing the distinction between lemmas, theorems, instances, and definitions. After `map_kind` returns `"definition"`, the pipeline shall attempt to refine the kind using the declared source line from About metadata.
+
+**Precondition:** The kind from `map_kind` is `"definition"`, and `declared_library` and `declared_line` are available from About metadata.
+
+**Procedure:** Resolve the `.v` source file from `declared_library` using the same path resolution as proof-body detection Signal 3 (§4.4 step 9). Read the line at `declared_line`. Extract the first word of the line (the Vernacular keyword). Map it to a refined kind:
+
+| Source keyword | Refined kind |
+|---------------|-------------|
+| `Lemma`, `Proposition`, `Corollary`, `Fact`, `Remark` | `lemma` |
+| `Theorem` | `theorem` |
+| `Instance` | `instance` |
+| Any other keyword or source unavailable | `definition` (unchanged) |
+
+Kind refinement runs during `process_declaration`, after About-based kind detection and before proof-body detection. The refined kind is used for both storage and proof-body detection (which checks `kind ∈ {lemma, theorem, definition, instance}`).
+
+> **Given** a declaration `Nat.add_comm` with `declared_library="Stdlib.Numbers.NatInt.NZAdd"`, `declared_line=59`, and the `.v` source line 59 is `Lemma add_comm n m : n + m = m + n.`,
+> **When** kind refinement runs,
+> **Then** the kind is refined from `"definition"` to `"lemma"`.
+
+> **Given** a declaration `Nat.add` with `declared_library="Corelib.Init.Nat"`, `declared_line=20`, and the `.v` source line 20 is `Fixpoint add n m :=`,
+> **When** kind refinement runs,
+> **Then** the kind remains `"definition"`.
+
+> **Given** a declaration whose `declared_library` is `None` (Coq ≤8.x or About parse failure),
+> **When** kind refinement runs,
+> **Then** the kind remains `"definition"` (no source available).
+
 ### 4.3 Module Path Derivation
 
 The `module` field on each declaration shall be the logical path of the `.vo` file from which the declaration was extracted. It is NOT derived from string manipulation of the fully qualified name.
 
-The pipeline shall convert each `.vo` file path to a logical module path before storing it in the `module` field. The conversion uses the same heuristic path parsing described in §4.1.2 (stripping known prefixes, converting path segments to dot-separated components, removing the `.vo` extension).
+The pipeline shall convert each `.vo` file path to a canonical module path before storing it in the `module` field. The conversion uses the same heuristic path parsing described in §4.1.2 (stripping `user-contrib/` and `theories/` prefixes, keeping the `Stdlib` prefix for stdlib files, converting path segments to dot-separated components, removing the `.vo` extension).
 
 > **Given** a `.vo` file at `/path/to/user-contrib/Stdlib/Arith/PeanoNat.vo`,
 > **When** the pipeline derives the module path,
-> **Then** the `module` field value is `Coq.Arith.PeanoNat`.
+> **Then** the `module` field value is `Stdlib.Arith.PeanoNat`.
 
 > **Given** a `.vo` file at `/path/to/user-contrib/mathcomp/ssreflect/ssrbool.vo`,
 > **When** the pipeline derives the module path,
@@ -300,23 +331,23 @@ MAINTAINS: After resolution, the `symbol_set` column in `declarations` and the `
 
 > **Given** a declaration with type `forall n m : nat, n + m = m + n` parsed via `TypeExprParser`,
 > **When** `extract_consts` produces `{"nat", "+", "="}` and `resolve_symbols` is called,
-> **Then** `Locate nat.` returns `Coq.Init.Datatypes.nat`, `Locate "+".` returns `Coq.Init.Nat.add`, `Locate "=".` returns `Coq.Init.Logic.eq`, and the stored symbol set is `{"Coq.Init.Datatypes.nat", "Coq.Init.Nat.add", "Coq.Init.Logic.eq"}`.
+> **Then** `Locate nat.` returns `Corelib.Init.Datatypes.nat`, `Locate "+".` returns `Stdlib.Init.Nat.add`, `Locate "=".` returns `Corelib.Init.Logic.eq`, and the stored symbol set is `{"Corelib.Init.Datatypes.nat", "Stdlib.Init.Nat.add", "Corelib.Init.Logic.eq"}`.
 
 > **Given** a declaration containing the symbol `my_custom_def` not in the Coq environment,
 > **When** `Locate my_custom_def.` returns an error,
 > **Then** the symbol `my_custom_def` is stored as-is in the symbol set.
 
-**Re-export detection and alias capture**: After collection and before Pass 1 processing, the pipeline shall detect re-exported declarations using the `declared_library` metadata from About (§4.1.1). For each collected declaration, if `declared_library` is available, the pipeline shall normalize it to the canonical module convention (`Stdlib.X.Y` → `Coq.X.Y`, `Corelib.X.Y` → `Coq.X.Y`, other prefixes unchanged) and compare it with the `.vo` file's canonical module (from `_vo_to_canonical_module`). When these differ, the declaration is a re-export: the pipeline shall skip it and record an alias mapping from the re-export FQN to the canonical FQN. The canonical FQN is `{normalized_declared_library}.{short_name}` where `short_name` is the last dot-separated component of the re-export FQN. All collected aliases are stored in the index via `writer.insert_re_export_aliases(aliases)` after Pass 1 completes.
+**Re-export detection and alias capture**: After collection and before Pass 1 processing, the pipeline shall detect re-exported declarations using the `declared_library` metadata from About (§4.1.1). For each collected declaration, if `declared_library` is available, the pipeline shall normalize it to the canonical module convention (`Corelib.X.Y` → `Stdlib.X.Y`, other prefixes unchanged) and compare it with the `.vo` file's canonical module (from `_vo_to_canonical_module`). When these differ, the declaration is a re-export: the pipeline shall skip it and record an alias mapping from the re-export FQN to the canonical FQN. The canonical FQN is `{normalized_declared_library}.{short_name}` where `short_name` is the last dot-separated component of the re-export FQN. All collected aliases are stored in the index via `writer.insert_re_export_aliases(aliases)` after Pass 1 completes.
 
 **Declaration deduplication (fallback)**: When `declared_library` is unavailable (`None`, e.g., Coq ≤8.x), the pipeline shall fall back to FQN-matching deduplication: keep the first occurrence and skip subsequent duplicates with the same fully qualified name.
 
-> **Given** `ListDef.vo` yields declaration `Coq.Lists.ListDef.map` with `declared_library="Stdlib.Lists.ListDef"`, and `List.vo` yields declaration `Coq.Lists.List.map` with `declared_library="Stdlib.Lists.ListDef"`,
+> **Given** `ListDef.vo` yields declaration `Stdlib.Lists.ListDef.map` with `declared_library="Stdlib.Lists.ListDef"`, and `List.vo` yields declaration `Stdlib.Lists.List.map` with `declared_library="Stdlib.Lists.ListDef"`,
 > **When** the pipeline runs re-export detection,
-> **Then** `Coq.Lists.List.map` is skipped and `re_export_aliases["Coq.Lists.List.map"] == "Coq.Lists.ListDef.map"`.
+> **Then** `Stdlib.Lists.List.map` is skipped and `re_export_aliases["Stdlib.Lists.List.map"] == "Stdlib.Lists.ListDef.map"`.
 
-> **Given** `Nat.vo` yields declaration `Coq.Init.Nat.add` with `declared_library="Corelib.Init.Nat"`,
+> **Given** `Nat.vo` yields declaration `Stdlib.Init.Nat.add` with `declared_library="Corelib.Init.Nat"`,
 > **When** the pipeline runs re-export detection,
-> **Then** `Coq.Init.Nat.add` is kept (normalized `declared_library` matches canonical module) and no alias is recorded.
+> **Then** `Stdlib.Init.Nat.add` is kept (normalized `declared_library` `Stdlib.Init.Nat` matches canonical module) and no alias is recorded.
 
 > **Given** a declaration with `declared_library=None` (Coq 8.x),
 > **When** the pipeline runs re-export detection,
@@ -341,16 +372,16 @@ All dependency edges shall use the relation values defined in the `dependencies`
 
 **Consequence**: Reverse dependency queries (impact analysis: "what depends on theorem X?") return sparse results because theorem-to-theorem edges are absent from the `Print Assumptions` output. Forward queries (transitive closure: "what does X rest on?") return axiom-level foundations rather than theorem-level dependencies.
 
-**Symbol-set cross-referencing** (complementary source): After Pass 2 inserts `Print Assumptions` edges, the pipeline shall also generate `"uses"` edges from symbol-set overlap. For each symbol in declaration A's `symbol_set`, the pipeline shall resolve it to a declaration ID using the same multi-strategy name resolution (exact match, `Coq.` prefix, suffix match) described in the Name Resolution Strategy section below. When a symbol resolves to declaration B, an edge (A, B, `"uses"`) shall be inserted. This captures theorem-to-theorem relationships that `Print Assumptions` misses, because symbol sets are extracted from type signatures which reference the theorems and definitions used in the statement. Edges from both sources are deduplicated by (src, dst, relation).
+**Symbol-set cross-referencing** (complementary source): After Pass 2 inserts `Print Assumptions` edges, the pipeline shall also generate `"uses"` edges from symbol-set overlap. For each symbol in declaration A's `symbol_set`, the pipeline shall resolve it to a declaration ID using the same multi-strategy name resolution (exact match, `Stdlib.` prefix, suffix match) described in the Name Resolution Strategy section below. When a symbol resolves to declaration B, an edge (A, B, `"uses"`) shall be inserted. This captures theorem-to-theorem relationships that `Print Assumptions` misses, because symbol sets are extracted from type signatures which reference the theorems and definitions used in the statement. Edges from both sources are deduplicated by (src, dst, relation).
 
 When both sources are available for a declaration, their edges shall be merged and deduplicated.
 
 #### Name Resolution Strategy
 
-`Print Assumptions` returns dependency names with qualification that may differ from the canonical fully qualified names stored in the index (e.g., `Nat.add` vs `Coq.Init.Nat.add`). The resolver shall attempt matching in the following order:
+`Print Assumptions` returns dependency names with qualification that may differ from the canonical fully qualified names stored in the index (e.g., `Nat.add` vs `Stdlib.Init.Nat.add`). The resolver shall attempt matching in the following order:
 
 1. **Exact match** against the name-to-ID map.
-2. **`Coq.` prefix**: prepend `Coq.` and retry (handles stdlib names like `Init.Nat.add`).
+2. **`Stdlib.` prefix**: prepend `Stdlib.` and retry (handles stdlib names like `Init.Nat.add`).
 3. **Suffix match**: build a reverse lookup from all dot-separated suffixes of each FQN. If the target name matches exactly one FQN's suffix, resolve to that FQN. If the suffix is ambiguous (maps to multiple distinct FQNs), skip it.
 
 Unresolved targets (no match after all strategies) are silently skipped — they reference declarations outside the indexed scope.
@@ -379,15 +410,15 @@ The file shall contain one DependencyEntry JSON object per line (produced by `ex
 
 The file shall be a Graphviz DOT file produced by coq-dpdgraph (`dpdgraph` or `dpd2dot`). The pipeline shall parse directed edges in the format `"src_name" -> "dst_name"` and resolve both endpoints to declaration IDs in the index. Lines that are not directed edges (node declarations, attributes, comments, graph headers/footers) are ignored.
 
-> **Given** a DOT file containing `"Coq.Arith.PeanoNat.Nat.add_assoc" -> "Coq.Arith.PeanoNat.Nat.add_comm"` and an index containing both declarations,
+> **Given** a DOT file containing `"Stdlib.Arith.PeanoNat.Nat.add_assoc" -> "Stdlib.Arith.PeanoNat.Nat.add_comm"` and an index containing both declarations,
 > **When** `import_dependencies` is called with `source_format="dot"`,
 > **Then** a `(add_assoc_id, add_comm_id, "uses")` edge is inserted into the `dependencies` table.
 
 #### Name resolution
 
-The same multi-strategy resolver used in Pass 2 (§4.5) shall be reused: exact match, `Coq.` prefix, suffix match. The suffix lookup table shall be built from the existing index's declaration names.
+The same multi-strategy resolver used in Pass 2 (§4.5) shall be reused: exact match, `Stdlib.` prefix, suffix match. The suffix lookup table shall be built from the existing index's declaration names.
 
-> **Given** an index database with `Nat.add_comm` indexed and a dependency graph entry `{"theorem_name": "Coq.Arith.PeanoNat.Nat.add_assoc", "depends_on": [{"name": "Coq.Arith.PeanoNat.Nat.add_comm", "kind": "lemma"}]}`,
+> **Given** an index database with `Nat.add_comm` indexed and a dependency graph entry `{"theorem_name": "Stdlib.Arith.PeanoNat.Nat.add_assoc", "depends_on": [{"name": "Stdlib.Arith.PeanoNat.Nat.add_comm", "kind": "lemma"}]}`,
 > **When** `import_dependencies` is called,
 > **Then** a `(add_assoc_id, add_comm_id, "uses")` edge is inserted into the `dependencies` table.
 

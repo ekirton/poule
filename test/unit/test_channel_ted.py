@@ -66,17 +66,17 @@ def _lapp():
     return LApp()
 
 
-def _lconst(name="Coq.Init.Nat.add"):
+def _lconst(name="Stdlib.Init.Nat.add"):
     from Poule.models.labels import LConst
     return LConst(name)
 
 
-def _lind(name="Coq.Init.Datatypes.nat"):
+def _lind(name="Stdlib.Init.Datatypes.nat"):
     from Poule.models.labels import LInd
     return LInd(name)
 
 
-def _lconstruct(name="Coq.Init.Datatypes.nat", idx=0):
+def _lconstruct(name="Stdlib.Init.Datatypes.nat", idx=0):
     from Poule.models.labels import LConstruct
     return LConstruct(name, idx)
 
@@ -97,7 +97,7 @@ def _lsort(kind=None):
     return LSort(kind or SortKind.PROP)
 
 
-def _lcase(name="Coq.Init.Datatypes.nat"):
+def _lcase(name="Stdlib.Init.Datatypes.nat"):
     from Poule.models.labels import LCase
     return LCase(name)
 
