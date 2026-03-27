@@ -443,6 +443,18 @@ async def _extract_file_group(
                 ))
             return results
 
+        # Post-load RSS check: warn if type-checking alone exceeds threshold.
+        if rss_threshold is not None and backend is not None:
+            rss = getattr(backend, "get_rss_bytes", lambda: 0)()
+            if rss > rss_threshold:
+                logger.warning(
+                    "RSS after loading %s already exceeds threshold "
+                    "(%.0f MiB > %.0f MiB); extraction will proceed but "
+                    "OOM risk is elevated",
+                    source_file, rss / (1024 * 1024),
+                    rss_threshold / (1024 * 1024),
+                )
+
         for thm in theorem_names:
             try:
                 result = await _extract_one_on_backend(

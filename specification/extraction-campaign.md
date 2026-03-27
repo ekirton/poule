@@ -199,7 +199,12 @@ When a `backend_factory` is provided, the orchestrator groups targets by source 
 
 #### RSS-based memory monitoring
 
-After extracting each theorem within a file group, the system shall check the backend process RSS. When RSS exceeds a configurable threshold (default 5 GiB, overridable via `POULE_LSP_RSS_LIMIT` env var), the backend is shut down and respawned, and the file is reloaded for the remaining theorems.
+The system shall check the backend process RSS at two points:
+
+1. **Post-load check**: immediately after the backend loads the file (before the first theorem extraction). If RSS already exceeds the threshold, a warning is logged. No restart is attempted — the file must be loaded to extract theorems.
+2. **Post-extraction check**: after extracting each theorem within a file group. When RSS exceeds the threshold, the backend is shut down and respawned, and the file is reloaded for the remaining theorems.
+
+The RSS threshold defaults to 5 GiB, overridable via the `POULE_LSP_RSS_LIMIT` environment variable (in bytes).
 
 - REQUIRES: The backend exposes a method to read the child process RSS in bytes. On Linux, this reads `/proc/{pid}/status` VmRSS. On other platforms, the check is a no-op (returns 0, never triggers restart).
 - ENSURES: Memory usage is bounded even for large files with many theorems. The restart is transparent to callers — remaining theorems are extracted normally after the reload.
@@ -208,6 +213,10 @@ After extracting each theorem within a file group, the system shall check the ba
 > **Given** a file with 500 theorems where RSS exceeds the threshold after theorem 200
 > **When** `_extract_file_group(...)` continues
 > **Then** the backend is restarted, the file is reloaded, and theorems 201-500 are extracted normally
+
+> **Given** a file whose type-checking alone pushes RSS above the threshold
+> **When** `_extract_file_group(...)` loads the file
+> **Then** a warning is logged with the RSS value and threshold, and extraction proceeds
 
 > **Given** a file `base.v` with 3 theorems `[A, B, C]` where B fails with proof-not-found
 > **When** `_extract_file_group(...)` is called

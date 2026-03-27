@@ -307,6 +307,11 @@ Concurrency: each `CoqBackend` instance is used by exactly one session. The sess
 | Direction | Bidirectional, stateful |
 | Cardinality | One Coq process per CoqBackend instance |
 | Lifecycle | Process spawned by `create_coq_backend`, terminated by `shutdown` |
+| Stderr | Redirected to `DEVNULL`; not piped |
+
+#### Stderr handling
+
+The Coq child process stderr shall be redirected to `subprocess.DEVNULL`. Piping stderr without draining it causes a deadlock when the pipe buffer (64 KB on Linux) fills: the child blocks on `write(2, ...)`, cannot read stdin or write stdout, and the parent's `_write_message` / `_read_message` hangs. The watchdog cannot fire because the deadlock occurs in `drain()` before the timed `_read_message`. Redirecting to `DEVNULL` eliminates this class of hang.
 
 ## 7. State and Lifecycle
 
@@ -469,7 +474,7 @@ await backend.shutdown()  # Succeeds (idempotent)
 ## 11. Language-Specific Notes (Python)
 
 - Define `CoqBackend` as a `typing.Protocol` class with async methods.
-- Use `asyncio.create_subprocess_exec` for process spawning.
+- Use `asyncio.create_subprocess_exec` for process spawning, with `stderr=asyncio.subprocess.DEVNULL`.
 - Use `asyncio.StreamReader` / `asyncio.StreamWriter` for stdin/stdout pipe communication.
 - For coq-lsp: reuse the Content-Length framing and JSON-RPC message format from the extraction backend (`poule.extraction.backends.coqlsp_backend`), but implement the proof-specific LSP interactions (document open with tactic stepping, `proof/goals` queries).
 - For SerAPI: use S-expression parsing for responses.

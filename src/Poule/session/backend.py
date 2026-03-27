@@ -685,7 +685,7 @@ async def create_coq_backend(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
     except FileNotFoundError as exc:
         raise FileNotFoundError(

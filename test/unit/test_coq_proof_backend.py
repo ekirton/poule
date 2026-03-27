@@ -91,6 +91,23 @@ class TestCreateCoqBackend:
         finally:
             await backend.shutdown()
 
+    async def test_factory_stderr_not_piped(self):
+        """Spec §6: stderr shall be redirected to DEVNULL, not piped.
+
+        Piping stderr without draining causes deadlocks when the pipe
+        buffer fills.  The backend must use subprocess.DEVNULL.
+        """
+        create = _import_create_coq_backend()
+        backend = await create("/dev/null")
+        try:
+            # _proc.stderr should be None when stderr=DEVNULL
+            assert backend._proc.stderr is None, (
+                "stderr is piped — must use subprocess.DEVNULL to prevent "
+                "pipe-buffer deadlocks"
+            )
+        finally:
+            await backend.shutdown()
+
 
 # ===========================================================================
 # 2. CoqBackend protocol — load_file (§4.1)

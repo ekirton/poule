@@ -1886,6 +1886,37 @@ class TestExtractFileGroupRssRestart:
         assert len(results) == 1
         assert isinstance(results[0], ExtractionRecord)
 
+    def test_post_load_rss_warning_logged(self):
+        """When RSS exceeds threshold immediately after file loading (before
+        any theorem extraction), a warning is logged and extraction proceeds.
+        Spec §4.3 post-load check."""
+        import logging
+        from Poule.extraction.campaign import _extract_file_group
+        from Poule.extraction.types import ExtractionRecord
+
+        backend = _make_mock_backend(proofs={"thm_a": ["auto."]})
+        # RSS already above threshold after file load
+        backend.get_rss_bytes = MagicMock(return_value=6 * 1024**3)  # 6 GiB
+        factory = AsyncMock(return_value=backend)
+
+        with patch("Poule.extraction.campaign.logger") as mock_logger:
+            results = asyncio.run(_extract_file_group(
+                factory, 600, "proj", "test.v",
+                ["thm_a"], "/path/to/proj",
+                rss_threshold=5 * 1024**3,
+            ))
+
+        # Extraction should still proceed (warning only, no abort)
+        assert len(results) == 1
+        # A warning should have been logged about post-load RSS
+        warning_calls = [
+            c for c in mock_logger.warning.call_args_list
+            if "load" in str(c).lower() or "after" in str(c).lower()
+        ]
+        assert len(warning_calls) >= 1, (
+            "Expected a warning about high RSS after file loading"
+        )
+
 
 class TestGroupTargetsByFile:
     """_group_targets_by_file groups contiguous same-file targets."""
