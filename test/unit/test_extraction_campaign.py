@@ -1398,6 +1398,95 @@ class TestSessionIdExclusion:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Load Path Passthrough (§4.2, coq-proof-backend §4.2)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestLoadPathPassthrough:
+    """_extract_file_group passes load_paths to the backend factory."""
+
+    def test_load_paths_derived_from_module_prefix(self, tmp_path):
+        """When module_prefix is provided, _extract_file_group passes
+        load_paths=[(project_path, prefix)] to the backend factory."""
+        from Poule.extraction.campaign import _extract_file_group
+
+        backend = _make_mock_backend(proofs={"thm": ["auto."]})
+        factory_calls = []
+
+        async def tracking_factory(file_path, **kwargs):
+            factory_calls.append((file_path, kwargs))
+            return backend
+
+        asyncio.run(_extract_file_group(
+            tracking_factory, 600, "proj", "Core/Raux.v",
+            ["thm"], "/path/to/Flocq",
+            load_paths=[("/path/to/Flocq", "Flocq")],
+        ))
+
+        assert len(factory_calls) == 1
+        _, kwargs = factory_calls[0]
+        assert "load_paths" in kwargs
+        assert kwargs["load_paths"] == [("/path/to/Flocq", "Flocq")]
+
+    def test_no_load_paths_when_not_provided(self):
+        """When load_paths is not provided, factory is called without it."""
+        from Poule.extraction.campaign import _extract_file_group
+
+        backend = _make_mock_backend(proofs={"thm": ["auto."]})
+        factory_calls = []
+
+        async def tracking_factory(file_path, **kwargs):
+            factory_calls.append((file_path, kwargs))
+            return backend
+
+        asyncio.run(_extract_file_group(
+            tracking_factory, 600, "proj", "test.v",
+            ["thm"], "/path/to/proj",
+        ))
+
+        assert len(factory_calls) == 1
+        _, kwargs = factory_calls[0]
+        assert "load_paths" not in kwargs
+
+
+class TestRunCampaignLoadPaths:
+    """run_campaign derives load_paths from module_prefix (§4.4)."""
+
+    def test_load_paths_derived_in_file_grouped_path(self, tmp_path):
+        """When module_prefix is provided, run_campaign passes load_paths
+        to _extract_file_group derived from project_path + module_prefix."""
+        from Poule.extraction.campaign import run_campaign
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "Test.v").touch()
+        idx = _make_index(tmp_path, [
+            {"name": "Lib.Test.t1", "module": "Lib.Test", "kind": "lemma"},
+        ])
+        output = tmp_path / "out.jsonl"
+
+        backend = _make_mock_backend(proofs={"t1": ["auto."]})
+        factory_calls = []
+
+        async def tracking_factory(file_path, **kwargs):
+            factory_calls.append((file_path, kwargs))
+            return backend
+
+        asyncio.run(run_campaign(
+            [str(proj)], str(output), {
+                "index_db_path": idx,
+                "backend_factory": tracking_factory,
+                "watchdog_timeout": 600,
+                "module_prefix": "Lib.",
+            },
+        ))
+
+        assert len(factory_calls) == 1
+        _, kwargs = factory_calls[0]
+        assert kwargs.get("load_paths") == [(str(proj), "Lib")]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # File-Grouped Extraction (§4.3)
 # ═══════════════════════════════════════════════════════════════════════════
 

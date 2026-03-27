@@ -178,13 +178,19 @@ The returned `ProofState` shall have:
 
 The system shall provide an async factory function:
 
-#### create_coq_backend(file_path, watchdog_timeout=None)
+#### create_coq_backend(file_path, watchdog_timeout=None, load_paths=None)
 
-- REQUIRES: `file_path` is a non-empty string. `watchdog_timeout` is a positive float (seconds) or `None`.
-- ENSURES: Spawns a new Coq process (coq-lsp or SerAPI, determined by configuration or availability). Returns a `CoqBackend` instance connected to that process with the given `watchdog_timeout` configured. The process is ready for `load_file` to be called.
+- REQUIRES: `file_path` is a non-empty string. `watchdog_timeout` is a positive float (seconds) or `None`. `load_paths` is an optional list of `(directory, logical_prefix)` tuples specifying recursive load path bindings (equivalent to coq-lsp `-R` flags).
+- ENSURES: Spawns a new Coq process (coq-lsp or SerAPI, determined by configuration or availability). When `load_paths` is provided, the process is started with the corresponding `-R` flags so that bare `Require Import` directives in source files resolve correctly. Returns a `CoqBackend` instance connected to that process with the given `watchdog_timeout` configured. The process is ready for `load_file` to be called.
 - On process spawn failure (coq-lsp not installed, binary not found): raises an exception with a descriptive message.
 
 The factory is the only way to create `CoqBackend` instances. The session manager receives it as a constructor parameter, enabling test injection of mock backends.
+
+#### Load path configuration
+
+Libraries installed under `user-contrib/` are automatically available for fully-qualified imports (e.g., `From Flocq.Core Require Import Zaux`). However, some libraries use bare imports (e.g., `Require Import Zaux`) that rely on recursive load path bindings set during the library's original build. These bare imports fail without the corresponding `-R` flags.
+
+The `load_paths` parameter provides these bindings. For a library installed at `<user-contrib>/<Lib>` with module prefix `<Lib>.`, the binding is `(<user-contrib>/<Lib>, <Lib>)`. The campaign orchestrator derives this from the project path and module prefix.
 
 > **Given** coq-lsp is installed and available on PATH
 > **When** `create_coq_backend("/path/to/file.v")` is called
@@ -193,6 +199,10 @@ The factory is the only way to create `CoqBackend` instances. The session manage
 > **Given** coq-lsp is installed and a watchdog_timeout of 600
 > **When** `create_coq_backend("/path/to/file.v", watchdog_timeout=600)` is called
 > **Then** a CoqBackend instance is returned with watchdog_timeout=600 configured
+
+> **Given** coq-lsp is installed and load_paths=[("/opt/coq/user-contrib/Flocq", "Flocq")]
+> **When** `create_coq_backend("/opt/coq/user-contrib/Flocq/Core/Raux.v", load_paths=[...])` is called
+> **Then** a CoqBackend instance is returned and `load_file` succeeds (bare `Require Import Zaux` resolves via the `-R` flag)
 
 > **Given** neither coq-lsp nor SerAPI is installed
 > **When** `create_coq_backend("/path/to/file.v")` is called

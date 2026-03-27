@@ -667,14 +667,22 @@ class CoqProofBackend:
 async def create_coq_backend(
     file_path: str,
     watchdog_timeout: Optional[float] = None,
+    load_paths: Optional[list[tuple[str, str]]] = None,
 ) -> CoqProofBackend:
     """Spawn a coq-lsp process and return a connected CoqProofBackend.
 
     Per spec §4.2: the factory is the only way to create backend instances.
+
+    When *load_paths* is provided, each ``(directory, logical_prefix)``
+    tuple is passed as a ``-R`` flag to coq-lsp so that bare
+    ``Require Import`` directives resolve correctly.
     """
+    cmd: list[str] = ["coq-lsp"]
+    for directory, prefix in (load_paths or []):
+        cmd.extend(["-R", f"{directory},{prefix}"])
     try:
         proc = await asyncio.create_subprocess_exec(
-            "coq-lsp",
+            *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

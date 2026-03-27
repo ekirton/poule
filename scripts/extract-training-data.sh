@@ -98,7 +98,7 @@ fi
 # They also filter the index to only the relevant library's declarations.
 
 declare -A MODULE_PREFIXES=(
-    [stdlib]="Coq."
+    [stdlib]="Stdlib."
     [mathcomp]="mathcomp."
     [stdpp]="stdpp."
     [flocq]="Flocq."

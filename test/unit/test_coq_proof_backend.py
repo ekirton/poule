@@ -78,6 +78,19 @@ class TestCreateCoqBackend:
             with pytest.raises((FileNotFoundError, OSError, Exception)):
                 await create("/dev/null")
 
+    async def test_factory_accepts_load_paths(self):
+        """Contract test: load_paths kwarg is accepted and enables
+        bare imports for libraries with -R load path bindings (§4.2)."""
+        create = _import_create_coq_backend()
+        backend = await create(
+            "/dev/null",
+            load_paths=[("/opt/opam/coq/lib/coq/user-contrib/Flocq", "Flocq")],
+        )
+        try:
+            assert hasattr(backend, "load_file")
+        finally:
+            await backend.shutdown()
+
 
 # ===========================================================================
 # 2. CoqBackend protocol — load_file (§4.1)

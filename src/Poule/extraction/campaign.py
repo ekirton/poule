@@ -397,6 +397,7 @@ async def _extract_file_group(
     theorem_names: list[str],
     project_path: str,
     rss_threshold: int | None = None,
+    load_paths: list[tuple[str, str]] | None = None,
 ) -> list[Union[ExtractionRecord, PartialExtractionRecord, ExtractionError]]:
     """Extract all proofs from one file using a single backend.
 
@@ -406,14 +407,21 @@ async def _extract_file_group(
     When *rss_threshold* is set (bytes), the backend's RSS is checked
     after each proof.  If it exceeds the threshold the backend is
     restarted and the file reloaded for the remaining theorems.
+
+    When *load_paths* is provided, each ``(directory, prefix)`` pair is
+    passed to the backend factory as ``-R`` flags so bare imports resolve.
     """
     abs_file = str(Path(project_path) / source_file) if project_path else source_file
     results: list[Union[ExtractionRecord, PartialExtractionRecord, ExtractionError]] = []
     backend = None
 
     async def _spawn_and_load():
-        wt_kwargs = {"watchdog_timeout": watchdog_timeout} if watchdog_timeout else {}
-        b = await backend_factory(abs_file, **wt_kwargs)
+        factory_kwargs: dict = {}
+        if watchdog_timeout:
+            factory_kwargs["watchdog_timeout"] = watchdog_timeout
+        if load_paths:
+            factory_kwargs["load_paths"] = load_paths
+        b = await backend_factory(abs_file, **factory_kwargs)
         try:
             await b.load_file(abs_file)
         except Exception:
@@ -780,6 +788,14 @@ async def run_campaign(
     workers = all_kwargs.get("workers", 1)
     rss_threshold = all_kwargs.get("rss_threshold")
 
+    # Derive load_paths from module_prefix + project_path for bare imports.
+    module_prefix = all_kwargs.get("module_prefix")
+    load_paths: list[tuple[str, str]] | None = None
+    if module_prefix and plan.projects:
+        prefix_bare = module_prefix.rstrip(".")
+        proj_path = plan.projects[0].project_path
+        load_paths = [(proj_path, prefix_bare)]
+
     if backend_factory is not None:
         # File-grouped extraction: one backend per source file (§4.3).
         file_groups = _group_targets_by_file(plan.targets)
@@ -790,6 +806,7 @@ async def run_campaign(
                 pid, sf, thms,
                 project_path=project_path_map.get(pid, ""),
                 rss_threshold=rss_threshold,
+                load_paths=load_paths,
             )
 
         if workers > 1:

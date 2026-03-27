@@ -299,8 +299,9 @@ Options:
 | `scope_filter` | ScopeFilter or null | null | Name pattern or module filter (P1) |
 | `include_diffs` | boolean | false | Include proof state diffs in output (P1) |
 | `watchdog_timeout` | positive float or null | 600 | Inactivity threshold (seconds) before declaring backend dead; null to disable |
-| `backend_factory` | async callable or null | null | Backend factory `(file_path, watchdog_timeout=) → CoqProofBackend`. When provided, enables file-grouped extraction (§4.3). When null, falls back to per-proof extraction via SessionManager. |
+| `backend_factory` | async callable or null | null | Backend factory `(file_path, watchdog_timeout=, load_paths=) → CoqProofBackend`. When provided, enables file-grouped extraction (§4.3). When null, falls back to per-proof extraction via SessionManager. |
 | `workers` | positive integer | 1 | Number of parallel file workers. Only effective when `backend_factory` is provided. |
+| `module_prefix` | string or null | null | Module prefix for the library (e.g., `"Flocq."`). Used to derive load path bindings for the backend factory. When provided, the orchestrator passes `load_paths=[(project_path, prefix_without_dot)]` to the backend factory so that bare `Require Import` directives resolve correctly. |
 
 ### Extraction Campaign Orchestrator → CoqProofBackend (file-grouped path)
 
