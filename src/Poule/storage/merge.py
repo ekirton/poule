@@ -213,7 +213,22 @@ def merge_indexes(sources: list[tuple[str, Path]], dest: Path) -> dict:
 
     dest_conn.commit()
 
-    # 6b. Copy embeddings, remapping decl_id.
+    # 6b. Copy re_export_aliases.
+    for lib_name, src_path in sources:
+        src_conn = sqlite3.connect(str(src_path))
+        alias_rows = src_conn.execute(
+            "SELECT alias_fqn, canonical_fqn FROM re_export_aliases"
+        ).fetchall()
+        src_conn.close()
+        if alias_rows:
+            dest_conn.executemany(
+                "INSERT OR IGNORE INTO re_export_aliases "
+                "(alias_fqn, canonical_fqn) VALUES (?, ?)",
+                alias_rows,
+            )
+    dest_conn.commit()
+
+    # 6c. Copy embeddings, remapping decl_id.
     for (lib_name, src_path), old_to_new in zip(sources, all_id_maps):
         src_conn = sqlite3.connect(str(src_path))
         try:
@@ -235,7 +250,7 @@ def merge_indexes(sources: list[tuple[str, Path]], dest: Path) -> dict:
 
     dest_conn.commit()
 
-    # 6c. Copy neural_model_hash if all sources agree on it.
+    # 6d. Copy neural_model_hash if all sources agree on it.
     model_hashes = set()
     for lib_name, src_path in sources:
         src_conn = sqlite3.connect(str(src_path))

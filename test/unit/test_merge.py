@@ -240,6 +240,50 @@ class TestMergeBasic:
         assert by_name["Lib.lemma1"] == 1, "lemma should keep has_proof_body=1"
         assert by_name["Lib.def1"] == 0, "definition should keep has_proof_body=0"
 
+    def test_re_export_aliases_merged(self, tmp_path):
+        """§4.8: re_export_aliases from all sources are copied to merged DB."""
+        stdlib_path = _create_per_library_db(
+            tmp_path / "index-stdlib.db", "stdlib", _stdlib_declarations(),
+            library_version="8.19.2",
+        )
+        mc_path = _create_per_library_db(
+            tmp_path / "index-mathcomp.db", "mathcomp", _mathcomp_declarations(),
+            library_version="2.2.0",
+        )
+        # Insert aliases into source DBs.
+        conn = sqlite3.connect(str(stdlib_path))
+        conn.execute(
+            "INSERT INTO re_export_aliases (alias_fqn, canonical_fqn) "
+            "VALUES (?, ?)",
+            ("Stdlib.Arith.PeanoNat.Nat.add", "Stdlib.Init.Nat.add"),
+        )
+        conn.commit()
+        conn.close()
+
+        conn = sqlite3.connect(str(mc_path))
+        conn.execute(
+            "INSERT INTO re_export_aliases (alias_fqn, canonical_fqn) "
+            "VALUES (?, ?)",
+            ("mathcomp.algebra.ssralg.negb", "mathcomp.ssreflect.ssrbool.negb"),
+        )
+        conn.commit()
+        conn.close()
+
+        dest = tmp_path / "index.db"
+        merge_indexes([("stdlib", stdlib_path), ("mathcomp", mc_path)], dest)
+
+        conn = sqlite3.connect(str(dest))
+        rows = conn.execute(
+            "SELECT alias_fqn, canonical_fqn FROM re_export_aliases "
+            "ORDER BY alias_fqn"
+        ).fetchall()
+        conn.close()
+
+        aliases = {alias: canon for alias, canon in rows}
+        assert len(aliases) == 2
+        assert aliases["Stdlib.Arith.PeanoNat.Nat.add"] == "Stdlib.Init.Nat.add"
+        assert aliases["mathcomp.algebra.ssralg.negb"] == "mathcomp.ssreflect.ssrbool.negb"
+
 
 # ===========================================================================
 # 2. Dependency resolution

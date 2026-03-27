@@ -168,7 +168,8 @@ Per-library index databases are combined into a single `index.db` at install tim
 5. Rebuild the FTS5 index from merged declarations
 6. Recompute symbol frequencies across the merged declaration set
 7. Merge WL histogram vectors with remapped declaration IDs
-8. Write `index_meta` with:
+8. Copy `re_export_aliases` rows from all source databases (first-write-wins deduplication on `alias_fqn`)
+9. Write `index_meta` with:
    - `schema_version`: from source databases (must all match)
    - `coq_version`: from source databases (must all match)
    - `libraries`: JSON array of all 6 library identifiers
