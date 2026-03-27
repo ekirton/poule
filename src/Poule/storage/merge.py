@@ -91,21 +91,23 @@ def merge_indexes(sources: list[tuple[str, Path]], dest: Path) -> dict:
         # 4a. Copy declarations.
         rows = src_conn.execute(
             "SELECT id, name, module, kind, statement, type_expr, "
-            "constr_tree, node_count, symbol_set FROM declarations"
+            "constr_tree, node_count, symbol_set, has_proof_body "
+            "FROM declarations"
         ).fetchall()
 
         for row in rows:
             old_id = row[0]
             name, module, kind, statement = row[1], row[2], row[3], row[4]
-            type_expr, constr_tree, node_count, symbol_set = (
-                row[5], row[6], row[7], row[8],
+            type_expr, constr_tree, node_count, symbol_set, has_proof_body = (
+                row[5], row[6], row[7], row[8], row[9],
             )
             cursor = dest_conn.execute(
                 "INSERT INTO declarations "
                 "(name, module, kind, statement, type_expr, constr_tree, "
-                "node_count, symbol_set) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "node_count, symbol_set, has_proof_body) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (name, module, kind, statement, type_expr, constr_tree,
-                 node_count, symbol_set),
+                 node_count, symbol_set, has_proof_body),
             )
             new_id = cursor.lastrowid
             old_to_new[old_id] = new_id

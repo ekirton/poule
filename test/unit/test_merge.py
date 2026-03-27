@@ -97,6 +97,34 @@ def _stdlib_declarations():
     ]
 
 
+def _declarations_with_proof_body():
+    """Return declarations with has_proof_body annotations."""
+    return [
+        {
+            "name": "Lib.lemma1",
+            "module": "Lib",
+            "kind": "lemma",
+            "statement": "forall n, n = n",
+            "type_expr": "forall n : nat, n = n",
+            "constr_tree": None,
+            "node_count": 3,
+            "symbol_set": [],
+            "has_proof_body": 1,
+        },
+        {
+            "name": "Lib.def1",
+            "module": "Lib",
+            "kind": "definition",
+            "statement": "Definition def1 := 42",
+            "type_expr": "nat",
+            "constr_tree": None,
+            "node_count": 1,
+            "symbol_set": [],
+            "has_proof_body": 0,
+        },
+    ]
+
+
 def _mathcomp_declarations():
     """Return sample mathcomp declarations that reference stdlib."""
     return [
@@ -191,6 +219,26 @@ class TestMergeBasic:
         dest.write_text("old garbage")
         result = merge_indexes([("stdlib", stdlib_path)], dest)
         assert result["total_declarations"] == 2
+
+    def test_has_proof_body_preserved(self, tmp_path):
+        """§4.8: has_proof_body annotation survives merge."""
+        decls = _declarations_with_proof_body()
+        src_path = _create_per_library_db(
+            tmp_path / "index-lib.db", "lib", decls,
+            library_version="1.0.0",
+        )
+        dest = tmp_path / "index.db"
+        merge_indexes([("lib", src_path)], dest)
+
+        conn = sqlite3.connect(str(dest))
+        rows = conn.execute(
+            "SELECT name, has_proof_body FROM declarations ORDER BY name"
+        ).fetchall()
+        conn.close()
+
+        by_name = {name: hpb for name, hpb in rows}
+        assert by_name["Lib.lemma1"] == 1, "lemma should keep has_proof_body=1"
+        assert by_name["Lib.def1"] == 0, "definition should keep has_proof_body=0"
 
 
 # ===========================================================================
