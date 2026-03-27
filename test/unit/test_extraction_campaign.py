@@ -411,6 +411,44 @@ class TestDirectoryNotFoundError:
             )
 
 
+class TestIndexNotFoundError:
+    """INDEX_NOT_FOUND error raised for missing or invalid index (§4.1)."""
+
+    def test_nonexistent_index_raises_error(self, tmp_path):
+        """A nonexistent index_db_path raises INDEX_NOT_FOUND."""
+        from Poule.extraction.campaign import build_campaign_plan
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+
+        with pytest.raises(Exception, match="INDEX_NOT_FOUND"):
+            build_campaign_plan(
+                [str(proj)], scope_filter=None,
+                index_db_path=str(tmp_path / "missing.db"),
+            )
+
+    def test_invalid_index_version_raises_error(self, tmp_path):
+        """An index with missing schema version raises INDEX_NOT_FOUND."""
+        from Poule.extraction.campaign import build_campaign_plan
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+
+        db = tmp_path / "bad.db"
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            "CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT)"
+        )
+        conn.commit()
+        conn.close()
+
+        with pytest.raises(Exception, match="INDEX_NOT_FOUND"):
+            build_campaign_plan(
+                [str(proj)], scope_filter=None,
+                index_db_path=str(db),
+            )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 2. Per-Proof Extraction (§4.2)
 # ═══════════════════════════════════════════════════════════════════════════

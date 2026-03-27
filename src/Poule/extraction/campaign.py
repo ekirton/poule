@@ -113,8 +113,12 @@ def _enumerate_from_index(
     ordered by ``(module, name)`` within each project.
     """
     from Poule.storage.reader import IndexReader
+    from Poule.storage.errors import StorageError
 
-    reader = IndexReader.open(index_db_path)
+    try:
+        reader = IndexReader.open(index_db_path)
+    except StorageError as e:
+        raise RuntimeError(f"INDEX_NOT_FOUND: {e}") from e
     try:
         decls = reader.get_provable_declarations(module_prefix=module_prefix)
     finally:
@@ -192,8 +196,12 @@ def _build_plan_from_index(
 ) -> CampaignPlan:
     """Build campaign plan using index-based enumeration."""
     from Poule.storage.reader import IndexReader
+    from Poule.storage.errors import StorageError
 
-    reader = IndexReader.open(index_db_path)
+    try:
+        reader = IndexReader.open(index_db_path)
+    except StorageError as e:
+        raise RuntimeError(f"INDEX_NOT_FOUND: {e}") from e
     try:
         # Try with has_proof_body filter first (indexes built with annotation).
         prefix_arg = module_prefix if module_prefix else None
