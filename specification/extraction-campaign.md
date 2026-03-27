@@ -183,12 +183,46 @@ When diffs are enabled, the system shall compute a proof state diff for each con
 - REQUIRES: Diffs are enabled via extraction options. The proof has been fully traced.
 - ENSURES: Each ExtractionStep at index k > 0 has a non-null `diff` field computed from states k-1 and k. Step 0 has `diff = null`.
 
-### 4.3 Campaign Execution
+### 4.3 File-Grouped Extraction
+
+When a `backend_factory` is provided, the orchestrator groups targets by source file and extracts all proofs in a file using a single backend instance. This avoids redundant process spawning and file type-checking.
+
+#### _extract_file_group(backend_factory, watchdog_timeout, project_id, source_file, theorem_names, project_path)
+
+- REQUIRES: `backend_factory` is an async callable `(file_path, watchdog_timeout=) → CoqProofBackend`. `source_file` is a relative path. `theorem_names` is a non-empty list of fully-qualified theorem names. `project_path` is the absolute path to the project root.
+- ENSURES: Creates one backend instance, loads the file once, then extracts each theorem by calling `position_at_proof`, querying proof states, and querying premises. Returns a list of ExtractionRecord/PartialExtractionRecord/ExtractionError in the same order as `theorem_names`. The backend is shut down in a finally block.
+- On file load failure: returns ExtractionError with `error_kind = "load_failure"` for every theorem in the group.
+- On backend crash (ConnectionError) during extraction of theorem k: returns ExtractionError with `error_kind = "backend_crash"` for theorem k and all remaining theorems.
+- On proof not found for theorem k: returns ExtractionError with `error_kind = "no_proof_body"` for theorem k, continues to theorem k+1 (the backend is still alive).
+- On tactic failure during replay at step j > 1: assembles a PartialExtractionRecord from steps 0..j-1, continues to next theorem.
+- MAINTAINS: The backend is loaded once per file, not once per theorem. `position_at_proof` cleanly resets per-proof state on each call.
+
+> **Given** a file `base.v` with 3 theorems `[A, B, C]` where B fails with proof-not-found
+> **When** `_extract_file_group(...)` is called
+> **Then** results are [ExtractionRecord(A), ExtractionError(B, "no_proof_body"), ExtractionRecord(C)] — the backend was loaded once
+
+> **Given** a file `broken.v` that fails to type-check
+> **When** `_extract_file_group(...)` is called with 3 theorems
+> **Then** all 3 results are ExtractionError with `error_kind = "load_failure"`
+
+> **Given** a file where the backend crashes during theorem B extraction
+> **When** `_extract_file_group(...)` is called with theorems `[A, B, C]`
+> **Then** results are [ExtractionRecord(A), ExtractionError(B, "backend_crash"), ExtractionError(C, "backend_crash")]
+
+#### Parallel file processing
+
+When `workers > 1`, the orchestrator processes file groups concurrently using up to `workers` parallel backend instances. Each file group is assigned to one worker.
+
+- REQUIRES: `workers` is a positive integer.
+- ENSURES: Results are written in deterministic plan order regardless of the number of workers. Within each file, theorem order matches the campaign plan. Across files, the interleaving matches the plan's file ordering.
+- MAINTAINS: The deterministic ordering guarantee from §4.3 holds even with `workers > 1`.
+
+### 4.4 Campaign Execution
 
 #### run_campaign(project_dirs, output_path, options)
 
 - REQUIRES: `project_dirs` is a non-empty list of existing directory paths. `output_path` is a writable file path.
-- ENSURES: Builds a campaign plan. Emits CampaignMetadata as the first line of output. Iterates over the campaign plan in deterministic order, calling `extract_single_proof` for each target. Emits each ExtractionRecord or ExtractionError to the output stream as it is produced. Computes and emits ExtractionSummary as the last line of output. Returns the ExtractionSummary.
+- ENSURES: Builds a campaign plan. Emits CampaignMetadata as the first line of output. When `backend_factory` is provided, groups targets by source file and uses file-grouped extraction (§4.3). Otherwise, iterates over the campaign plan calling `extract_single_proof` for each target (legacy path). Emits each ExtractionRecord or ExtractionError to the output stream as it is produced. Computes and emits ExtractionSummary as the last line of output. Returns the ExtractionSummary.
 - On all proofs failing: still emits CampaignMetadata and ExtractionSummary. Returns summary with `total_extracted = 0`.
 
 > **Given** a campaign with 100 theorems where 97 succeed and 3 fail
@@ -253,10 +287,25 @@ Options:
 | `scope_filter` | ScopeFilter or null | null | Name pattern or module filter (P1) |
 | `include_diffs` | boolean | false | Include proof state diffs in output (P1) |
 | `watchdog_timeout` | positive float or null | 600 | Inactivity threshold (seconds) before declaring backend dead; null to disable |
+| `backend_factory` | async callable or null | null | Backend factory `(file_path, watchdog_timeout=) → CoqProofBackend`. When provided, enables file-grouped extraction (§4.3). When null, falls back to per-proof extraction via SessionManager. |
+| `workers` | positive integer | 1 | Number of parallel file workers. Only effective when `backend_factory` is provided. |
 
-### Extraction Campaign Orchestrator → Proof Session Manager
+### Extraction Campaign Orchestrator → CoqProofBackend (file-grouped path)
 
-The orchestrator calls the session manager's existing API for each proof:
+When `backend_factory` is provided, the orchestrator drives backends directly:
+
+| Step | Backend Operation |
+|------|-------------------|
+| 1 | `backend = await backend_factory(file_path, watchdog_timeout=wt)` |
+| 2 | `await backend.load_file(file_path)` |
+| 3 | For each theorem: `await backend.position_at_proof(proof_name)` |
+| 4 | For each state token: `await backend._petanque_goals(st)` |
+| 5 | For each step: `await backend.get_premises_at_step(k)` |
+| 6 | `await backend.shutdown()` |
+
+### Extraction Campaign Orchestrator → Proof Session Manager (legacy path)
+
+When `backend_factory` is null, the orchestrator calls the session manager's existing API for each proof:
 
 | Step | Session Manager Operation |
 |------|--------------------------|
@@ -265,7 +314,7 @@ The orchestrator calls the session manager's existing API for each proof:
 | 3 | `get_premises(session_id)` → list[PremiseAnnotation] |
 | 4 | `close_session(session_id)` → confirmation |
 
-The orchestrator does not add new operations to the session manager API. It reuses the same interface used by the MCP server and CLI proof replay.
+The legacy path does not add new operations to the session manager API.
 
 ### Extraction Campaign Orchestrator → Output Stream
 
@@ -311,7 +360,8 @@ Per-proof errors (tactic failure, backend crash, backend unresponsive, load fail
 
 - The system shall process the Coq standard library in under 1 hour on a single machine without GPU.
 - Memory usage shall be bounded by the largest single proof's trace, not by the total dataset size (streaming output).
-- The orchestrator shall process proofs sequentially (one session at a time). Parallel extraction is not specified in this phase.
+- When `backend_factory` is provided, the orchestrator shall use file-grouped extraction: one backend per source file, with all proofs in that file extracted on the shared backend. This amortizes the file type-checking cost across all proofs in the file.
+- When `workers > 1`, the orchestrator may process up to `workers` file groups concurrently. Deterministic output ordering is preserved.
 
 ## 9. Examples
 

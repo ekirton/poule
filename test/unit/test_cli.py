@@ -882,8 +882,8 @@ class TestExtractSubcommand:
             ])
         assert result.exit_code == 0
 
-    def test_session_manager_passed_to_run_campaign(self, runner, tmp_path):
-        """cmd_extract must provide a real SessionManager, not _NullSessionManager."""
+    def test_backend_factory_passed_to_run_campaign(self, runner, tmp_path):
+        """cmd_extract must provide backend_factory for file-grouped extraction."""
         cli = _import_cli()
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
@@ -905,18 +905,16 @@ class TestExtractSubcommand:
         # run_campaign(project_dirs, output, kwargs) — kwargs is arg index 2
         call_args = mock_run.call_args
         kwargs_dict = call_args[0][2]  # positional arg 2 = kwargs dict
-        assert "session_manager" in kwargs_dict, (
-            "cmd_extract must pass a session_manager in kwargs; "
-            "without it, run_campaign falls back to _NullSessionManager "
-            "which rejects every proof"
+        assert "backend_factory" in kwargs_dict, (
+            "cmd_extract must pass a backend_factory in kwargs; "
+            "without it, run_campaign falls back to legacy per-proof extraction"
         )
-        from Poule.session.manager import SessionManager
-        assert isinstance(kwargs_dict["session_manager"], SessionManager), (
-            "session_manager must be a real SessionManager instance"
+        assert callable(kwargs_dict["backend_factory"]), (
+            "backend_factory must be a callable"
         )
 
     def test_default_timeout_passed_to_run_campaign(self, runner, tmp_path):
-        """Default timeout=60 must be passed as timeout_seconds, not omitted."""
+        """Default timeout=600 must be passed as watchdog_timeout, not omitted."""
         cli = _import_cli()
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
@@ -938,8 +936,7 @@ class TestExtractSubcommand:
             ])
         call_args = mock_run.call_args
         kwargs_dict = call_args[0][2]
-        sm = kwargs_dict["session_manager"]
-        assert sm._watchdog_timeout == 600
+        assert kwargs_dict["watchdog_timeout"] == 600
 
     def test_watchdog_timeout_zero_disables(self, runner, tmp_path):
         """--watchdog-timeout 0 disables the watchdog (passes None)."""
@@ -964,8 +961,7 @@ class TestExtractSubcommand:
             ])
         call_args = mock_run.call_args
         kwargs_dict = call_args[0][2]
-        sm = kwargs_dict["session_manager"]
-        assert sm._watchdog_timeout is None
+        assert kwargs_dict["watchdog_timeout"] is None
 
 
 # ===========================================================================

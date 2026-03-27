@@ -427,6 +427,7 @@ def _handle_session_error(exc: SessionError) -> None:
 @click.option("--resume", "resume_flag", is_flag=True, default=False, help="Resume interrupted extraction (P1).")
 @click.option("--include-diffs", is_flag=True, default=False, help="Include proof state diffs (P1).")
 @click.option("--watchdog-timeout", default=600, type=int, help="Inactivity threshold (seconds) before declaring backend dead. 0 to disable.")
+@click.option("--workers", default=1, type=int, help="Number of parallel file workers (default: 1).")
 def cmd_extract(
     project_dirs: tuple[str, ...],
     output: str,
@@ -438,6 +439,7 @@ def cmd_extract(
     resume_flag: bool,
     include_diffs: bool,
     watchdog_timeout: int,
+    workers: int,
 ):
     """Batch extract proof traces from Coq project directories."""
     if incremental and resume_flag:
@@ -457,8 +459,13 @@ def cmd_extract(
         scope_filter = ScopeFilter(name_pattern=name_pattern, module_prefixes=module_list)
 
     wt = watchdog_timeout if watchdog_timeout > 0 else None
+
+    # Use file-grouped extraction via backend factory (§4.3).
+    from Poule.session.backend import create_coq_backend
     kwargs = {
-        "session_manager": SessionManager(watchdog_timeout=wt),
+        "backend_factory": create_coq_backend,
+        "watchdog_timeout": wt,
+        "workers": workers,
         "index_db_path": index_db,
     }
     if module_prefix is not None:

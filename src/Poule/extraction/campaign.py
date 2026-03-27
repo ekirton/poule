@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from fnmatch import fnmatch
+from itertools import groupby
 from pathlib import Path
 from typing import Optional, Union
 
@@ -21,7 +23,10 @@ from Poule.extraction.types import (
     ExtractionStep,
     ExtractionSummary,
     FileSummary,
+    Goal as ExtGoal,
+    Hypothesis as ExtHyp,
     PartialExtractionRecord,
+    Premise as ExtPremise,
     ProjectMetadata,
     ProjectSummary,
 )
@@ -33,6 +38,8 @@ from Poule.session.errors import (
     TACTIC_ERROR,
     SessionError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +248,224 @@ def _should_skip(scope_filter, theorem_name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# extract_single_proof
+# File-grouped extraction (§4.3)
+# ---------------------------------------------------------------------------
+
+
+def _group_targets_by_file(
+    targets: list[tuple],
+) -> list[tuple[str, str, list[str]]]:
+    """Group contiguous targets by (project_id, source_file).
+
+    Returns list of ``(project_id, source_file, [theorem_name, ...])``.
+    Targets are already ordered by ``(module, name)`` from the index, so
+    same-file targets are contiguous.
+    """
+    groups: list[tuple[str, str, list[str]]] = []
+    for (pid, sf), items in groupby(targets, key=lambda t: (t[0], t[1])):
+        theorems = [t[2] for t in items]
+        groups.append((pid, sf, theorems))
+    return groups
+
+
+def _convert_proof_state(state) -> tuple[list[ExtGoal], int | None]:
+    """Convert a session-level ProofState into extraction-level goals."""
+    focused = getattr(state, "focused_goal_index", None)
+    goals: list[ExtGoal] = []
+    for g in getattr(state, "goals", []):
+        hyps_raw = getattr(g, "hypotheses", [])
+        hyps = []
+        try:
+            hyps = [
+                ExtHyp(name=h.name, type=h.type, body=getattr(h, "body", None))
+                for h in hyps_raw
+            ]
+        except (TypeError, AttributeError):
+            pass
+        goals.append(ExtGoal(index=g.index, type=g.type, hypotheses=hyps))
+    return goals, focused
+
+
+async def _extract_one_on_backend(
+    backend,
+    project_id: str,
+    source_file: str,
+    theorem_name: str,
+) -> Union[ExtractionRecord, PartialExtractionRecord, ExtractionError]:
+    """Extract a single proof trace from an already-loaded backend.
+
+    The backend must already have the file loaded via ``load_file``.
+    This function calls ``position_at_proof`` (which resets per-proof state),
+    queries goals for each pre-computed state token, queries premises per
+    step, and assembles an ExtractionRecord.
+    """
+    proof_name = fqn_to_proof_name(theorem_name, source_file)
+
+    # Position at proof — resets original_script and _original_states
+    try:
+        initial_state = await backend.position_at_proof(proof_name)
+    except (ValueError, KeyError, LookupError) as exc:
+        return ExtractionError(
+            schema_version=1, record_type="extraction_error",
+            theorem_name=theorem_name, source_file=source_file,
+            project_id=project_id, error_kind="no_proof_body",
+            error_message=str(exc),
+        )
+
+    original_script = getattr(backend, "original_script", []) or []
+    total_steps = len(original_script)
+    original_states = getattr(backend, "_original_states", [])
+
+    # Step 0: initial state
+    goals_0, focused_0 = _convert_proof_state(initial_state)
+    steps: list[ExtractionStep] = [ExtractionStep(
+        step_index=0, tactic=None, goals=goals_0,
+        focused_goal_index=focused_0, premises=[], diff=None,
+    )]
+
+    failure_step: int | None = None
+    failure_message = ""
+
+    # Steps 1..N via pre-computed state tokens
+    for i in range(1, min(len(original_states), total_steps + 1)):
+        st_token = original_states[i]
+        try:
+            goals_result = await backend._petanque_goals(st_token)
+            state = backend._translate_petanque_goals(goals_result, step_index=i)
+        except Exception as exc:
+            failure_step = i
+            failure_message = str(exc)
+            break
+
+        goals_i, focused_i = _convert_proof_state(state)
+
+        # Premises for this step
+        ext_premises: list[ExtPremise] = []
+        try:
+            raw = await backend.get_premises_at_step(i)
+            ext_premises = [
+                ExtPremise(name=p["name"], kind=p["kind"]) for p in raw
+            ]
+        except Exception:
+            pass
+
+        steps.append(ExtractionStep(
+            step_index=i, tactic=original_script[i - 1], goals=goals_i,
+            focused_goal_index=focused_i, premises=ext_premises, diff=None,
+        ))
+
+    # If original_states is shorter than total_steps, some tactics failed
+    if failure_step is None and len(original_states) <= total_steps:
+        if len(original_states) < total_steps + 1:
+            failure_step = len(original_states)
+            failure_message = "Backend replay failed during positioning"
+
+    # Handle partial trace
+    if failure_step is not None:
+        completed = len(steps) - 1  # subtract step 0
+        if completed < 1:
+            return ExtractionError(
+                schema_version=1, record_type="extraction_error",
+                theorem_name=theorem_name, source_file=source_file,
+                project_id=project_id, error_kind="tactic_failure",
+                error_message=failure_message or "First tactic failed",
+            )
+        return PartialExtractionRecord(
+            schema_version=1, record_type="partial_proof_trace",
+            theorem_name=theorem_name, source_file=source_file,
+            project_id=project_id, total_steps=total_steps,
+            completed_steps=completed,
+            failure_at_step=failure_step,
+            failure_kind="tactic_failure",
+            failure_message=failure_message,
+            steps=steps,
+        )
+
+    return ExtractionRecord(
+        schema_version=1, record_type="proof_trace",
+        theorem_name=theorem_name, source_file=source_file,
+        project_id=project_id, total_steps=total_steps,
+        steps=steps,
+    )
+
+
+async def _extract_file_group(
+    backend_factory,
+    watchdog_timeout: float | None,
+    project_id: str,
+    source_file: str,
+    theorem_names: list[str],
+    project_path: str,
+) -> list[Union[ExtractionRecord, PartialExtractionRecord, ExtractionError]]:
+    """Extract all proofs from one file using a single backend.
+
+    Creates one backend, loads the file once, then extracts each theorem.
+    The backend is shut down in a ``finally`` block.
+    """
+    abs_file = str(Path(project_path) / source_file) if project_path else source_file
+    results: list[Union[ExtractionRecord, PartialExtractionRecord, ExtractionError]] = []
+    backend = None
+
+    try:
+        wt_kwargs = {"watchdog_timeout": watchdog_timeout} if watchdog_timeout else {}
+        backend = await backend_factory(abs_file, **wt_kwargs)
+        try:
+            await backend.load_file(abs_file)
+        except Exception as exc:
+            # File load failed — all theorems get load_failure
+            for thm in theorem_names:
+                results.append(ExtractionError(
+                    schema_version=1, record_type="extraction_error",
+                    theorem_name=thm, source_file=source_file,
+                    project_id=project_id, error_kind="load_failure",
+                    error_message=str(exc),
+                ))
+            return results
+
+        for thm in theorem_names:
+            try:
+                result = await _extract_one_on_backend(
+                    backend, project_id, source_file, thm,
+                )
+                results.append(result)
+            except ConnectionError as exc:
+                # Backend crashed — fail current + remaining theorems
+                results.append(ExtractionError(
+                    schema_version=1, record_type="extraction_error",
+                    theorem_name=thm, source_file=source_file,
+                    project_id=project_id, error_kind="backend_crash",
+                    error_message=str(exc),
+                ))
+                remaining_start = len(results)
+                for remaining_thm in theorem_names[remaining_start:]:
+                    results.append(ExtractionError(
+                        schema_version=1, record_type="extraction_error",
+                        theorem_name=remaining_thm, source_file=source_file,
+                        project_id=project_id, error_kind="backend_crash",
+                        error_message="Backend crashed on earlier proof",
+                    ))
+                break
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                results.append(ExtractionError(
+                    schema_version=1, record_type="extraction_error",
+                    theorem_name=thm, source_file=source_file,
+                    project_id=project_id, error_kind="unknown",
+                    error_message=str(exc),
+                ))
+    finally:
+        if backend is not None:
+            try:
+                await backend.shutdown()
+            except Exception:
+                pass
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# extract_single_proof (legacy per-proof path)
 # ---------------------------------------------------------------------------
 
 # Map SessionError codes to ExtractionError error_kind values.
@@ -337,12 +561,6 @@ async def _do_extraction(
                     premise_map[pa.step_index] = pa.premises
             except TypeError:
                 pass
-
-        from Poule.extraction.types import (
-            Goal as ExtGoal,
-            Hypothesis as ExtHyp,
-            Premise as ExtPremise,
-        )
 
         for ts in trace_steps_list:
             step_idx = getattr(ts, "step_index", 0)
@@ -509,53 +727,133 @@ async def run_campaign(
     outfile.write(json.dumps(_record_to_dict(metadata), default=str) + "\n")
     outfile.flush()
 
-    # Extract each target.
+    # Extract targets.
     interrupted = False
     extracted_count = 0
     failed_count = 0
     no_proof_body_count = 0
-    current_file = None
-    for idx, target in enumerate(plan.targets, 1):
-        project_id, source_file, theorem_name = target[0], target[1], target[2]
-        if source_file != current_file:
-            current_file = source_file
-            print(f"  [{idx}/{total_targets}] {source_file}", file=sys.stderr)
+    idx = 0
 
-        try:
-            result = await extract_single_proof(
-                all_kwargs.get("session_manager", _NullSessionManager()),
-                project_id,
-                source_file,
-                theorem_name,
-                project_path=project_path_map.get(project_id, ""),
+    backend_factory = all_kwargs.get("backend_factory")
+    watchdog_timeout = all_kwargs.get("watchdog_timeout")
+    workers = all_kwargs.get("workers", 1)
+
+    if backend_factory is not None:
+        # File-grouped extraction: one backend per source file (§4.3).
+        file_groups = _group_targets_by_file(plan.targets)
+
+        async def _process_group(pid, sf, thms):
+            return await _extract_file_group(
+                backend_factory, watchdog_timeout,
+                pid, sf, thms,
+                project_path=project_path_map.get(pid, ""),
             )
-        except KeyboardInterrupt:
-            interrupted = True
-            break
 
-        # Write result to disk immediately.
-        outfile.write(json.dumps(_record_to_dict(result), default=str) + "\n")
-        outfile.flush()
+        if workers > 1:
+            # Parallel file processing with bounded concurrency.
+            sem = asyncio.Semaphore(workers)
 
-        # Update stats.
-        fs = project_file_stats[project_id][source_file]
-        if isinstance(result, ExtractionRecord):
-            fs["extracted"] += 1
-            extracted_count += 1
-        elif isinstance(result, ExtractionError) and result.error_kind == "no_proof_body":
-            fs["no_proof_body"] += 1
-            no_proof_body_count += 1
+            async def _bounded(pid, sf, thms):
+                async with sem:
+                    return await _process_group(pid, sf, thms)
+
+            # Process all file groups concurrently, write results in plan order.
+            tasks = [
+                asyncio.ensure_future(_bounded(pid, sf, thms))
+                for pid, sf, thms in file_groups
+            ]
+            group_results = await asyncio.gather(*tasks)
+            for (pid, sf, thms), results in zip(file_groups, group_results):
+                print(f"  [{idx + 1}/{total_targets}] {sf}", file=sys.stderr)
+                for result in results:
+                    idx += 1
+                    outfile.write(json.dumps(_record_to_dict(result), default=str) + "\n")
+                    outfile.flush()
+                    fs = project_file_stats[pid][sf]
+                    if isinstance(result, ExtractionRecord):
+                        fs["extracted"] += 1
+                        extracted_count += 1
+                    elif isinstance(result, ExtractionError) and result.error_kind == "no_proof_body":
+                        fs["no_proof_body"] += 1
+                        no_proof_body_count += 1
+                    else:
+                        fs["failed"] += 1
+                        failed_count += 1
         else:
-            fs["failed"] += 1
-            failed_count += 1
+            # Sequential file processing (default).
+            for pid, sf, thms in file_groups:
+                idx += 1
+                print(f"  [{idx}/{total_targets}] {sf} ({len(thms)} theorems)", file=sys.stderr)
+                try:
+                    results = await _process_group(pid, sf, thms)
+                except KeyboardInterrupt:
+                    interrupted = True
+                    break
 
-        if idx % 100 == 0:
-            print(
-                f"  Progress: {idx}/{total_targets}"
-                f" ({extracted_count} ok, {failed_count} err,"
-                f" {no_proof_body_count} no body)",
-                file=sys.stderr,
-            )
+                for result in results:
+                    outfile.write(json.dumps(_record_to_dict(result), default=str) + "\n")
+                    outfile.flush()
+                    fs = project_file_stats[pid][sf]
+                    if isinstance(result, ExtractionRecord):
+                        fs["extracted"] += 1
+                        extracted_count += 1
+                    elif isinstance(result, ExtractionError) and result.error_kind == "no_proof_body":
+                        fs["no_proof_body"] += 1
+                        no_proof_body_count += 1
+                    else:
+                        fs["failed"] += 1
+                        failed_count += 1
+
+                idx += len(thms) - 1
+                if idx % 100 < len(thms):
+                    print(
+                        f"  Progress: {idx}/{total_targets}"
+                        f" ({extracted_count} ok, {failed_count} err,"
+                        f" {no_proof_body_count} no body)",
+                        file=sys.stderr,
+                    )
+    else:
+        # Legacy per-proof extraction via SessionManager.
+        current_file = None
+        for idx, target in enumerate(plan.targets, 1):
+            project_id, source_file, theorem_name = target[0], target[1], target[2]
+            if source_file != current_file:
+                current_file = source_file
+                print(f"  [{idx}/{total_targets}] {source_file}", file=sys.stderr)
+
+            try:
+                result = await extract_single_proof(
+                    all_kwargs.get("session_manager", _NullSessionManager()),
+                    project_id,
+                    source_file,
+                    theorem_name,
+                    project_path=project_path_map.get(project_id, ""),
+                )
+            except KeyboardInterrupt:
+                interrupted = True
+                break
+
+            outfile.write(json.dumps(_record_to_dict(result), default=str) + "\n")
+            outfile.flush()
+
+            fs = project_file_stats[project_id][source_file]
+            if isinstance(result, ExtractionRecord):
+                fs["extracted"] += 1
+                extracted_count += 1
+            elif isinstance(result, ExtractionError) and result.error_kind == "no_proof_body":
+                fs["no_proof_body"] += 1
+                no_proof_body_count += 1
+            else:
+                fs["failed"] += 1
+                failed_count += 1
+
+            if idx % 100 == 0:
+                print(
+                    f"  Progress: {idx}/{total_targets}"
+                    f" ({extracted_count} ok, {failed_count} err,"
+                    f" {no_proof_body_count} no body)",
+                    file=sys.stderr,
+                )
 
     # Build summary.
     per_project: list[ProjectSummary] = []

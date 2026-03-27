@@ -12,6 +12,7 @@ state machine transitions, and error edge cases.
 from __future__ import annotations
 
 import asyncio
+import json
 import signal
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, MagicMock, call, patch
@@ -1394,3 +1395,347 @@ class TestSessionIdExclusion:
                     assert "session_id" not in step, (
                         f"ExtractionStep contains forbidden session_id field: {step}"
                     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# File-Grouped Extraction (§4.3)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _make_mock_backend(
+    *,
+    proofs=None,
+    load_raises=None,
+    position_raises_for=None,
+    crash_on=None,
+):
+    """Create a mock CoqProofBackend for file-grouped extraction tests.
+
+    Args:
+        proofs: dict mapping proof_name -> list of tactic strings.
+            Each proof also gets mock state tokens and goals.
+        load_raises: exception to raise from load_file.
+        position_raises_for: set of proof names that raise ValueError
+            from position_at_proof.
+        crash_on: proof name on which to raise ConnectionError
+            (simulating backend crash).
+    """
+    from Poule.session.types import Goal, Hypothesis, ProofState
+
+    proofs = proofs or {}
+    position_raises_for = position_raises_for or set()
+
+    backend = AsyncMock()
+    backend._shut_down = False
+
+    if load_raises is not None:
+        backend.load_file = AsyncMock(side_effect=load_raises)
+    else:
+        backend.load_file = AsyncMock()
+
+    # Track which proof is currently positioned
+    _current_proof = {"name": None, "states": [], "script": []}
+
+    async def _position_at_proof(proof_name):
+        if crash_on and proof_name == crash_on:
+            raise ConnectionError("coq-lsp died")
+        if proof_name in position_raises_for:
+            raise ValueError(f"Proof not found: {proof_name}")
+        tactics = proofs.get(proof_name, ["auto."])
+        n = len(tactics)
+        # State tokens are just integers for testing
+        states = list(range(n + 1))
+        _current_proof["name"] = proof_name
+        _current_proof["states"] = states
+        _current_proof["script"] = tactics
+        backend.original_script = tactics
+        backend._original_states = states
+        return ProofState(
+            schema_version=1,
+            session_id="",
+            step_index=0,
+            is_complete=False,
+            focused_goal_index=0,
+            goals=[Goal(index=0, type="True", hypotheses=[])],
+        )
+
+    backend.position_at_proof = AsyncMock(side_effect=_position_at_proof)
+
+    async def _petanque_goals(st):
+        # Return None (proof complete) for final state, goals otherwise
+        states = _current_proof["states"]
+        if st == states[-1]:
+            return None
+        return {"goals": [{"ty": "True", "hyps": []}]}
+
+    backend._petanque_goals = AsyncMock(side_effect=_petanque_goals)
+
+    def _translate_goals(goals_result, step_index=0):
+        if goals_result is None:
+            return ProofState(
+                schema_version=1, session_id="", step_index=step_index,
+                is_complete=True, focused_goal_index=None, goals=[],
+            )
+        return ProofState(
+            schema_version=1, session_id="", step_index=step_index,
+            is_complete=False, focused_goal_index=0,
+            goals=[Goal(index=0, type="True", hypotheses=[])],
+        )
+
+    backend._translate_petanque_goals = MagicMock(side_effect=_translate_goals)
+
+    async def _get_premises_at_step(step):
+        return [{"name": "Coq.Init.Logic.I", "kind": "lemma"}]
+
+    backend.get_premises_at_step = AsyncMock(side_effect=_get_premises_at_step)
+    backend.shutdown = AsyncMock()
+
+    return backend
+
+
+class TestExtractFileGroupBasic:
+    """_extract_file_group loads file once, extracts all proofs (§4.3)."""
+
+    def test_backend_loaded_once_for_multiple_proofs(self):
+        """Backend factory called once, load_file called once, position_at_proof
+        called once per theorem."""
+        from Poule.extraction.campaign import _extract_file_group
+
+        backend = _make_mock_backend(proofs={
+            "thm_a": ["auto."],
+            "thm_b": ["auto."],
+            "thm_c": ["auto."],
+        })
+        factory = AsyncMock(return_value=backend)
+
+        results = asyncio.run(_extract_file_group(
+            factory, 600, "proj", "test.v",
+            ["thm_a", "thm_b", "thm_c"], "/path/to/proj",
+        ))
+
+        factory.assert_called_once()
+        backend.load_file.assert_called_once()
+        assert backend.position_at_proof.call_count == 3
+        backend.shutdown.assert_called_once()
+        assert len(results) == 3
+
+    def test_returns_extraction_records_in_order(self):
+        """Results are returned in the same order as theorem_names."""
+        from Poule.extraction.campaign import _extract_file_group
+        from Poule.extraction.types import ExtractionRecord
+
+        backend = _make_mock_backend(proofs={
+            "alpha": ["auto."],
+            "beta": ["auto."],
+        })
+        factory = AsyncMock(return_value=backend)
+
+        results = asyncio.run(_extract_file_group(
+            factory, 600, "proj", "test.v",
+            ["alpha", "beta"], "/path/to/proj",
+        ))
+
+        assert len(results) == 2
+        assert all(isinstance(r, ExtractionRecord) for r in results)
+        assert results[0].theorem_name == "alpha"
+        assert results[1].theorem_name == "beta"
+
+
+class TestExtractFileGroupLoadFailure:
+    """All theorems fail when the file cannot be loaded (§4.3)."""
+
+    def test_all_theorems_get_load_failure_error(self):
+        """When load_file raises, all theorems in the group get
+        ExtractionError with error_kind='load_failure'."""
+        from Poule.extraction.campaign import _extract_file_group
+        from Poule.extraction.types import ExtractionError
+
+        backend = _make_mock_backend(load_raises=RuntimeError("Coq check failed"))
+        factory = AsyncMock(return_value=backend)
+
+        results = asyncio.run(_extract_file_group(
+            factory, 600, "proj", "broken.v",
+            ["thm_a", "thm_b", "thm_c"], "/path/to/proj",
+        ))
+
+        assert len(results) == 3
+        assert all(isinstance(r, ExtractionError) for r in results)
+        assert all(r.error_kind == "load_failure" for r in results)
+        assert results[0].theorem_name == "thm_a"
+        assert results[2].theorem_name == "thm_c"
+        backend.shutdown.assert_called_once()
+
+
+class TestExtractFileGroupProofNotFound:
+    """Proof-not-found for one theorem doesn't affect others (§4.3)."""
+
+    def test_proof_not_found_continues_to_next_theorem(self):
+        """When position_at_proof raises ValueError for theorem B,
+        theorem C is still extracted successfully."""
+        from Poule.extraction.campaign import _extract_file_group
+        from Poule.extraction.types import ExtractionError, ExtractionRecord
+
+        backend = _make_mock_backend(
+            proofs={"thm_a": ["auto."], "thm_c": ["auto."]},
+            position_raises_for={"thm_b"},
+        )
+        factory = AsyncMock(return_value=backend)
+
+        results = asyncio.run(_extract_file_group(
+            factory, 600, "proj", "test.v",
+            ["thm_a", "thm_b", "thm_c"], "/path/to/proj",
+        ))
+
+        assert len(results) == 3
+        assert isinstance(results[0], ExtractionRecord)
+        assert results[0].theorem_name == "thm_a"
+        assert isinstance(results[1], ExtractionError)
+        assert results[1].error_kind == "no_proof_body"
+        assert isinstance(results[2], ExtractionRecord)
+        assert results[2].theorem_name == "thm_c"
+
+
+class TestExtractFileGroupBackendCrash:
+    """Backend crash fails current + remaining theorems (§4.3)."""
+
+    def test_crash_fails_remaining_theorems(self):
+        """When backend crashes on theorem B, B and C get backend_crash error.
+        A (already extracted) is unaffected."""
+        from Poule.extraction.campaign import _extract_file_group
+        from Poule.extraction.types import ExtractionError, ExtractionRecord
+
+        backend = _make_mock_backend(
+            proofs={"thm_a": ["auto."]},
+            crash_on="thm_b",
+        )
+        factory = AsyncMock(return_value=backend)
+
+        results = asyncio.run(_extract_file_group(
+            factory, 600, "proj", "test.v",
+            ["thm_a", "thm_b", "thm_c"], "/path/to/proj",
+        ))
+
+        assert len(results) == 3
+        assert isinstance(results[0], ExtractionRecord)
+        assert isinstance(results[1], ExtractionError)
+        assert results[1].error_kind == "backend_crash"
+        assert isinstance(results[2], ExtractionError)
+        assert results[2].error_kind == "backend_crash"
+
+
+class TestExtractFileGroupShutdown:
+    """Backend is always shut down, even on errors (§4.3)."""
+
+    def test_shutdown_called_after_load_failure(self):
+        from Poule.extraction.campaign import _extract_file_group
+
+        backend = _make_mock_backend(load_raises=RuntimeError("fail"))
+        factory = AsyncMock(return_value=backend)
+
+        asyncio.run(_extract_file_group(
+            factory, 600, "proj", "f.v", ["t"], "/p",
+        ))
+
+        backend.shutdown.assert_called_once()
+
+    def test_shutdown_called_after_crash(self):
+        from Poule.extraction.campaign import _extract_file_group
+
+        backend = _make_mock_backend(crash_on="t")
+        factory = AsyncMock(return_value=backend)
+
+        asyncio.run(_extract_file_group(
+            factory, 600, "proj", "f.v", ["t"], "/p",
+        ))
+
+        backend.shutdown.assert_called_once()
+
+
+class TestRunCampaignFileGrouped:
+    """run_campaign uses file-grouped extraction when backend_factory is
+    provided (§4.4)."""
+
+    def test_file_grouped_path_used_with_backend_factory(self, tmp_path):
+        """When backend_factory is in options, run_campaign groups targets
+        by file and extracts via _extract_file_group."""
+        from Poule.extraction.campaign import run_campaign
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "Test.v").touch()
+        idx = _make_index(tmp_path, [
+            {"name": "Test.t1", "module": "Test", "kind": "lemma"},
+            {"name": "Test.t2", "module": "Test", "kind": "lemma"},
+        ])
+        output = tmp_path / "out.jsonl"
+
+        backend = _make_mock_backend(proofs={"t1": ["auto."], "t2": ["auto."]})
+        factory = AsyncMock(return_value=backend)
+
+        summary = asyncio.run(run_campaign(
+            [str(proj)], str(output), {
+                "index_db_path": idx,
+                "backend_factory": factory,
+                "watchdog_timeout": 600,
+            },
+        ))
+
+        # Backend factory should have been called once (one file)
+        factory.assert_called_once()
+        # Both theorems should be extracted
+        assert summary.total_extracted == 2
+
+    def test_deterministic_ordering_preserved(self, tmp_path):
+        """Output ordering follows campaign plan even with file grouping."""
+        from Poule.extraction.campaign import run_campaign
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "A.v").touch()
+        (proj / "B.v").touch()
+        idx = _make_index(tmp_path, [
+            {"name": "A.a1", "module": "A", "kind": "lemma"},
+            {"name": "A.a2", "module": "A", "kind": "lemma"},
+            {"name": "B.b1", "module": "B", "kind": "lemma"},
+        ])
+        output = tmp_path / "out.jsonl"
+
+        backend = _make_mock_backend(proofs={
+            "a1": ["auto."], "a2": ["auto."], "b1": ["auto."],
+        })
+        factory = AsyncMock(return_value=backend)
+
+        asyncio.run(run_campaign(
+            [str(proj)], str(output), {
+                "index_db_path": idx,
+                "backend_factory": factory,
+                "watchdog_timeout": 600,
+            },
+        ))
+
+        lines = output.read_text().strip().split("\n")
+        records = [json.loads(l) for l in lines]
+        thm_names = [
+            r["theorem_name"] for r in records
+            if r.get("record_type") in ("proof_trace", "extraction_error")
+        ]
+        assert thm_names == ["A.a1", "A.a2", "B.b1"]
+
+
+class TestGroupTargetsByFile:
+    """_group_targets_by_file groups contiguous same-file targets."""
+
+    def test_groups_contiguous_targets(self):
+        from Poule.extraction.campaign import _group_targets_by_file
+
+        targets = [
+            ("proj", "A.v", "t1", "lemma"),
+            ("proj", "A.v", "t2", "lemma"),
+            ("proj", "B.v", "t3", "lemma"),
+        ]
+
+        groups = _group_targets_by_file(targets)
+
+        assert len(groups) == 2
+        assert groups[0] == ("proj", "A.v", ["t1", "t2"])
+        assert groups[1] == ("proj", "B.v", ["t3"])
