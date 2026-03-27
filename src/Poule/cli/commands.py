@@ -461,11 +461,14 @@ def cmd_extract(
     wt = watchdog_timeout if watchdog_timeout > 0 else None
 
     # Use file-grouped extraction via backend factory (§4.3).
+    import os
     from Poule.session.backend import create_coq_backend
+    rss_limit = int(os.environ.get("POULE_LSP_RSS_LIMIT", 5 * 1024 * 1024 * 1024))
     kwargs = {
         "backend_factory": create_coq_backend,
         "watchdog_timeout": wt,
         "workers": workers,
+        "rss_threshold": rss_limit,
         "index_db_path": index_db,
     }
     if module_prefix is not None:

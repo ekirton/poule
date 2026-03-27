@@ -209,16 +209,32 @@ The campaign orchestrator is a new component that reuses (does not fork or reimp
 
 The orchestrator adds: project/file enumeration, failure isolation, streaming output, progress tracking, summary statistics, and provenance metadata. These concerns do not exist in Phase 2's interactive model.
 
+## File-Grouped Extraction
+
+The campaign groups targets by source file and uses one coq-lsp backend per file. This amortizes the file type-checking cost across all proofs in the file — the dominant CPU cost. The backend's `position_at_proof` cleanly resets per-proof state on each call, so multiple proofs can be extracted from a single loaded document.
+
+```
+For each source file (grouped from campaign plan):
+  spawn coq-lsp → load_file (type-check once)
+  For each theorem in this file:
+    position_at_proof → replay tactics → query goals → query premises
+  shutdown coq-lsp
+```
+
+### Memory Management (RSS Monitoring)
+
+For large files with many theorems, the coq-lsp process may accumulate memory during proof extraction. The file-grouped extraction loop monitors the backend's RSS (Resident Set Size) after each proof. When RSS exceeds a configurable threshold, the backend is shut down and respawned, and the file is reloaded. This trades one redundant file type-check for bounded memory usage.
+
+The RSS threshold is configurable via environment variable (`POULE_LSP_RSS_LIMIT`, default 5 GiB), matching the indexing pipeline's strategy. The RSS check reads `/proc/{pid}/status` (Linux only; on other platforms, the check is a no-op).
+
 ## Concurrency Model
 
-The initial implementation processes proofs sequentially — one session at a time, one proof at a time. This simplifies output ordering (determinism), resource management (one Coq process active), and error handling.
+The campaign processes files sequentially by default. When `workers > 1`, multiple files are processed concurrently, each with its own coq-lsp process. Results are collected per-file-group and written in plan order to preserve deterministic output.
 
-Sequential processing is acceptable because:
-- Extraction throughput is bounded by Coq proof checking speed, not parallelism overhead
-- The success metric (stdlib in under 1 hour) is achievable with sequential processing
-- Deterministic output is trivial with sequential processing; parallel processing would require a sort-and-merge phase
-
-If sequential throughput proves insufficient, parallelism can be added within the file level (multiple proofs from the same file in parallel) with a deterministic merge step. This is not designed or specified in this phase.
+Parallel file processing is acceptable because:
+- Each file has its own coq-lsp process — no shared state between workers
+- Results are written in plan order after each file group completes, preserving determinism
+- The `asyncio.Semaphore(workers)` bounds concurrent resource usage
 
 ## Design Rationale
 
@@ -230,6 +246,6 @@ The SessionManager is designed for interactive use — open a session, step thro
 
 Deterministic output is a P0 requirement. Sequential processing makes determinism trivial — proofs are extracted and emitted in enumeration order. Parallel extraction would require buffering and reordering, adding complexity and memory overhead. The throughput target (stdlib in under 1 hour) does not require parallelism.
 
-### Why one session per proof rather than one session per file
+### Why one backend per file rather than one per proof
 
-Coq's proof state is per-proof, not per-file. A session encapsulates a single proof's lifecycle. Opening one session per proof reuses Phase 2's SessionManager without modification and provides natural failure isolation — a crash in proof P's session does not affect proof Q's session, even if both are in the same file.
+The dominant cost in extraction is coq-lsp type-checking the `.v` file on `load_file`. With one backend per proof, a file with M theorems is type-checked M times. With one backend per file, it is type-checked once. The `position_at_proof` method cleanly resets per-proof state, so the backend can safely serve multiple proofs from the same loaded document. Failure isolation is preserved: a backend crash fails remaining theorems in the file but not in other files.

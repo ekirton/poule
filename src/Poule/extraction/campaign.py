@@ -396,21 +396,34 @@ async def _extract_file_group(
     source_file: str,
     theorem_names: list[str],
     project_path: str,
+    rss_threshold: int | None = None,
 ) -> list[Union[ExtractionRecord, PartialExtractionRecord, ExtractionError]]:
     """Extract all proofs from one file using a single backend.
 
     Creates one backend, loads the file once, then extracts each theorem.
     The backend is shut down in a ``finally`` block.
+
+    When *rss_threshold* is set (bytes), the backend's RSS is checked
+    after each proof.  If it exceeds the threshold the backend is
+    restarted and the file reloaded for the remaining theorems.
     """
     abs_file = str(Path(project_path) / source_file) if project_path else source_file
     results: list[Union[ExtractionRecord, PartialExtractionRecord, ExtractionError]] = []
     backend = None
 
-    try:
+    async def _spawn_and_load():
         wt_kwargs = {"watchdog_timeout": watchdog_timeout} if watchdog_timeout else {}
-        backend = await backend_factory(abs_file, **wt_kwargs)
+        b = await backend_factory(abs_file, **wt_kwargs)
         try:
-            await backend.load_file(abs_file)
+            await b.load_file(abs_file)
+        except Exception:
+            await b.shutdown()
+            raise
+        return b
+
+    try:
+        try:
+            backend = await _spawn_and_load()
         except Exception as exc:
             # File load failed — all theorems get load_failure
             for thm in theorem_names:
@@ -454,6 +467,34 @@ async def _extract_file_group(
                     project_id=project_id, error_kind="unknown",
                     error_message=str(exc),
                 ))
+
+            # RSS check: restart backend if memory usage exceeds threshold.
+            if rss_threshold is not None and backend is not None:
+                rss = getattr(backend, "get_rss_bytes", lambda: 0)()
+                if rss > rss_threshold:
+                    logger.debug(
+                        "Restarting coq-lsp for %s (RSS=%.0f MiB, threshold=%.0f MiB)",
+                        source_file, rss / (1024 * 1024),
+                        rss_threshold / (1024 * 1024),
+                    )
+                    try:
+                        await backend.shutdown()
+                    except Exception:
+                        pass
+                    try:
+                        backend = await _spawn_and_load()
+                    except Exception as exc:
+                        # Restart failed — fail remaining theorems
+                        remaining_start = len(results)
+                        for remaining_thm in theorem_names[remaining_start:]:
+                            results.append(ExtractionError(
+                                schema_version=1, record_type="extraction_error",
+                                theorem_name=remaining_thm, source_file=source_file,
+                                project_id=project_id, error_kind="load_failure",
+                                error_message=f"Backend restart failed: {exc}",
+                            ))
+                        backend = None
+                        break
     finally:
         if backend is not None:
             try:
@@ -737,6 +778,7 @@ async def run_campaign(
     backend_factory = all_kwargs.get("backend_factory")
     watchdog_timeout = all_kwargs.get("watchdog_timeout")
     workers = all_kwargs.get("workers", 1)
+    rss_threshold = all_kwargs.get("rss_threshold")
 
     if backend_factory is not None:
         # File-grouped extraction: one backend per source file (§4.3).
@@ -747,6 +789,7 @@ async def run_campaign(
                 backend_factory, watchdog_timeout,
                 pid, sf, thms,
                 project_path=project_path_map.get(pid, ""),
+                rss_threshold=rss_threshold,
             )
 
         if workers > 1:

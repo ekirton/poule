@@ -197,6 +197,18 @@ When a `backend_factory` is provided, the orchestrator groups targets by source 
 - On tactic failure during replay at step j > 1: assembles a PartialExtractionRecord from steps 0..j-1, continues to next theorem.
 - MAINTAINS: The backend is loaded once per file, not once per theorem. `position_at_proof` cleanly resets per-proof state on each call.
 
+#### RSS-based memory monitoring
+
+After extracting each theorem within a file group, the system shall check the backend process RSS. When RSS exceeds a configurable threshold (default 5 GiB, overridable via `POULE_LSP_RSS_LIMIT` env var), the backend is shut down and respawned, and the file is reloaded for the remaining theorems.
+
+- REQUIRES: The backend exposes a method to read the child process RSS in bytes. On Linux, this reads `/proc/{pid}/status` VmRSS. On other platforms, the check is a no-op (returns 0, never triggers restart).
+- ENSURES: Memory usage is bounded even for large files with many theorems. The restart is transparent to callers — remaining theorems are extracted normally after the reload.
+- On restart, the file is type-checked again. This is a deliberate tradeoff: one redundant type-check in exchange for bounded memory.
+
+> **Given** a file with 500 theorems where RSS exceeds the threshold after theorem 200
+> **When** `_extract_file_group(...)` continues
+> **Then** the backend is restarted, the file is reloaded, and theorems 201-500 are extracted normally
+
 > **Given** a file `base.v` with 3 theorems `[A, B, C]` where B fails with proof-not-found
 > **When** `_extract_file_group(...)` is called
 > **Then** results are [ExtractionRecord(A), ExtractionError(B, "no_proof_body"), ExtractionRecord(C)] — the backend was loaded once
