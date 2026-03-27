@@ -215,6 +215,7 @@ for lib in "${LIB_ARRAY[@]}"; do
         FAILED=1
         continue
     fi
+    echo "Using index database at $INDEX_DB" >&2
 
     echo "Extracting proof traces for ${lib}..." >&2
     module_prefix="${MODULE_PREFIXES[$lib]:-}"
