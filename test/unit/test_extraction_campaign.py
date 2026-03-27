@@ -1722,6 +1722,82 @@ class TestRunCampaignFileGrouped:
         assert thm_names == ["A.a1", "A.a2", "B.b1"]
 
 
+class TestExtractFileGroupRssRestart:
+    """Backend is restarted when RSS exceeds threshold (§4.3)."""
+
+    def test_backend_restarted_on_high_rss(self):
+        """When get_rss_bytes returns a value above the threshold after
+        extracting a proof, the backend is shut down, respawned, and the
+        file reloaded for remaining theorems."""
+        from Poule.extraction.campaign import _extract_file_group
+        from Poule.extraction.types import ExtractionRecord
+
+        backend1 = _make_mock_backend(proofs={"thm_a": ["auto."], "thm_b": ["auto."]})
+        # Simulate high RSS after first proof
+        backend1.get_rss_bytes = MagicMock(return_value=6 * 1024**3)  # 6 GiB
+
+        backend2 = _make_mock_backend(proofs={"thm_b": ["auto."]})
+        backend2.get_rss_bytes = MagicMock(return_value=100 * 1024**2)  # 100 MiB
+
+        call_count = {"n": 0}
+
+        async def factory(file_path, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return backend1
+            return backend2
+
+        results = asyncio.run(_extract_file_group(
+            factory, 600, "proj", "test.v",
+            ["thm_a", "thm_b"], "/path/to/proj",
+            rss_threshold=5 * 1024**3,  # 5 GiB
+        ))
+
+        assert len(results) == 2
+        assert all(isinstance(r, ExtractionRecord) for r in results)
+        # Backend factory called twice: original + restart
+        assert call_count["n"] == 2
+        backend1.shutdown.assert_called_once()
+        backend2.shutdown.assert_called_once()
+
+    def test_no_restart_when_rss_below_threshold(self):
+        """When RSS stays below threshold, no restart occurs."""
+        from Poule.extraction.campaign import _extract_file_group
+        from Poule.extraction.types import ExtractionRecord
+
+        backend = _make_mock_backend(proofs={"thm_a": ["auto."], "thm_b": ["auto."]})
+        backend.get_rss_bytes = MagicMock(return_value=100 * 1024**2)  # 100 MiB
+        factory = AsyncMock(return_value=backend)
+
+        results = asyncio.run(_extract_file_group(
+            factory, 600, "proj", "test.v",
+            ["thm_a", "thm_b"], "/path/to/proj",
+            rss_threshold=5 * 1024**3,
+        ))
+
+        assert len(results) == 2
+        assert all(isinstance(r, ExtractionRecord) for r in results)
+        factory.assert_called_once()  # No restart
+
+    def test_no_rss_check_when_threshold_none(self):
+        """When rss_threshold is None, no RSS checking occurs."""
+        from Poule.extraction.campaign import _extract_file_group
+        from Poule.extraction.types import ExtractionRecord
+
+        backend = _make_mock_backend(proofs={"thm_a": ["auto."]})
+        # No get_rss_bytes method — should not be called
+        factory = AsyncMock(return_value=backend)
+
+        results = asyncio.run(_extract_file_group(
+            factory, 600, "proj", "test.v",
+            ["thm_a"], "/path/to/proj",
+            rss_threshold=None,
+        ))
+
+        assert len(results) == 1
+        assert isinstance(results[0], ExtractionRecord)
+
+
 class TestGroupTargetsByFile:
     """_group_targets_by_file groups contiguous same-file targets."""
 

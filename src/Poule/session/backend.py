@@ -551,6 +551,23 @@ class CoqProofBackend:
             return
         self._petanque_state = self._state_stack.pop()
 
+    def get_rss_bytes(self) -> int:
+        """Return the coq-lsp child process RSS in bytes, or 0 on failure.
+
+        Reads ``/proc/{pid}/status`` on Linux.  Returns 0 on non-Linux
+        platforms or if the process is not running.
+        """
+        if self._proc.pid is None:
+            return 0
+        try:
+            with open(f"/proc/{self._proc.pid}/status") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1]) * 1024  # kB → bytes
+        except (OSError, ValueError):
+            pass
+        return 0
+
     async def get_premises_at_step(self, step: int) -> list[dict[str, str]]:
         """Return premises available at the given proof step.
 
