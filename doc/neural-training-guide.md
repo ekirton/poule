@@ -72,7 +72,7 @@ The validator reports:
 - Unique premise count and premise frequency distribution (top 10)
 - Warnings for: >10% empty premises, malformed fields, <5,000 pairs, <1,000 unique premises, any premise >5% of all occurrences
 
-The training pipeline constructs pairs by pairing the goals from step k-1 (state before the tactic) with the global premises from step k (filtering out local hypotheses). A minimum of 10,000 pairs is needed; the stdlib alone provides ~15K.
+The training pipeline constructs pairs by pairing the goals from step k-1 (state before the tactic) with the global premises from step k (filtering out local hypotheses). A minimum of 10,000 pairs is needed; the stdlib alone provides ~67K.
 
 ## Step 3: Build the vocabulary
 
@@ -90,7 +90,7 @@ The vocabulary is constructed from two sources:
 - **Search index** (`index.db`) — all fully-qualified declaration names from the indexed libraries
 - **Serialized proof states** from the training data — hypothesis variable names and syntax tokens
 
-The resulting vocabulary contains ~15,500 tokens: ~15,000 library identifiers, ~200 variable names, ~200 syntax/keyword/tactic tokens, 64 Unicode/Greek symbols, and 5 special tokens (`[PAD]`, `[UNK]`, `[CLS]`, `[SEP]`, `[MASK]`). NFC Unicode normalization is applied before tokenization.
+The vocabulary size scales with the number of indexed declarations. With the six target libraries (~118K declarations), the vocabulary contains ~150K tokens: ~118K library identifiers, ~33K variable names and syntax fragments from training data, ~110 fixed tokens (punctuation, Unicode symbols, Greek letters, digits, SSReflect tacticals, scope delimiters), and 5 special tokens (`[PAD]`, `[UNK]`, `[CLS]`, `[SEP]`, `[MASK]`). NFC Unicode normalization is applied before tokenization.
 
 At inference time, tokenization is a whitespace split followed by O(1) dictionary lookup per token — no regex, no subword search. See `coq-vocabulary.md` for the full design rationale.
 
@@ -119,7 +119,7 @@ poule train \
 
 Training details:
 - **Architecture**: ~98M parameter bi-encoder (CodeBERT 125M base with closed-vocabulary embedding layer, 768-dim embeddings, mean pooling)
-- **Vocabulary**: Closed vocabulary (~15,500 tokens) from `coq-vocabulary.json`
+- **Vocabulary**: Closed vocabulary (~150K tokens for the six target libraries) from `coq-vocabulary.json`
 - **Embedding initialization**: Tokens overlapping with CodeBERT's vocabulary (digits, punctuation, common English words) retain pretrained embeddings; Coq-specific tokens initialized randomly (σ=0.02). CodeBERT's 12 transformer layers keep their full pretrained weights
 - **Loss**: Masked contrastive (InfoNCE) with temperature τ=0.05. Shared premises across proof states in a batch are masked to prevent false negatives
 - **Hard negatives**: 3 per proof state, sampled from accessible-but-unused premises (falls back to random corpus sampling if dependency graph unavailable)

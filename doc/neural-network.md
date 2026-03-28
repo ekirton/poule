@@ -86,7 +86,7 @@ The literature reveals several consistent findings that have guided our architec
 
 5. **Hybrid retrieval outperforms any single channel.** Rango's BM25 finding, LeanHammer's neural+MePo union, RGCN's text+graph fusion, and LeanExplore's semantic+lexical+PageRank combination all point to the same conclusion: no single retrieval signal dominates for formal mathematics.
 
-6. **Domain-specific tokenization is critical.** CFR's custom tokenizer trained on formal Lean corpora produced +33% Recall@5 over a generic tokenizer — the single largest gain from any individual design decision. Rango's BM25 outperformance of CodeBERT embeddings (+46%) is partly a tokenization story: BM25 treats `Nat.add_comm` as a single lexical unit, while CodeBERT fragments it into five subword tokens. Coq's vocabulary is closed and small (~15K identifiers across the target libraries), making subword tokenization unnecessary — every identifier can be assigned its own token directly.
+6. **Domain-specific tokenization is critical.** CFR's custom tokenizer trained on formal Lean corpora produced +33% Recall@5 over a generic tokenizer — the single largest gain from any individual design decision. Rango's BM25 outperformance of CodeBERT embeddings (+46%) is partly a tokenization story: BM25 treats `Nat.add_comm` as a single lexical unit, while CodeBERT fragments it into five subword tokens. Coq's vocabulary is closed — every identifier in a proof state comes from the indexed declaration corpus, making subword tokenization unnecessary. Every identifier can be assigned its own token directly (~150K tokens across the six target libraries).
 
 ## 3. Methods
 
@@ -96,14 +96,14 @@ Our training data is extracted from compiled Coq libraries by replaying each pro
 
 **Source libraries.** We extract from six Coq/Rocq libraries installed via opam:
 
-| Library | Domain | Estimated theorems |
-|---------|--------|-------------------|
-| Stdlib | Standard library (arithmetic, logic, data structures) | ~8,000 |
-| MathComp | Formalized mathematics (algebra, finite groups, field theory) | ~15,000 |
+| Library | Domain | Declarations |
+|---------|--------|-------------|
+| Stdlib | Standard library (arithmetic, logic, data structures) | ~31,000 |
+| MathComp | Formalized mathematics (algebra, finite groups, field theory) | ~58,000 |
 | stdpp | Iris-style proof patterns, general-purpose extensions | ~5,000 |
-| Flocq | Floating-point arithmetic formalization | ~3,000 |
-| Coquelicot | Real analysis | ~2,000 |
-| Interval | Interval arithmetic | ~1,000 |
+| Flocq | Floating-point arithmetic formalization | ~2,600 |
+| Coquelicot | Real analysis | ~2,400 |
+| Interval | Interval arithmetic | ~20,000 |
 
 Target extraction success rates are ≥ 95% for Stdlib and ≥ 90% for MathComp.
 
@@ -188,13 +188,13 @@ We employ a bi-encoder with shared weights: a single encoder processes both proo
 
 CodeBERT's generic tokenizer over-segments Coq syntax: `Nat.add_comm` becomes 5 tokens (`Nat`, `.`, `add`, `_`, `comm`), `mathcomp.algebra.ssralg` becomes 9 tokens, and Unicode symbols (`∀`, `→`, `⊢`) may map to unknown tokens or multi-byte fallback sequences. This over-segmentation wastes the 512-token context window and fragments semantically meaningful identifiers.
 
-Unlike natural language, Coq's vocabulary is closed: every identifier in a proof state comes from the indexed declaration corpus (~15,000 identifiers across 6 libraries), a small set of variable names, ~200 syntax tokens, and 64 Unicode symbols — approximately 15,500 tokens total. This makes subword tokenization (WordPiece, BPE) unnecessary. The closed-vocabulary tokenizer performs a simple whitespace split followed by O(1) dictionary lookup per token, achieving perfect fertility (1 token per identifier, always) with no regex pre-tokenizer complexity. NFC Unicode normalization is applied before tokenization. Unknown tokens map to `[UNK]`.
+Unlike natural language, Coq's vocabulary is closed: every identifier in a proof state comes from the indexed declaration corpus (~118K declarations across 6 libraries), plus ~33K variable names and syntax fragments from training data, ~110 fixed syntax/punctuation tokens, and 64 Unicode symbols — approximately 150K tokens total. This makes subword tokenization (WordPiece, BPE) unnecessary. The closed-vocabulary tokenizer performs a simple whitespace split followed by O(1) dictionary lookup per token, achieving perfect fertility (1 token per identifier, always) with no regex pre-tokenizer complexity. NFC Unicode normalization is applied before tokenization. Unknown tokens map to `[UNK]`.
 
 The full tokenizer design — including the closed-vocabulary rationale, subword alternatives considered, vocabulary construction, and evaluation methodology — is described in `coq-vocabulary.md`.
 
 **Base encoder.** The encoder is initialized from CodeBERT (microsoft/codebert-base), a 125M-parameter transformer pretrained on six programming languages via masked language modeling and replaced token detection. We chose CodeBERT over alternatives for several reasons: (a) it handles formal syntax better than general NLP models while remaining smaller than 7B decoder-based alternatives; (b) RocqStar demonstrated its suitability for Coq embeddings; (c) at 125M parameters, it permits full fine-tuning on a single consumer GPU and INT8 quantization for CPU deployment at <10ms per encoding.
 
-**Embedding layer initialization.** The closed vocabulary (~15,500 tokens) differs from CodeBERT's pretrained embedding layer (50,265 tokens). We create a new `nn.Embedding(vocab_size, 768)`: tokens that overlap with CodeBERT's original vocabulary (digits, punctuation, common English words like `nat`, `list`, `bool`) retain their pretrained embeddings; Coq-specific tokens (`Nat.add_comm`, `ssreflect`, `∀`) are initialized randomly (normal distribution, σ = 0.02). CodeBERT's 12 transformer layers retain their full pretrained weights. Contrastive fine-tuning on ~15,000+ training pairs provides sufficient signal for the new embeddings to converge.
+**Embedding layer initialization.** The closed vocabulary (~150K tokens) differs from CodeBERT's pretrained embedding layer (50,265 tokens). We create a new `nn.Embedding(vocab_size, 768)`: tokens that overlap with CodeBERT's original vocabulary (digits, punctuation, common English words like `nat`, `list`, `bool`) retain their pretrained embeddings; Coq-specific tokens (`Nat.add_comm`, `ssreflect`, `∀`) are initialized randomly (normal distribution, σ = 0.02). CodeBERT's 12 transformer layers retain their full pretrained weights. Contrastive fine-tuning provides sufficient signal for the new embeddings to converge.
 
 **Pooling.** Token-level outputs are combined via mean pooling over non-padding positions, followed by L2 normalization. This produces unit-length embeddings where cosine similarity reduces to dot product.
 
@@ -204,7 +204,7 @@ The full tokenizer design — including the closed-vocabulary rationale, subword
 Input text (proof state or premise statement)
   → NFC Unicode normalization
   → Whitespace tokenization
-  → Closed-vocabulary lookup (~15,500 tokens)
+  → Closed-vocabulary lookup (~150K tokens)
   → token_ids, attention_mask (max length 512)
   → CodeBERT encoder (125M params, 12 layers, 768 hidden)
   → Mean pooling over non-padding tokens

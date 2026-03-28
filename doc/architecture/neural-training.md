@@ -107,7 +107,7 @@ In addition to corpus-extracted tokens, the vocabulary includes fixed token sets
 
 ### Expected Size
 
-~15,500 tokens: ~15,000 library identifiers, ~200 variable names, ~200 syntax/keyword/tactic tokens, 64 Unicode/Greek symbols, 5 special tokens.
+~150K tokens: ~118K library identifiers, ~33K variable names and syntax fragments from training data, ~110 fixed tokens (punctuation, tacticals, scope delimiters, digits), 64 Unicode/Greek symbols, 5 special tokens.
 
 ### Tokenization at Inference
 
@@ -123,14 +123,14 @@ No regex pre-tokenizer. No subword search.
 
 ### Embedding Layer Integration
 
-The closed vocabulary replaces CodeBERT's 50,265-token BPE vocabulary with ~15,500 tokens. The BiEncoder model reinitializes its embedding layer on construction:
+The closed vocabulary replaces CodeBERT's 50,265-token BPE vocabulary with ~150K tokens. The BiEncoder model reinitializes its embedding layer on construction:
 
 1. Load CodeBERT's transformer layers (layers 1–12) with pretrained weights.
 2. Create a new `nn.Embedding(vocab_size, 768)` sized to the closed vocabulary.
 3. For tokens that overlap with CodeBERT's original vocabulary (digits, punctuation, common English words like `nat`, `list`, `bool`), copy the pretrained embedding vector.
 4. For Coq-specific tokens (`Nat.add_comm`, `ssreflect`, `∀`), initialize randomly (normal distribution, σ = 0.02).
 
-CodeBERT's 12 transformer layers retain their full pretrained weights — only the embedding layer is partially cold. Contrastive fine-tuning on ~15,000+ training pairs provides sufficient signal for the new embeddings to converge.
+CodeBERT's 12 transformer layers retain their full pretrained weights — only the embedding layer is partially cold. Contrastive fine-tuning on ~130K training pairs provides sufficient signal for the new embeddings to converge.
 
 ### CoqTokenizer
 

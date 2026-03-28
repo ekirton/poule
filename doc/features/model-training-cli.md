@@ -25,7 +25,7 @@ A set of CLI commands that handle the full training lifecycle:
 
 ## Training Data Requirements
 
-The training pipeline consumes `(proof_state, premises_used)` pairs in the JSON Lines format produced by the Training Data Extraction pipeline. The minimum viable training set is approximately 10,000 pairs — achievable from the Coq standard library alone (which contains ~15K theorems).
+The training pipeline consumes `(proof_state, premises_used)` pairs in the JSON Lines format produced by the Training Data Extraction pipeline. The minimum viable training set is approximately 10,000 pairs — achievable from the Coq standard library alone (which contains ~31K declarations).
 
 The validation command checks the data before training starts, reporting:
 - Count of valid pairs, pairs with empty premise lists, pairs with malformed fields
@@ -67,7 +67,7 @@ A neural model that achieves high recall but retrieves the same results as exist
 
 ### Why a closed vocabulary rather than subword tokenization
 
-CodeBERT's generic BPE tokenizer fragments Coq identifiers (`Nat.add_comm` → 5 tokens, `ssreflect` → 3 tokens), wasting the 512-token context window and diluting embeddings. Unlike natural language, Coq's vocabulary is closed: ~15,000 library identifiers, ~200 variable names, ~200 syntax tokens, ~80 Unicode symbols — all known at index time. A closed-vocabulary tokenizer assigns every identifier exactly 1 token via O(1) dictionary lookup, eliminating subword complexity. CFR (Zhu et al., 2025) demonstrated +33% Recall@5 from domain-specific tokenization alone — the single largest gain from any individual design decision.
+CodeBERT's generic BPE tokenizer fragments Coq identifiers (`Nat.add_comm` → 5 tokens, `ssreflect` → 3 tokens), wasting the 512-token context window and diluting embeddings. Unlike natural language, Coq's vocabulary is closed: ~118K library identifiers, ~33K variable names and syntax fragments from training data, ~110 fixed tokens, ~64 Unicode symbols — all known at index time. A closed-vocabulary tokenizer assigns every identifier exactly 1 token via O(1) dictionary lookup, eliminating subword complexity. CFR (Zhu et al., 2025) demonstrated +33% Recall@5 from domain-specific tokenization alone — the single largest gain from any individual design decision.
 
 The vocabulary is a derived artifact rebuilt whenever the search index is rebuilt, so it automatically tracks library updates. See `coq-vocabulary.md` for the full design rationale.
 

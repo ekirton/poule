@@ -115,14 +115,14 @@ The consistent pattern: systems using generic tokenizers either (a) require larg
 
 The extraction pipeline (Section 3.1 of `neural-network.md`) targets six libraries:
 
-| Library | Estimated theorems | Proof style | Distinctive vocabulary |
-|---------|-------------------|-------------|----------------------|
-| Stdlib | ~8,000 | Standard Ltac | `Nat.*`, `Z.*`, `List.*`, `Bool.*` |
-| MathComp | ~15,000 | SSReflect | `ssralg.*`, `fingroup.*`, `perm.*`, boolean views |
+| Library | Declarations | Proof style | Distinctive vocabulary |
+|---------|-------------|-------------|----------------------|
+| Stdlib | ~31,000 | Standard Ltac | `Nat.*`, `Z.*`, `List.*`, `Bool.*` |
+| MathComp | ~58,000 | SSReflect | `ssralg.*`, `fingroup.*`, `perm.*`, boolean views |
 | stdpp | ~5,000 | Iris-style Ltac | `gmap`, `coPset`, `excl`, `agree` |
-| Flocq | ~3,000 | Ltac | `Fcore_*`, `Fprop_*`, `Raux.*` |
-| Coquelicot | ~2,000 | Ltac | `Derive`, `RInt`, `locally`, `filterlim` |
-| Interval | ~1,000 | Reflexive Ltac | `I.*`, `Xreal`, `Interval_*` |
+| Flocq | ~2,600 | Ltac | `Fcore_*`, `Fprop_*`, `Raux.*` |
+| Coquelicot | ~2,400 | Ltac | `Derive`, `RInt`, `locally`, `filterlim` |
+| Interval | ~20,000 | Reflexive Ltac | `I.*`, `Xreal`, `Interval_*` |
 
 ### 4.2 Vocabulary Categories
 
@@ -169,7 +169,7 @@ Combining the six target libraries:
 | Interval | ~10,000 | ~800 |
 | **Total** | **~417,000** | **~12,000–15,000 unique** |
 
-Additionally, proof state serializations from the extraction pipeline provide a complementary corpus: ~34,000 theorems producing ~15,000+ (state, premise) pairs, each containing serialized goal types, hypothesis types, and premise statements.
+Additionally, proof state serializations from the extraction pipeline provide a complementary corpus: ~118K declarations producing ~130K (state, premise) pairs, each containing serialized goal types, hypothesis types, and premise statements.
 
 ## 5. Why Closed Vocabulary, Not Subword Tokenization
 
@@ -177,12 +177,12 @@ Additionally, proof state serializations from the extraction pipeline provide a 
 
 Unlike natural language — where novel words appear constantly — Coq's vocabulary for any installed library set is **closed**. Every token that appears in a serialized proof state comes from one of four finite sources:
 
-1. **Library declarations** (~15,000 across the six target libraries). Every lemma, definition, type, and notation is known at index time.
+1. **Library declarations** (~118,000 across the six target libraries). Every lemma, definition, type, and notation is known at index time.
 2. **Hypothesis variable names** (`n`, `m`, `H`, `H0`, `x`, `y`, `IHn`, etc.). A small, predictable set.
 3. **Syntax tokens** (~50 keywords, ~30 tactics, ~20 punctuation characters).
 4. **Unicode mathematical symbols** (~80 symbols including `∀`, `→`, `⊢`, Greek letters).
 
-The total is approximately **15,500 distinct tokens** — well within a single BERT embedding table. There are no "unknown words" at inference time: the model only encodes identifiers from the indexed declaration corpus and the fixed syntax of the Calculus of Inductive Constructions.
+The total is approximately **150,000 distinct tokens**. There are no "unknown words" at inference time: the model only encodes identifiers from the indexed declaration corpus and the fixed syntax of the Calculus of Inductive Constructions.
 
 Subword tokenization (WordPiece, BPE) was designed for open-vocabulary natural language, where the model must handle words never seen during training. In Coq, this problem does not exist for the base model. Subword decomposition adds complexity (regex pre-tokenizers, learned merge rules, subword ambiguity) to solve a problem that the domain does not have.
 
@@ -198,7 +198,7 @@ The following subword algorithms were evaluated and rejected:
 
 **Byte Latent Transformer** (Meta, 2024). Requires a fundamentally different model architecture incompatible with BERT-class bi-encoders.
 
-**SuperBPE** (COLM 2025). Designed for open-vocabulary language modeling with 200K+ token vocabularies. Not applicable at the ~15K scale of Coq libraries.
+**SuperBPE** (COLM 2025). Designed for open-vocabulary language modeling with 200K+ token vocabularies. Not applicable at the scale of Coq libraries.
 
 ### 5.3 Why Not Train a Custom BPE on Coq Corpora?
 
@@ -206,7 +206,7 @@ The strongest counter-argument to a closed vocabulary is: "train BPE (or WordPie
 
 **The answer is that a custom BPE converges to the closed vocabulary at Coq's scale — but with worse properties.**
 
-**1. At convergence, BPE rediscovers the closed vocabulary.** BPE learns merge rules by greedily combining the most frequent adjacent byte-pairs. On a corpus of ~417K lines of Coq where `Nat.add_comm` appears hundreds of times, BPE will eventually merge `N` + `a` + `t` + `.` + `a` + `d` + `d` + `_` + `c` + `o` + `m` + `m` into a single token — reproducing the closed vocabulary entry. With a vocabulary budget of ~15K–30K tokens (the range used by CFR and BERT), essentially every high-frequency Coq identifier will end up as its own token. The subword decomposition machinery (merge tables, priority queues, regex pre-tokenization) exists only to arrive at the same result that a dictionary lookup achieves directly.
+**1. At convergence, BPE rediscovers the closed vocabulary.** BPE learns merge rules by greedily combining the most frequent adjacent byte-pairs. On a corpus of ~417K lines of Coq where `Nat.add_comm` appears hundreds of times, BPE will eventually merge `N` + `a` + `t` + `.` + `a` + `d` + `d` + `_` + `c` + `o` + `m` + `m` into a single token — reproducing the closed vocabulary entry. With a vocabulary budget of ~150K tokens, essentially every high-frequency Coq identifier will end up as its own token. The subword decomposition machinery (merge tables, priority queues, regex pre-tokenization) exists only to arrive at the same result that a dictionary lookup achieves directly.
 
 **2. BPE introduces ambiguity that the closed vocabulary avoids.** BPE tokenization is not bijective: the segmentation of a string depends on the learned merge order, and different training corpora produce different segmentations of the same input. If `Nat.add_comm` was rare in the training corpus (e.g., from a library version that added it late), BPE may segment it as `Nat.add` + `_comm` or `Nat` + `.add_comm` — different from the segmentation of `Nat.add` alone. The closed vocabulary eliminates this: `Nat.add_comm` is always token ID 9 (or whatever its assigned ID is), regardless of corpus frequency.
 
@@ -214,7 +214,7 @@ The strongest counter-argument to a closed vocabulary is: "train BPE (or WordPie
 
 **4. CFR's gains came from replacing a *generic* tokenizer, not from BPE itself.** CFR compared a custom WordPiece tokenizer against ByT5's byte-level tokenizer (256-token vocabulary, ~4x sequence length penalty) and CodeBERT's English+code BPE. The +33% gain demonstrates that domain-specific tokenization matters — not that WordPiece is the optimal algorithm. A closed vocabulary is an even more domain-specific tokenizer: it is the limit of what a perfect BPE would converge to, without the convergence process.
 
-**5. CFR operated at a scale where BPE was necessary.** Lean's Mathlib has 149,549 premises — an order of magnitude more than Coq's 6-library target (~15,000). At 150K identifiers, a closed vocabulary would require a 150K+ embedding table, approaching the size of CodeBERT's original vocabulary (50,265) and potentially exceeding it. Subword decomposition is a reasonable compression strategy at that scale. At ~15,500 tokens, the closed vocabulary is *smaller* than CodeBERT's original vocabulary — no compression needed.
+**5. CFR operated at a comparable scale.** Lean's Mathlib has 149,549 premises — similar to Coq's 6-library corpus (~118,000 declarations). At this scale, the closed vocabulary (~150K tokens) is larger than CodeBERT's original vocabulary (50,265 tokens), but still practical for a single embedding table.
 
 **6. A trained tokenizer is not a derived artifact.** A BPE tokenizer's merge rules are learned from a training corpus and frozen at training time. If the library adds new identifiers (e.g., a MathComp update adds 500 new lemmas), the tokenizer cannot incorporate them without retraining. The closed vocabulary is rebuilt from the search index in seconds — it is a derived artifact that tracks the installed library state, not a trained model that must be versioned and distributed.
 
@@ -239,7 +239,7 @@ The closed vocabulary maps unseen identifiers to `[UNK]`. In practice, this is r
 
 ## 6. Embedding Layer Integration
 
-Replacing CodeBERT's 50,265-token BPE vocabulary with a ~15,500-token closed vocabulary requires reinitializing the embedding layer.
+Replacing CodeBERT's 50,265-token BPE vocabulary with a ~150K-token closed vocabulary requires reinitializing the embedding layer.
 
 **Procedure:**
 
@@ -249,9 +249,9 @@ Replacing CodeBERT's 50,265-token BPE vocabulary with a ~15,500-token closed voc
 4. Initialize embeddings: for tokens that overlap with CodeBERT's original vocabulary (digits, punctuation, common English words like `nat`, `list`, `bool`), copy the pretrained embedding. For Coq-specific tokens (`Nat.add_comm`, `ssreflect`, `∀`), initialize randomly (normal distribution, σ = 0.02).
 5. Fine-tune the full model with masked contrastive loss on Coq training data.
 
-CodeBERT's 12 transformer layers retain their full pretrained weights — only the embedding layer is partially cold. The CFR paper found that the tokenizer mattered more than pretraining, and contrastive fine-tuning on ~15,000+ training pairs provides sufficient signal for the embeddings to converge.
+CodeBERT's 12 transformer layers retain their full pretrained weights — only the embedding layer is partially cold. The CFR paper found that the tokenizer mattered more than pretraining, and contrastive fine-tuning provides sufficient signal for the embeddings to converge.
 
-**Embedding table size.** At ~15,500 tokens × 768 dimensions: ~45 MB (FP32) or ~12 MB (INT8). This is smaller than CodeBERT's original 50,265-token table (~147 MB FP32), reducing model size.
+**Embedding table size.** At ~150K tokens × 768 dimensions: ~440 MB (FP32) or ~110 MB (INT8). This is larger than CodeBERT's original 50,265-token table (~147 MB FP32), but the tradeoff is justified by perfect tokenization fertility (1 token per identifier, always).
 
 ## 7. Vocabulary Construction
 
@@ -325,12 +325,12 @@ Apply **NFC (Canonical Decomposition + Canonical Composition)** Unicode normaliz
 
 | Category | Estimated count |
 |----------|----------------|
-| Library identifiers (6 libraries) | ~15,000 |
-| Hypothesis variable names | ~200 |
-| Syntax / keywords / tactics | ~200 |
+| Library identifiers (6 libraries) | ~118,000 |
+| Training data tokens (variable names, syntax fragments) | ~33,000 |
+| Fixed tokens (punctuation, tacticals, scope delimiters, digits) | ~110 |
 | Unicode symbols + Greek letters | 64 |
 | Special tokens | 5 |
-| **Total** | **~15,500** |
+| **Total** | **~150,000** |
 
 ## 8. Evaluation
 
