@@ -81,6 +81,11 @@ def _make_index(tmp_path, declarations=None):
     return str(db_path)
 
 
+async def _collect(async_gen):
+    """Collect an async generator into a list (for testing)."""
+    return [r async for r in async_gen]
+
+
 def _make_extraction_record(
     theorem_name="Nat.add_comm",
     source_file="theories/Arith/PeanoNat.v",
@@ -1476,11 +1481,11 @@ class TestLoadPathPassthrough:
             factory_calls.append((file_path, kwargs))
             return backend
 
-        asyncio.run(_extract_file_group(
+        asyncio.run(_collect(_extract_file_group(
             tracking_factory, 600, "proj", "Core/Raux.v",
             ["thm"], "/path/to/Flocq",
             load_paths=[("/path/to/Flocq", "Flocq")],
-        ))
+        )))
 
         assert len(factory_calls) == 1
         _, kwargs = factory_calls[0]
@@ -1498,10 +1503,10 @@ class TestLoadPathPassthrough:
             factory_calls.append((file_path, kwargs))
             return backend
 
-        asyncio.run(_extract_file_group(
+        asyncio.run(_collect(_extract_file_group(
             tracking_factory, 600, "proj", "test.v",
             ["thm"], "/path/to/proj",
-        ))
+        )))
 
         assert len(factory_calls) == 1
         _, kwargs = factory_calls[0]
@@ -1656,10 +1661,10 @@ class TestExtractFileGroupBasic:
         })
         factory = AsyncMock(return_value=backend)
 
-        results = asyncio.run(_extract_file_group(
+        results = asyncio.run(_collect(_extract_file_group(
             factory, 600, "proj", "test.v",
             ["thm_a", "thm_b", "thm_c"], "/path/to/proj",
-        ))
+        )))
 
         factory.assert_called_once()
         backend.load_file.assert_called_once()
@@ -1678,15 +1683,42 @@ class TestExtractFileGroupBasic:
         })
         factory = AsyncMock(return_value=backend)
 
-        results = asyncio.run(_extract_file_group(
+        results = asyncio.run(_collect(_extract_file_group(
             factory, 600, "proj", "test.v",
             ["alpha", "beta"], "/path/to/proj",
-        ))
+        )))
 
         assert len(results) == 2
         assert all(isinstance(r, ExtractionRecord) for r in results)
         assert results[0].theorem_name == "alpha"
         assert results[1].theorem_name == "beta"
+
+    def test_yields_results_incrementally(self):
+        """_extract_file_group is an async generator that yields each result
+        before processing the next theorem (§NFR streaming)."""
+        from Poule.extraction.campaign import _extract_file_group
+        from collections.abc import AsyncGenerator
+
+        backend = _make_mock_backend(proofs={"a": ["auto."], "b": ["auto."]})
+        factory = AsyncMock(return_value=backend)
+
+        gen = _extract_file_group(
+            factory, 600, "proj", "test.v",
+            ["a", "b"], "/path/to/proj",
+        )
+        assert isinstance(gen, AsyncGenerator)
+
+        async def _step_through():
+            results = []
+            async for r in gen:
+                results.append(r)
+                # After first yield, we should have exactly 1 result
+                if len(results) == 1:
+                    assert r.theorem_name == "a"
+            return results
+
+        results = asyncio.run(_step_through())
+        assert len(results) == 2
 
 
 class TestExtractFileGroupLoadFailure:
@@ -1701,10 +1733,10 @@ class TestExtractFileGroupLoadFailure:
         backend = _make_mock_backend(load_raises=RuntimeError("Coq check failed"))
         factory = AsyncMock(return_value=backend)
 
-        results = asyncio.run(_extract_file_group(
+        results = asyncio.run(_collect(_extract_file_group(
             factory, 600, "proj", "broken.v",
             ["thm_a", "thm_b", "thm_c"], "/path/to/proj",
-        ))
+        )))
 
         assert len(results) == 3
         assert all(isinstance(r, ExtractionError) for r in results)
@@ -1729,10 +1761,10 @@ class TestExtractFileGroupProofNotFound:
         )
         factory = AsyncMock(return_value=backend)
 
-        results = asyncio.run(_extract_file_group(
+        results = asyncio.run(_collect(_extract_file_group(
             factory, 600, "proj", "test.v",
             ["thm_a", "thm_b", "thm_c"], "/path/to/proj",
-        ))
+        )))
 
         assert len(results) == 3
         assert isinstance(results[0], ExtractionRecord)
@@ -1758,10 +1790,10 @@ class TestExtractFileGroupBackendCrash:
         )
         factory = AsyncMock(return_value=backend)
 
-        results = asyncio.run(_extract_file_group(
+        results = asyncio.run(_collect(_extract_file_group(
             factory, 600, "proj", "test.v",
             ["thm_a", "thm_b", "thm_c"], "/path/to/proj",
-        ))
+        )))
 
         assert len(results) == 3
         assert isinstance(results[0], ExtractionRecord)
@@ -1780,9 +1812,9 @@ class TestExtractFileGroupShutdown:
         backend = _make_mock_backend(load_raises=RuntimeError("fail"))
         factory = AsyncMock(return_value=backend)
 
-        asyncio.run(_extract_file_group(
+        asyncio.run(_collect(_extract_file_group(
             factory, 600, "proj", "f.v", ["t"], "/p",
-        ))
+        )))
 
         backend.shutdown.assert_called_once()
 
@@ -1792,9 +1824,9 @@ class TestExtractFileGroupShutdown:
         backend = _make_mock_backend(crash_on="t")
         factory = AsyncMock(return_value=backend)
 
-        asyncio.run(_extract_file_group(
+        asyncio.run(_collect(_extract_file_group(
             factory, 600, "proj", "f.v", ["t"], "/p",
-        ))
+        )))
 
         backend.shutdown.assert_called_once()
 
@@ -1895,11 +1927,11 @@ class TestExtractFileGroupRssRestart:
                 return backend1
             return backend2
 
-        results = asyncio.run(_extract_file_group(
+        results = asyncio.run(_collect(_extract_file_group(
             factory, 600, "proj", "test.v",
             ["thm_a", "thm_b"], "/path/to/proj",
             rss_threshold=5 * 1024**3,  # 5 GiB
-        ))
+        )))
 
         assert len(results) == 2
         assert all(isinstance(r, ExtractionRecord) for r in results)
@@ -1917,11 +1949,11 @@ class TestExtractFileGroupRssRestart:
         backend.get_rss_bytes = MagicMock(return_value=100 * 1024**2)  # 100 MiB
         factory = AsyncMock(return_value=backend)
 
-        results = asyncio.run(_extract_file_group(
+        results = asyncio.run(_collect(_extract_file_group(
             factory, 600, "proj", "test.v",
             ["thm_a", "thm_b"], "/path/to/proj",
             rss_threshold=5 * 1024**3,
-        ))
+        )))
 
         assert len(results) == 2
         assert all(isinstance(r, ExtractionRecord) for r in results)
@@ -1936,11 +1968,11 @@ class TestExtractFileGroupRssRestart:
         # No get_rss_bytes method — should not be called
         factory = AsyncMock(return_value=backend)
 
-        results = asyncio.run(_extract_file_group(
+        results = asyncio.run(_collect(_extract_file_group(
             factory, 600, "proj", "test.v",
             ["thm_a"], "/path/to/proj",
             rss_threshold=None,
-        ))
+        )))
 
         assert len(results) == 1
         assert isinstance(results[0], ExtractionRecord)
@@ -1959,11 +1991,11 @@ class TestExtractFileGroupRssRestart:
         factory = AsyncMock(return_value=backend)
 
         with patch("Poule.extraction.campaign.logger") as mock_logger:
-            results = asyncio.run(_extract_file_group(
+            results = asyncio.run(_collect(_extract_file_group(
                 factory, 600, "proj", "test.v",
                 ["thm_a"], "/path/to/proj",
                 rss_threshold=5 * 1024**3,
-            ))
+            )))
 
         # Extraction should still proceed (warning only, no abort)
         assert len(results) == 1

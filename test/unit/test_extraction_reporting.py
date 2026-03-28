@@ -868,7 +868,7 @@ class TestErrorInvalidJsonLines:
     def test_invalid_json_raises_value_error_with_line_number(self, tmp_path):
         from Poule.extraction.reporting import generate_quality_report
 
-        content = '{"record_type": "proof_trace"}\n{bad json\n'
+        content = '{"record_type": "campaign_metadata"}\n{bad json\n'
         path = tmp_path / "bad.jsonl"
         path.write_text(content)
 
@@ -1289,3 +1289,81 @@ class TestAnalyzeErrorsEdgeCases:
         assert report.total_theorems == 0
         assert report.total_extracted == 0
         assert report.total_failed == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Streaming behavior (§6/§8)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestIterJsonlStreaming:
+    """_iter_jsonl yields records one at a time without loading all into memory."""
+
+    def test_iter_jsonl_is_generator(self, tmp_path):
+        """_iter_jsonl returns a generator, not a list."""
+        from Poule.extraction.reporting import _iter_jsonl
+        from collections.abc import Generator
+
+        records = [_make_extraction_record() for _ in range(3)]
+        path = _write_jsonl(tmp_path / "test.jsonl", records)
+
+        result = _iter_jsonl(path)
+        assert isinstance(result, Generator)
+        # Consume and verify count
+        items = list(result)
+        assert len(items) == 3
+
+    def test_iter_jsonl_raises_on_bad_json(self, tmp_path):
+        """_iter_jsonl raises ValueError with line number on invalid JSON."""
+        from Poule.extraction.reporting import _iter_jsonl
+
+        path = tmp_path / "bad.jsonl"
+        path.write_text('{"ok": true}\nnot json\n')
+
+        gen = _iter_jsonl(path)
+        next(gen)  # first line is fine
+        with pytest.raises(ValueError, match="Line 2"):
+            next(gen)
+
+
+class TestAnalyzeErrorsStreaming:
+    """analyze_errors processes files without bulk-loading (§6/§8)."""
+
+    def test_produces_correct_results_via_streaming(self, tmp_path):
+        """Streaming analyze_errors produces identical results to what the
+        old bulk-load version would produce."""
+        from Poule.extraction.reporting import analyze_errors
+
+        records = (
+            [_make_extraction_record(theorem_name=f"T.thm{i}") for i in range(5)]
+            + [_make_extraction_error(theorem_name=f"T.fail{i}") for i in range(3)]
+        )
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = analyze_errors([path])
+
+        assert report.total_extracted == 5
+        assert report.total_failed == 3
+        assert report.total_theorems == 8
+
+
+class TestGenerateQualityReportStreaming:
+    """generate_quality_report uses streaming reads (§6/§8)."""
+
+    def test_produces_correct_results_via_streaming(self, tmp_path):
+        """Streaming quality report produces correct metrics."""
+        from Poule.extraction.reporting import generate_quality_report
+
+        records = [
+            _make_extraction_record(theorem_name="T.a", total_steps=3),
+            _make_extraction_record(theorem_name="T.b", total_steps=5),
+            _make_extraction_error(),  # should be skipped
+        ]
+        path = _write_jsonl(tmp_path / "output.jsonl", records)
+
+        report = generate_quality_report(path)
+
+        assert report.proof_length_distribution.min == 3
+        assert report.proof_length_distribution.max == 5
+        assert len(report.per_project) == 1
+        assert report.per_project[0].theorem_count == 2

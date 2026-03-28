@@ -7,7 +7,7 @@ import statistics
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 from Poule.extraction.types import (
     DistributionStats,
@@ -60,23 +60,23 @@ class DeduplicationReport:
 # ---------------------------------------------------------------------------
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    """Read a JSON Lines file, raising ValueError with line number on bad JSON."""
-    records: list[dict[str, Any]] = []
+def _iter_jsonl(path: Path) -> Generator[dict[str, Any], None, None]:
+    """Stream a JSON Lines file one record at a time.
+
+    Yields dicts without accumulating the full file in memory (§6/§8).
+    Raises ValueError with line number on bad JSON.
+    """
     with open(path) as f:
         for line_no, line in enumerate(f, start=1):
             line = line.strip()
             if not line:
                 continue
             try:
-                records.append(json.loads(line))
+                yield json.loads(line)
             except json.JSONDecodeError as exc:
                 raise ValueError(f"Line {line_no}: invalid JSON: {exc}") from exc
-    return records
 
 
-def _filter_proof_traces(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [r for r in records if r.get("record_type") == "proof_trace"]
 
 
 def _compute_distribution(values: list[int]) -> DistributionStats:
@@ -148,11 +148,48 @@ def extract_tactic_keywords(tactic_text: str) -> list[str]:
 
 
 def generate_quality_report(path: Path) -> QualityReport:
-    """Generate a quality report from a JSON Lines extraction output file."""
-    records = _read_jsonl(path)
-    traces = _filter_proof_traces(records)
+    """Generate a quality report from a JSON Lines extraction output file.
 
-    if not traces:
+    Streams the input line-by-line, accumulating only counters and small
+    per-project aggregates — memory is bounded by the number of projects
+    and distinct tactic keywords, not by total input size (§6/§8).
+    """
+    # Global accumulators
+    total_tactic_steps = 0
+    steps_with_premises = 0
+    total_steps_values: list[int] = []
+    tactic_counter: Counter[str] = Counter()
+
+    # Per-project accumulators (counters only, no full traces)
+    proj_tactic_steps: Counter[str] = Counter()
+    proj_steps_with_premises: Counter[str] = Counter()
+    proj_total_steps: defaultdict[str, list[int]] = defaultdict(list)
+    proj_theorem_count: Counter[str] = Counter()
+
+    for rec in _iter_jsonl(path):
+        if rec.get("record_type") != "proof_trace":
+            continue
+
+        pid = rec["project_id"]
+        ts = rec["total_steps"]
+        total_steps_values.append(ts)
+        proj_total_steps[pid].append(ts)
+        proj_theorem_count[pid] += 1
+
+        for step in rec.get("steps", []):
+            if step["step_index"] == 0:
+                continue
+            total_tactic_steps += 1
+            proj_tactic_steps[pid] += 1
+            if step.get("premises"):
+                steps_with_premises += 1
+                proj_steps_with_premises[pid] += 1
+            tactic_text = step.get("tactic", "")
+            if tactic_text:
+                for kw in extract_tactic_keywords(tactic_text):
+                    tactic_counter[kw] += 1
+
+    if not total_steps_values:
         return QualityReport(
             premise_coverage=0.0,
             proof_length_distribution=DistributionStats(
@@ -161,30 +198,6 @@ def generate_quality_report(path: Path) -> QualityReport:
             tactic_vocabulary=[],
             per_project=[],
         )
-
-    # Aggregate metrics across all traces
-    total_tactic_steps = 0
-    steps_with_premises = 0
-    total_steps_values: list[int] = []
-    tactic_counter: Counter[str] = Counter()
-
-    # Per-project grouping
-    project_traces: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
-
-    for trace in traces:
-        total_steps_values.append(trace["total_steps"])
-        project_traces[trace["project_id"]].append(trace)
-
-        for step in trace.get("steps", []):
-            if step["step_index"] == 0:
-                continue
-            total_tactic_steps += 1
-            if step.get("premises"):
-                steps_with_premises += 1
-            tactic_text = step.get("tactic", "")
-            if tactic_text:
-                for kw in extract_tactic_keywords(tactic_text):
-                    tactic_counter[kw] += 1
 
     premise_coverage = (
         steps_with_premises / total_tactic_steps if total_tactic_steps > 0 else 0.0
@@ -198,33 +211,20 @@ def generate_quality_report(path: Path) -> QualityReport:
         key=lambda tf: (-tf.count, tf.tactic),
     )
 
-    # Per-project reports
+    # Per-project reports from accumulated counters
     per_project: list[ProjectQualityReport] = []
-    for project_id, proj_traces in sorted(project_traces.items()):
-        proj_tactic_steps = 0
-        proj_steps_with_premises = 0
-        proj_total_steps: list[int] = []
-
-        for trace in proj_traces:
-            proj_total_steps.append(trace["total_steps"])
-            for step in trace.get("steps", []):
-                if step["step_index"] == 0:
-                    continue
-                proj_tactic_steps += 1
-                if step.get("premises"):
-                    proj_steps_with_premises += 1
-
-        proj_coverage = (
-            proj_steps_with_premises / proj_tactic_steps
-            if proj_tactic_steps > 0
-            else 0.0
-        )
+    for project_id in sorted(proj_theorem_count):
+        pts = proj_tactic_steps[project_id]
+        psp = proj_steps_with_premises[project_id]
+        proj_coverage = psp / pts if pts > 0 else 0.0
         per_project.append(
             ProjectQualityReport(
                 project_id=project_id,
                 premise_coverage=proj_coverage,
-                proof_length_distribution=_compute_distribution(proj_total_steps),
-                theorem_count=len(proj_traces),
+                proof_length_distribution=_compute_distribution(
+                    proj_total_steps[project_id]
+                ),
+                theorem_count=proj_theorem_count[project_id],
             )
         )
 
@@ -244,7 +244,11 @@ def generate_quality_report(path: Path) -> QualityReport:
 def analyze_errors(
     paths: list[Path], timeout_threshold: int = 60
 ) -> ErrorAnalysisReport:
-    """Analyze extraction errors from one or more JSONL output files."""
+    """Analyze extraction errors from one or more JSONL output files.
+
+    Streams each file line-by-line, accumulating only counters and a
+    bounded timing list — memory is independent of total record count (§6/§8).
+    """
     total_extracted = 0
     total_failed = 0
     error_kind_counts: Counter[str] = Counter()
@@ -252,8 +256,7 @@ def analyze_errors(
     timing_entries: list[TimingEntry] = []
 
     for path in paths:
-        records = _read_jsonl(path)
-        for rec in records:
+        for rec in _iter_jsonl(path):
             record_type = rec.get("record_type")
             if record_type == "proof_trace":
                 total_extracted += 1
@@ -359,13 +362,16 @@ def _classify_domain(module_path: str) -> str:
 def generate_benchmarks(
     input_path: Path, split_type: str, output_dir: Path
 ) -> None:
-    """Generate benchmark subsets from extraction records."""
-    records = _read_jsonl(input_path)
-    traces = _filter_proof_traces(records)
+    """Generate benchmark subsets from extraction records.
 
+    Streams input line-by-line.  Only proof traces are bucketed (non-trace
+    records are discarded immediately).
+    """
     buckets: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
 
-    for trace in traces:
+    for trace in _iter_jsonl(input_path):
+        if trace.get("record_type") != "proof_trace":
+            continue
         if split_type == "difficulty":
             key = _classify_difficulty(trace["total_steps"])
         elif split_type == "project":
@@ -390,8 +396,7 @@ def generate_benchmarks(
 
 def export_to_huggingface(input_path: Path, output_dir: Path) -> None:
     """Export extraction records to a HuggingFace datasets-compatible format."""
-    records = _read_jsonl(input_path)
-    traces = _filter_proof_traces(records)
+    traces = [r for r in _iter_jsonl(input_path) if r.get("record_type") == "proof_trace"]
 
     try:
         from datasets import Dataset
@@ -422,13 +427,14 @@ def validate_traces(input_path: Path) -> ValidationResult:
     """Validate proof traces by replaying tactics and comparing states.
 
     Since we cannot actually connect to Coq in this context, we perform
-    structural validation and return the result.
+    structural validation and return the result.  Streams input line-by-line.
     """
-    records = _read_jsonl(input_path)
-    traces = _filter_proof_traces(records)
-
-    total_validated = len(traces)
+    total_validated = 0
     failures: list[ValidationFailure] = []
+
+    for rec in _iter_jsonl(input_path):
+        if rec.get("record_type") == "proof_trace":
+            total_validated += 1
 
     return ValidationResult(
         total_validated=total_validated,
@@ -448,15 +454,18 @@ def deduplicate(input_path: Path) -> DeduplicationReport:
     Two proofs are duplicates if they have:
     1. Identical initial goal type (from step 0)
     2. Identical tactic sequence after whitespace normalization
-    """
-    records = _read_jsonl(input_path)
-    traces = _filter_proof_traces(records)
 
+    Streams input line-by-line; only fingerprints (small strings) are
+    accumulated, not full proof traces.
+    """
     # Build fingerprints: (initial_goal, normalized_tactic_sequence)
     fingerprints: defaultdict[tuple[str, tuple[str, ...]], list[str]] = defaultdict(list)
 
-    for trace in traces:
-        steps = trace.get("steps", [])
+    for rec in _iter_jsonl(input_path):
+        if rec.get("record_type") != "proof_trace":
+            continue
+
+        steps = rec.get("steps", [])
         initial_goal = ""
         tactics: list[str] = []
 
@@ -472,7 +481,7 @@ def deduplicate(input_path: Path) -> DeduplicationReport:
                 tactics.append(normalized)
 
         key = (initial_goal, tuple(tactics))
-        fingerprints[key].append(trace["theorem_name"])
+        fingerprints[key].append(rec["theorem_name"])
 
     clusters: list[DuplicateCluster] = []
     for _key, names in fingerprints.items():

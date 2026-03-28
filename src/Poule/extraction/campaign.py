@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from fnmatch import fnmatch
 from itertools import groupby
 from pathlib import Path
-from typing import Optional, Union
+from typing import AsyncGenerator, Optional, Union
 
 from Poule.extraction.types import (
     CampaignMetadata,
@@ -406,8 +406,11 @@ async def _extract_file_group(
     project_path: str,
     rss_threshold: int | None = None,
     load_paths: list[tuple[str, str]] | None = None,
-) -> list[Union[ExtractionRecord, PartialExtractionRecord, ExtractionError]]:
+) -> AsyncGenerator[Union[ExtractionRecord, PartialExtractionRecord, ExtractionError], None]:
     """Extract all proofs from one file using a single backend.
+
+    Yields results one at a time so that memory is bounded by the
+    largest single proof trace, not the total file size (§NFR streaming).
 
     Creates one backend, loads the file once, then extracts each theorem.
     The backend is shut down in a ``finally`` block.
@@ -420,8 +423,9 @@ async def _extract_file_group(
     passed to the backend factory as ``-R`` flags so bare imports resolve.
     """
     abs_file = str(Path(project_path) / source_file) if project_path else source_file
-    results: list[Union[ExtractionRecord, PartialExtractionRecord, ExtractionError]] = []
     backend = None
+    # Track how many theorems have been yielded for "remaining" calculations.
+    yielded = 0
 
     async def _spawn_and_load():
         factory_kwargs: dict = {}
@@ -443,13 +447,13 @@ async def _extract_file_group(
         except Exception as exc:
             # File load failed — all theorems get load_failure
             for thm in theorem_names:
-                results.append(ExtractionError(
+                yield ExtractionError(
                     schema_version=1, record_type="extraction_error",
                     theorem_name=thm, source_file=source_file,
                     project_id=project_id, error_kind="load_failure",
                     error_message=str(exc),
-                ))
-            return results
+                )
+            return
 
         # Post-load RSS check: warn if type-checking alone exceeds threshold.
         if rss_threshold is not None and backend is not None:
@@ -463,38 +467,41 @@ async def _extract_file_group(
                     rss_threshold / (1024 * 1024),
                 )
 
-        for thm in theorem_names:
+        for thm_idx, thm in enumerate(theorem_names):
             try:
                 result = await _extract_one_on_backend(
                     backend, project_id, source_file, thm,
                 )
-                results.append(result)
+                yield result
+                yielded += 1
             except ConnectionError as exc:
                 # Backend crashed — fail current + remaining theorems
-                results.append(ExtractionError(
+                yield ExtractionError(
                     schema_version=1, record_type="extraction_error",
                     theorem_name=thm, source_file=source_file,
                     project_id=project_id, error_kind="backend_crash",
                     error_message=str(exc),
-                ))
-                remaining_start = len(results)
-                for remaining_thm in theorem_names[remaining_start:]:
-                    results.append(ExtractionError(
+                )
+                yielded += 1
+                for remaining_thm in theorem_names[thm_idx + 1:]:
+                    yield ExtractionError(
                         schema_version=1, record_type="extraction_error",
                         theorem_name=remaining_thm, source_file=source_file,
                         project_id=project_id, error_kind="backend_crash",
                         error_message="Backend crashed on earlier proof",
-                    ))
+                    )
+                    yielded += 1
                 break
             except KeyboardInterrupt:
                 raise
             except Exception as exc:
-                results.append(ExtractionError(
+                yield ExtractionError(
                     schema_version=1, record_type="extraction_error",
                     theorem_name=thm, source_file=source_file,
                     project_id=project_id, error_kind="unknown",
                     error_message=str(exc),
-                ))
+                )
+                yielded += 1
 
             # RSS check: restart backend if memory usage exceeds threshold.
             if rss_threshold is not None and backend is not None:
@@ -513,14 +520,14 @@ async def _extract_file_group(
                         backend = await _spawn_and_load()
                     except Exception as exc:
                         # Restart failed — fail remaining theorems
-                        remaining_start = len(results)
-                        for remaining_thm in theorem_names[remaining_start:]:
-                            results.append(ExtractionError(
+                        for remaining_thm in theorem_names[thm_idx + 1:]:
+                            yield ExtractionError(
                                 schema_version=1, record_type="extraction_error",
                                 theorem_name=remaining_thm, source_file=source_file,
                                 project_id=project_id, error_kind="load_failure",
                                 error_message=f"Backend restart failed: {exc}",
-                            ))
+                            )
+                            yielded += 1
                         backend = None
                         break
     finally:
@@ -529,8 +536,6 @@ async def _extract_file_group(
                 await backend.shutdown()
             except Exception:
                 pass
-
-    return results
 
 
 # ---------------------------------------------------------------------------
@@ -820,8 +825,8 @@ async def run_campaign(
         # File-grouped extraction: one backend per source file (§4.3).
         file_groups = _group_targets_by_file(plan.targets)
 
-        async def _process_group(pid, sf, thms):
-            return await _extract_file_group(
+        def _make_group_gen(pid, sf, thms):
+            return _extract_file_group(
                 backend_factory, watchdog_timeout,
                 pid, sf, thms,
                 project_path=project_path_map.get(pid, ""),
@@ -829,13 +834,17 @@ async def run_campaign(
                 load_paths=load_paths,
             )
 
+        async def _collect_group(pid, sf, thms):
+            """Collect generator into a list (needed for parallel gather)."""
+            return [r async for r in _make_group_gen(pid, sf, thms)]
+
         if workers > 1:
             # Parallel file processing with bounded concurrency.
             sem = asyncio.Semaphore(workers)
 
             async def _bounded(pid, sf, thms):
                 async with sem:
-                    return await _process_group(pid, sf, thms)
+                    return await _collect_group(pid, sf, thms)
 
             # Process all file groups concurrently, write results in plan order.
             tasks = [
@@ -860,29 +869,28 @@ async def run_campaign(
                         fs["failed"] += 1
                         failed_count += 1
         else:
-            # Sequential file processing (default).
+            # Sequential file processing (default): stream results to
+            # keep memory bounded by a single proof trace (§NFR).
             for pid, sf, thms in file_groups:
                 idx += 1
                 print(f"  [{idx}/{total_targets}] {sf} ({len(thms)} theorems)", file=sys.stderr)
                 try:
-                    results = await _process_group(pid, sf, thms)
+                    async for result in _make_group_gen(pid, sf, thms):
+                        outfile.write(json.dumps(_record_to_dict(result), default=str) + "\n")
+                        outfile.flush()
+                        fs = project_file_stats[pid][sf]
+                        if isinstance(result, ExtractionRecord):
+                            fs["extracted"] += 1
+                            extracted_count += 1
+                        elif isinstance(result, ExtractionError) and result.error_kind == "no_proof_body":
+                            fs["no_proof_body"] += 1
+                            no_proof_body_count += 1
+                        else:
+                            fs["failed"] += 1
+                            failed_count += 1
                 except KeyboardInterrupt:
                     interrupted = True
                     break
-
-                for result in results:
-                    outfile.write(json.dumps(_record_to_dict(result), default=str) + "\n")
-                    outfile.flush()
-                    fs = project_file_stats[pid][sf]
-                    if isinstance(result, ExtractionRecord):
-                        fs["extracted"] += 1
-                        extracted_count += 1
-                    elif isinstance(result, ExtractionError) and result.error_kind == "no_proof_body":
-                        fs["no_proof_body"] += 1
-                        no_proof_body_count += 1
-                    else:
-                        fs["failed"] += 1
-                        failed_count += 1
 
                 idx += len(thms) - 1
                 if idx % 100 < len(thms):
