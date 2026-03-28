@@ -273,8 +273,8 @@ accessible_premises(theorem) = all premises defined in accessible_files(theorem)
 
 #### train(dataset, output_path, vocabulary_path, hyperparams, epoch_callback)
 
-- REQUIRES: `dataset` is a `TrainingDataset` with at least 1,000 training pairs. `output_path` is a writable path. `vocabulary_path` points to a valid vocabulary JSON file (as produced by `VocabularyBuilder.build`). `hyperparams` has defaults as specified below. `epoch_callback` is `None` or a callable `(epoch: int, val_recall: float) -> None`.
-- ENSURES: Constructs a `CoqTokenizer` from `vocabulary_path`. Creates a `BiEncoder` model with an embedding layer sized to the vocabulary. Copies overlapping pretrained embeddings from CodeBERT for tokens that appear in both vocabularies (digits, punctuation, common words). Initializes remaining embeddings randomly (σ=0.02). Trains using masked contrastive loss. Saves the best checkpoint (by validation Recall@32) to `output_path`. The checkpoint includes the vocabulary path for reproducibility. Prints training metrics (loss, validation Recall@32) after each epoch. When `epoch_callback` is not `None`, invokes it after each epoch's validation with the epoch number and validation Recall@32; if the callback raises an exception, the training loop terminates and the exception propagates to the caller.
+- REQUIRES: `dataset` is a `TrainingDataset` with at least 1,000 training pairs (after sampling, if applied). `output_path` is a writable path. `vocabulary_path` points to a valid vocabulary JSON file (as produced by `VocabularyBuilder.build`). `hyperparams` has defaults as specified below. `sample` is `None` or a float in (0.0, 1.0]. `epoch_callback` is `None` or a callable `(epoch: int, val_recall: float) -> None`.
+- ENSURES: When `sample` is not `None`, randomly sub-samples the training split to `ceil(len(dataset.train) * sample)` pairs before training begins (validation and test splits are not affected). Constructs a `CoqTokenizer` from `vocabulary_path`. Creates a `BiEncoder` model with an embedding layer sized to the vocabulary. Copies overlapping pretrained embeddings from CodeBERT for tokens that appear in both vocabularies (digits, punctuation, common words). Initializes remaining embeddings randomly (σ=0.02). Trains using masked contrastive loss. Saves the best checkpoint (by validation Recall@32) to `output_path`. The checkpoint includes the vocabulary path for reproducibility. Prints training metrics (loss, validation Recall@32) after each epoch. When `epoch_callback` is not `None`, invokes it after each epoch's validation with the epoch number and validation Recall@32; if the callback raises an exception, the training loop terminates and the exception propagates to the caller.
 - On training completion: saves final checkpoint alongside best checkpoint.
 - On GPU OOM: raises `TrainingResourceError` with message suggesting batch size reduction.
 - When `vocabulary_path` is `None`: falls back to CodeBERT's default tokenizer and embedding layer (backward compatibility).
@@ -283,12 +283,12 @@ accessible_premises(theorem) = all premises defined in accessible_files(theorem)
 
 | Parameter | Default | Constraint |
 |-----------|---------|-----------|
-| `batch_size` | 256 | Must be positive |
-| `learning_rate` | 2e-5 | Must be positive |
+| `batch_size` | 128 | Must be positive |
+| `learning_rate` | 5e-5 | Must be positive |
 | `weight_decay` | 1e-2 | Must be non-negative |
 | `temperature` | 0.05 | Must be positive |
 | `hard_negatives_per_state` | 3 | Must be non-negative |
-| `max_seq_length` | 512 | Must be positive |
+| `max_seq_length` | 256 | Must be positive |
 | `max_epochs` | 20 | Must be positive |
 | `early_stopping_patience` | 3 | Must be positive |
 | `embedding_dim` | 768 | Fixed — not configurable |

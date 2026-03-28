@@ -576,12 +576,12 @@ class TestBiEncoderTrainerHyperparams:
     def test_default_hyperparameters(self):
         """spec §4.3: Verify default hyperparameter values."""
         trainer = BiEncoderTrainer()
-        assert trainer.hyperparams["batch_size"] == 256
-        assert trainer.hyperparams["learning_rate"] == 2e-5
+        assert trainer.hyperparams["batch_size"] == 128
+        assert trainer.hyperparams["learning_rate"] == 5e-5
         assert trainer.hyperparams["weight_decay"] == 1e-2
         assert trainer.hyperparams["temperature"] == 0.05
         assert trainer.hyperparams["hard_negatives_per_state"] == 3
-        assert trainer.hyperparams["max_seq_length"] == 512
+        assert trainer.hyperparams["max_seq_length"] == 256
         assert trainer.hyperparams["max_epochs"] == 20
         assert trainer.hyperparams["early_stopping_patience"] == 3
         assert trainer.hyperparams["embedding_dim"] == 768
@@ -688,7 +688,7 @@ class TestFineTuning:
         assert params["learning_rate"] == 5e-6
         assert params["max_epochs"] == 10
         # Other defaults remain from base
-        assert params["batch_size"] == 256
+        assert params["batch_size"] == 128
         assert params["temperature"] == 0.05
 
     def test_fine_tune_accepts_custom_overrides(self):
@@ -1075,6 +1075,96 @@ class TestInsufficientDataGuard:
         trainer = BiEncoderTrainer()
         with pytest.raises(InsufficientDataError):
             trainer.train(dataset, tmp_path / "model.pt")
+
+    def test_train_raises_on_too_few_pairs_after_sampling(self, tmp_path):
+        """spec §4.3: Minimum 1,000 pairs checked after sampling."""
+        dataset = TrainingDataset(
+            train=[("state", ["premise"]) for _ in range(2000)],
+            val=[],
+            test=[],
+            premise_corpus={},
+        )
+        trainer = BiEncoderTrainer()
+        # sample=0.1 → 200 pairs, below the 1,000 minimum
+        with pytest.raises(InsufficientDataError):
+            trainer.train(dataset, tmp_path / "model.pt", sample=0.1)
+
+
+class TestTrainSampleParameter:
+    """spec §4.3: --sample sub-samples the training split for test runs."""
+
+    def test_sample_reduces_training_pairs(self):
+        """sample=0.5 should halve the training set."""
+        original = [("state", ["premise"]) for _ in range(10000)]
+        dataset = TrainingDataset(
+            train=original,
+            val=[("v", ["p"])],
+            test=[("t", ["p"])],
+            premise_corpus={"premise": "stmt"},
+        )
+        trainer = BiEncoderTrainer()
+        with patch.object(trainer, "_train_impl") as mock_impl:
+            trainer.train(dataset, Path("/fake/out.pt"), sample=0.5)
+            called_dataset = mock_impl.call_args[0][0]
+            assert len(called_dataset.train) == 5000
+
+    def test_sample_does_not_affect_val_or_test(self):
+        """Validation and test splits are not affected by --sample."""
+        dataset = TrainingDataset(
+            train=[("state", ["premise"]) for _ in range(5000)],
+            val=[("v", ["p"]) for _ in range(500)],
+            test=[("t", ["p"]) for _ in range(500)],
+            premise_corpus={"premise": "stmt"},
+        )
+        trainer = BiEncoderTrainer()
+        with patch.object(trainer, "_train_impl") as mock_impl:
+            trainer.train(dataset, Path("/fake/out.pt"), sample=0.5)
+            called_dataset = mock_impl.call_args[0][0]
+            assert len(called_dataset.val) == 500
+            assert len(called_dataset.test) == 500
+
+    def test_sample_none_uses_full_dataset(self):
+        """sample=None uses the full training set."""
+        dataset = TrainingDataset(
+            train=[("state", ["premise"]) for _ in range(5000)],
+            val=[],
+            test=[],
+            premise_corpus={},
+        )
+        trainer = BiEncoderTrainer()
+        with patch.object(trainer, "_train_impl") as mock_impl:
+            trainer.train(dataset, Path("/fake/out.pt"), sample=None)
+            called_dataset = mock_impl.call_args[0][0]
+            assert len(called_dataset.train) == 5000
+
+    def test_sample_one_uses_full_dataset(self):
+        """sample=1.0 uses the full training set."""
+        dataset = TrainingDataset(
+            train=[("state", ["premise"]) for _ in range(5000)],
+            val=[],
+            test=[],
+            premise_corpus={},
+        )
+        trainer = BiEncoderTrainer()
+        with patch.object(trainer, "_train_impl") as mock_impl:
+            trainer.train(dataset, Path("/fake/out.pt"), sample=1.0)
+            called_dataset = mock_impl.call_args[0][0]
+            assert len(called_dataset.train) == 5000
+
+    def test_sample_rounds_up(self):
+        """sample should use ceil to avoid rounding to zero."""
+        dataset = TrainingDataset(
+            train=[("state", ["premise"]) for _ in range(3000)],
+            val=[],
+            test=[],
+            premise_corpus={},
+        )
+        trainer = BiEncoderTrainer()
+        # 0.5 * 3000 = 1500 — exact
+        with patch.object(trainer, "_train_impl") as mock_impl:
+            trainer.train(dataset, Path("/fake/out.pt"), sample=0.5)
+            called_dataset = mock_impl.call_args[0][0]
+            assert len(called_dataset.train) == 1500
 
 
 # ═══════════════════════════════════════════════════════════════════════════

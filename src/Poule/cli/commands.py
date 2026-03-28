@@ -799,18 +799,22 @@ def cmd_build_vocabulary(db: str, data: tuple[str, ...], output: str):
 @_db_option
 @click.argument("data", nargs=-1, required=True)
 @click.option("--output", required=True, type=click.Path(), help="Path for model checkpoint output.")
+@click.option("--vocabulary", default=None, type=click.Path(exists=True), help="Path to closed vocabulary JSON.")
 @click.option("--batch-size", default=None, type=int, help="Training batch size (default: 256).")
 @click.option("--learning-rate", default=None, type=float, help="Learning rate (default: 2e-5).")
 @click.option("--epochs", default=None, type=int, help="Max training epochs (default: 20).")
 @click.option("--patience", default=None, type=int, help="Early stopping patience (default: 3).")
+@click.option("--sample", default=None, type=float, help="Fraction of training data to use (0.0–1.0]. For test runs only.")
 def cmd_train(
     db: str,
     data: tuple[str, ...],
     output: str,
+    vocabulary: str | None,
     batch_size: int | None,
     learning_rate: float | None,
     epochs: int | None,
     patience: int | None,
+    sample: float | None,
 ):
     """Train a bi-encoder retrieval model from extracted proof trace data."""
     from Poule.neural.training.data import TrainingDataLoader
@@ -837,8 +841,9 @@ def cmd_train(
         hp["early_stopping_patience"] = patience
 
     try:
+        vocab_path = Path(vocabulary) if vocabulary else None
         trainer = BiEncoderTrainer()
-        trainer.train(dataset, Path(output), hyperparams=hp or None)
+        trainer.train(dataset, Path(output), vocabulary_path=vocab_path, hyperparams=hp or None, sample=sample)
     except InsufficientDataError as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)

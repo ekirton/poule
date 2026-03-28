@@ -96,7 +96,7 @@ At inference time, tokenization is a whitespace split followed by O(1) dictionar
 
 ## Step 4: Train the model
 
-Train a bi-encoder retrieval model from the extracted data. Requires a GPU (any 16GB+ for stdlib-only; 24GB recommended for larger corpora).
+Train a bi-encoder retrieval model from the extracted data. Runs on Apple Silicon (MPS) or NVIDIA GPU; 32GB unified memory or 16GB+ VRAM recommended.
 
 ```bash
 # Train with closed vocabulary
@@ -111,11 +111,22 @@ poule train \
   --vocabulary coq-vocabulary.json \
   --db index.db \
   --output model.pt \
-  --batch-size 256 \
-  --learning-rate 2e-5 \
-  --epochs 20 \
+  --batch-size 64 \
+  --learning-rate 1e-5 \
+  --epochs 10 \
+  training-data.jsonl
+
+# Quick end-to-end test (for testing only)
+poule train \
+  --vocabulary coq-vocabulary.json \
+  --db index.db \
+  --output model.pt \
+  --sample 0.1 \
+  --epochs 2 \
   training-data.jsonl
 ```
+
+The `--sample` flag randomly sub-samples the training split to the given fraction (e.g., `--sample 0.1` uses 10% of pairs). Validation and test splits are not affected. **This is for test runs only** — production models should train on the full dataset.
 
 Training details:
 - **Architecture**: ~98M parameter bi-encoder (CodeBERT 125M base with closed-vocabulary embedding layer, 768-dim embeddings, mean pooling)
@@ -126,11 +137,19 @@ Training details:
 - **Split**: Deterministic file-level split — position % 10 == 8 → validation, == 9 → test, rest → training. Prevents data leakage from related proofs in the same file
 - **Early stopping**: Halts when validation Recall@32 fails to improve for 3 consecutive epochs
 
-| Corpus size | GPU requirement | Estimated wall time | Estimated cost |
-|-------------|----------------|---------------------|----------------|
-| 10K pairs (stdlib only) | Any 16GB+ GPU | ~2 hours | <$10 |
-| 50K pairs (stdlib + MathComp) | 24GB GPU (A6000/4090) | ~8 hours | $50–100 |
-| 100K+ pairs (multi-project) | 24GB GPU (A6000/4090) | ~16 hours | $100–200 |
+Estimated wall time for a **single training run** on M2 Pro (32GB, MPS backend, FP32):
+
+| `--sample` | Training pairs | Estimated wall time |
+|------------|---------------|---------------------|
+| `0.01` | ~1,300 | ~15 min |
+| `0.05` | ~6,500 | ~1 hour |
+| `0.10` | ~13,000 | ~2 hours |
+| `0.25` | ~32,500 | ~5 hours |
+| `0.50` | ~65,000 | ~10 hours |
+| `0.75` | ~97,500 | ~15 hours |
+| *(none)* | ~130,000 | ~20 hours |
+
+Hyperparameter tuning (`poule tune`) runs 20 Optuna trials by default. With median pruning, roughly half the trials are killed early (after 3-4 epochs). The total cost is equivalent to approximately 8–12 full training runs.
 
 ## Step 5: Optimize RRF fusion parameters
 

@@ -9,6 +9,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
+from Poule.neural.training.data import TrainingDataset
 from Poule.neural.training.errors import (
     CheckpointNotFoundError,
     InsufficientDataError,
@@ -19,12 +20,12 @@ from Poule.neural.training.negatives import sample_hard_negatives
 logger = logging.getLogger(__name__)
 
 DEFAULT_HYPERPARAMS = {
-    "batch_size": 256,
-    "learning_rate": 2e-5,
+    "batch_size": 128,
+    "learning_rate": 5e-5,
     "weight_decay": 1e-2,
     "temperature": 0.05,
     "hard_negatives_per_state": 3,
-    "max_seq_length": 512,
+    "max_seq_length": 256,
     "max_epochs": 20,
     "early_stopping_patience": 3,
     "embedding_dim": 768,
@@ -276,16 +277,30 @@ class BiEncoderTrainer:
         output_path: Path,
         vocabulary_path: Path | None = None,
         hyperparams: dict | None = None,
+        sample: float | None = None,
         epoch_callback=None,
     ):
         """Train a bi-encoder from scratch.
 
-        spec §4.3: Requires at least 1,000 training pairs.
+        spec §4.3: Requires at least 1,000 training pairs (after sampling).
         When vocabulary_path is provided, uses the closed vocabulary
         tokenizer and reinitializes the embedding layer.
+        sample: optional float in (0.0, 1.0] — sub-samples the training
+        split to ceil(len * sample) pairs. Validation and test are not affected.
         epoch_callback: optional (epoch, val_recall) -> None, invoked
         after each epoch's validation. If it raises, training terminates.
         """
+        if sample is not None and sample < 1.0:
+            import math
+            n = math.ceil(len(dataset.train) * sample)
+            sampled_train = random.sample(dataset.train, n)
+            dataset = TrainingDataset(
+                train=sampled_train,
+                val=dataset.val,
+                test=dataset.test,
+                premise_corpus=dataset.premise_corpus,
+            )
+
         if len(dataset.train) < 1000:
             raise InsufficientDataError(
                 f"Training requires at least 1,000 pairs, got {len(dataset.train)}"
