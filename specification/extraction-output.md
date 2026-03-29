@@ -28,23 +28,43 @@ Define the serialization format for all extraction output types — ExtractionRe
 
 ### 4.1 Output Stream Structure
 
-The system shall write output as a single JSON Lines file with the following structure:
+The system shall write output as a single JSON Lines file in **compact training data format**:
 
-| Position | Record type | Cardinality |
-|----------|-------------|-------------|
-| First line | `campaign_metadata` | Exactly one |
-| Lines 2..N | `proof_trace`, `partial_proof_trace`, or `extraction_error` | Zero or more |
-| Last line | `extraction_summary` | Exactly one |
+| Position | Record type | Discriminator | Cardinality |
+|----------|-------------|---------------|-------------|
+| First line | `campaign_metadata` | `"record_type": "campaign_metadata"` | Exactly one |
+| Body lines | Pair records | `"t": "p"` | Zero or more (one per tactic step with premises) |
+| Body lines | Goal-state records | `"t": "g"` | Zero or more (supplementary states for vocabulary) |
+| Body lines | Extraction errors | `"record_type": "extraction_error"` | Zero or more |
+| Last line | `extraction_summary` | `"record_type": "extraction_summary"` | Exactly one |
 
-MAINTAINS: Every JSON object in the output contains a `record_type` field as a top-level string. Every JSON object contains a `schema_version` field as a top-level positive integer.
+Each pair record contains a serialized proof state, source file path, and the premises the tactic actually used (determined by proof term diffing). Goal-state records contain supplementary proof states not covered by any pair, for vocabulary construction.
 
-> **Given** a campaign that extracts 10 proofs with 2 failures
+MAINTAINS: Every JSON object in the output contains either a `"t"` field (compact records) or a `"record_type"` field (metadata/error/summary records).
+
+> **Given** a campaign that extracts 10 proofs (30 tactic steps total, 20 with premises) with 2 failures
 > **When** the output is written
-> **Then** the file contains exactly 14 lines: 1 metadata + 8 proof_trace + 2 extraction_error + 1 summary
+> **Then** the file contains: 1 metadata + 20 pair records + supplementary goal records + 2 extraction_error + 1 summary
 
 > **Given** a campaign with zero theorems found
 > **When** the output is written
 > **Then** the file contains exactly 2 lines: 1 metadata + 1 summary
+
+#### 4.1.1 Compact Pair Record
+
+| Field | JSON type | Description |
+|-------|-----------|-------------|
+| `t` | `"p"` | Record type discriminator |
+| `f` | string | Source file path (for file-level splitting) |
+| `s` | string | Serialized proof state (output of `serialize_goals`) |
+| `p` | array of string | Premise names actually used by this tactic step |
+
+#### 4.1.2 Compact Goal-State Record
+
+| Field | JSON type | Description |
+|-------|-----------|-------------|
+| `t` | `"g"` | Record type discriminator |
+| `s` | string | Serialized proof state |
 
 ### 4.2 CampaignMetadata Serialization
 

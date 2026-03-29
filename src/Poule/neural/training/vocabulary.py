@@ -147,6 +147,8 @@ class VocabularyBuilder:
         index_count = next_id - index_start
 
         # Step 4: Tokens from training data
+        # Reads "s" field from both "p" (pair) and "g" (goal-state) records
+        # in the compact training data format (spec §4.0.5).
         training_tokens: set[str] = set()
         for path in jsonl_paths:
             with open(path) as f:
@@ -159,15 +161,10 @@ class VocabularyBuilder:
                     except json.JSONDecodeError:
                         continue
 
-                    # Skip non-proof records
-                    if record.get("record_type") not in ("proof_trace", None):
-                        continue
-
-                    steps = record.get("steps", [])
-                    for step in steps:
-                        goals = step.get("goals", [])
-                        if goals:
-                            state_text = serialize_goals(goals)
+                    # Compact format: read "s" from "p" and "g" records
+                    if record.get("t") in ("p", "g"):
+                        state_text = record.get("s", "")
+                        if state_text:
                             for token in state_text.split():
                                 normalized = _nfc(token)
                                 if normalized not in vocab:

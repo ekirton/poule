@@ -12,15 +12,15 @@ AI researchers need two things from the same dataset: linearized proof traces fo
 
 ## Solution
 
-Each proof produces one record containing:
+The extraction pipeline produces **compact training data** in JSON Lines format. Each line is a self-contained record in one of these types:
 
-- **Theorem identity** — fully qualified name and source file path
-- **Per-step proof states** — goals, hypotheses, and local context at every tactic step (N+1 states for N tactics)
-- **Per-step tactic text** — the tactic applied at each step
-- **Per-step premise annotations** — which lemmas, hypotheses, constructors, and definitions each tactic used, with fully qualified names and kinds
-- **Proof state diffs** (P1) — what changed between consecutive states, alongside full snapshots
+- **Pair record** (`"t": "p"`) — one per tactic step that used premises: serialized proof state, source file path, and the premises the tactic actually used (determined by proof term analysis)
+- **Goal-state record** (`"t": "g"`) — supplementary serialized proof states not covered by any pair, for vocabulary construction
+- **Metadata/error/summary records** — provenance, extraction errors, and campaign statistics (passed through unchanged)
 
-The output uses JSON Lines format: one JSON object per line, one proof per record. Each record includes a schema version field. The dataset includes provenance metadata: Coq version, project commit hash, extraction tool version, and extraction timestamp.
+This compact format replaces the original full proof trace format. The extraction pipeline writes compact records directly — no post-processing step is needed. Each training pair is typically 200-500 bytes, making the output several orders of magnitude smaller than full proof traces.
+
+The dataset includes provenance metadata: Coq version, project commit hash, extraction tool version, and extraction timestamp.
 
 ## Design Rationale
 

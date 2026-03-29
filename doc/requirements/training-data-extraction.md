@@ -64,8 +64,8 @@ Cross-references:
 | ID | Requirement |
 |----|-------------|
 | R3-P0-1 | Process a Coq project directory and extract proof traces for all provable theorems, producing one structured record per proof |
-| R3-P0-2 | Each proof trace record includes: theorem name (fully qualified), source file path, per-step proof states (goals, hypotheses, local context), per-step tactic text, and per-step premise annotations (which lemmas, hypotheses, constructors, and definitions each tactic used) |
-| R3-P0-3 | Output extraction results in JSON Lines format (one JSON object per line, one proof per record) with a declared schema version |
+| R3-P0-2 | Each extracted training pair includes: serialized proof state (goals, hypotheses), per-step premise annotations (which lemmas and definitions each tactic actually used, determined by proof term analysis), and source file path for split assignment |
+| R3-P0-3 | Output extraction results in compact training data JSON Lines format: one pair per line with source file, serialized proof state, and used premises. Metadata and error records are included for provenance |
 | R3-P0-4 | Identical inputs produce byte-identical output across runs (deterministic extraction) |
 | R3-P0-5 | When a single proof fails to extract, skip it with a structured error record and continue extracting remaining proofs in the file and project (graceful degradation) |
 | R3-P0-6 | Report extraction summary statistics after each run: total theorems found, successfully extracted, failed, and skipped, with per-file breakdown |

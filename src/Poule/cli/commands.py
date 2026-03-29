@@ -998,6 +998,30 @@ def cmd_quantize(checkpoint: str, output: str):
 
 
 # ---------------------------------------------------------------------------
+# convert-training-data
+# ---------------------------------------------------------------------------
+
+
+@cli.command("convert-training-data")
+@click.argument("data", nargs=-1, required=True)
+@click.option("--output", required=True, type=click.Path(), help="Path for compact training data output.")
+def cmd_convert_training_data(data: tuple[str, ...], output: str):
+    """Convert full proof-trace JSONL to compact training data format."""
+    from Poule.neural.training.data import convert_training_data
+
+    jsonl_paths = _validate_input_files(data)
+
+    click.echo("Converting training data...", err=True)
+    report = convert_training_data(jsonl_paths, Path(output))
+    click.echo(
+        f"  Pairs: {report['pairs']:,}  Goals: {report['goals']:,}  "
+        f"Other: {report['other']:,}",
+        err=True,
+    )
+    click.echo(f"  Output: {output}", err=True)
+
+
+# ---------------------------------------------------------------------------
 # validate-training-data
 # ---------------------------------------------------------------------------
 

@@ -86,7 +86,7 @@ Read all rows from the `declarations` table. For each declaration, the `name` fi
 
 #### Token extraction from training data
 
-Scan each ExtractionRecord in the JSONL files. For each record, iterate over all steps. For each step, serialize the goals (same serialization as TrainingDataLoader) and split the serialized text on whitespace. Each unique token that is not already in the vocabulary is added.
+Scan the compact training data JSONL files. For each `"p"` and `"g"` record, read the `"s"` field and split on whitespace. Each unique token that is not already in the vocabulary is added.
 
 This captures hypothesis variable names (`n`, `m`, `H`, `H0`, `x`, `y`, `IHn'`) and type expressions that appear in proof states.
 
@@ -195,24 +195,60 @@ A lightweight tokenizer that performs whitespace splitting and dictionary lookup
 > **When** `encode_batch(["a b", "x"], max_length=512)` is called
 > **Then** `input_ids` has shape `(2, 4)` — both padded to length 4 (CLS + 2 tokens + SEP for the longer one)
 
+### 4.0.5 Compact Training Data Format
+
+Training data files use a compact JSONL format with two record types. Each line is a JSON object with a `"t"` key discriminating the type:
+
+**Pair record** (`"t": "p"`): A training pair with source file, serialized proof state, and premise names.
+```json
+{"t":"p","f":"Stdlib.Init.Nat","s":"n : nat\nn + 0 = n","p":["Nat.add_0_r"]}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `t` | `"p"` | Record type discriminator |
+| `f` | string | Source file path (for file-level splitting) |
+| `s` | string | Serialized proof state (output of `serialize_goals`) |
+| `p` | list[string] | Premise names (hypothesis-kind already filtered) |
+
+**Goal-state record** (`"t": "g"`): A supplementary serialized proof state not covered by any pair record. These exist so that the vocabulary builder can scan all step goals, including goals from final proof steps that have no following premises.
+```json
+{"t":"g","s":"forall n : nat, n + 0 = n"}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `t` | `"g"` | Record type discriminator |
+| `s` | string | Serialized proof state |
+
+Records with `"record_type"` (e.g., `campaign_metadata`, `extraction_summary`, `extraction_error`) are passed through unchanged for provenance.
+
+#### convert_training_data(jsonl_paths, output_path)
+
+- REQUIRES: `jsonl_paths` is a non-empty list of paths to full proof-trace JSONL files (as produced by the extraction pipeline). `output_path` is a writable path.
+- ENSURES: Reads each JSONL file, extracts training pairs and supplementary goal states, writes compact format to `output_path`. Non-proof records (`campaign_metadata`, `extraction_summary`, `extraction_error`) are passed through unchanged. Returns a report with counts of pairs, goal-states, and pass-through records written.
+
+For each proof-trace record:
+1. Extract pairs using the same logic as §4.1 pair extraction
+2. Write each pair as a `"p"` record
+3. For each step in the record, serialize goals. If the state text was not already emitted as part of a pair for this record, write a `"g"` record
+
 ### 4.1 TrainingDataLoader
 
 #### load(jsonl_paths, index_db_path)
 
-- REQUIRES: `jsonl_paths` is a non-empty list of paths to JSON Lines extraction output files. `index_db_path` points to a valid index database containing the premise corpus.
-- ENSURES: Returns a `TrainingDataset` containing all valid `(proof_state_text, premises_used_names)` pairs, the premise corpus (from the index database), and train/validation/test splits.
+- REQUIRES: `jsonl_paths` is a non-empty list of paths to compact training data JSONL files (as produced by `convert_training_data` or the extraction pipeline). `index_db_path` points to a valid index database containing the premise corpus.
+- ENSURES: Returns a `TrainingDataset` containing all valid `(proof_state_text, premises_used_names)` pairs from `"p"` records, the premise corpus (from the index database), and train/validation/test splits.
 
 #### Pair extraction
 
-Each ExtractionStep contains the proof state (goals, hypotheses) *after* the step's tactic was applied, plus the premises used by that tactic. Step 0 is the initial state with no tactic. The training pair for a tactic at step k uses the proof state from step k-1 (the state before the tactic) paired with the premises from step k:
+Each `"p"` record in the compact JSONL contains a pre-extracted training pair:
 
 ```
-For each ExtractionRecord in the JSONL files:
-    For step_index k = 1 to len(record.steps) - 1:
-        state_text = serialize_goals(record.steps[k-1].goals)
-        premises = [p.name for p in record.steps[k].premises if p.kind != "hypothesis"]
-        If len(premises) > 0:
-            Emit (state_text, premises)
+For each line in the JSONL files:
+    record = json.loads(line)
+    If record["t"] == "p":
+        Emit (record["s"], record["p"]) grouped by record["f"]
 ```
 
 **Proof state serialization** (`serialize_goals`): The goal list shall be serialized to a single text string. For each goal, format as: all hypotheses (each as `name : type`), then the goal type, separated by newlines. Multiple goals are separated by a blank line. This produces deterministic, human-readable text suitable as encoder input.

@@ -51,44 +51,22 @@ class TrainingDataValidator:
                         malformed_pairs += 1
                         continue
 
-                    # Skip non-proof records
-                    if record.get("record_type") not in ("proof_trace", None):
-                        continue
-
-                    steps = record.get("steps", [])
-
-                    # Process pairs: goals from step k-1, premises from step k
-                    for k in range(1, len(steps)):
-                        prev_step = steps[k - 1]
-                        curr_step = steps[k]
-
-                        # Check for required fields
-                        prev_goals = prev_step.get("goals")
-                        raw_premises = curr_step.get("premises")
-
-                        if prev_goals is None or raw_premises is None:
-                            malformed_pairs += 1
-                            continue
-
-                        # Extract premise names (handle both structured and plain formats)
-                        premise_names = []
-                        for p in raw_premises:
-                            if isinstance(p, dict):
-                                name = p.get("name")
-                                if name and p.get("kind") != "hypothesis":
-                                    premise_names.append(name)
-                            elif isinstance(p, str):
-                                premise_names.append(p)
-
-                        if len(premise_names) == 0:
+                    # Compact format: "p" records are pre-extracted pairs
+                    if record.get("t") == "p":
+                        state_text = record.get("s", "")
+                        premise_names = record.get("p", [])
+                        if not premise_names:
                             empty_premise_pairs += 1
                             continue
-
                         total_pairs += 1
-                        state_text = serialize_goals(prev_goals)
                         all_states.add(state_text)
                         for p in premise_names:
                             all_premises[p] += 1
+                        continue
+
+                    # Skip non-pair compact records ("g", metadata, etc.)
+                    if record.get("t") == "g" or "record_type" in record:
+                        continue
 
         # Compute warnings
         warnings: list[str] = []

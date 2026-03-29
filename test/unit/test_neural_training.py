@@ -28,6 +28,7 @@ import pytest
 from Poule.neural.training.data import (
     TrainingDataLoader,
     TrainingDataset,
+    convert_training_data,
     serialize_goals,
 )
 from Poule.neural.training.negatives import sample_hard_negatives
@@ -218,8 +219,7 @@ class TestPairExtraction:
                 ("apply Nat.add_comm.", "", [("Nat.add_comm", "lemma")]),
             ],
         )
-        jsonl_path = tmp_path / "data.jsonl"
-        _write_jsonl(jsonl_path, [record])
+        jsonl_path = _write_full_and_convert(tmp_path, [record])
 
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, [
@@ -252,8 +252,7 @@ class TestPairExtraction:
                 ("reflexivity.", "", []),
             ],
         )
-        jsonl_path = tmp_path / "data.jsonl"
-        _write_jsonl(jsonl_path, [record])
+        jsonl_path = _write_full_and_convert(tmp_path, [record])
 
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path)
@@ -272,8 +271,7 @@ class TestPairExtraction:
                            [_make_premise("P", "lemma")]),
             ],
         )
-        jsonl_path = tmp_path / "data.jsonl"
-        _write_jsonl(jsonl_path, [record])
+        jsonl_path = _write_full_and_convert(tmp_path, [record])
 
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, [(1, "P", "stmt", "mod")])
@@ -288,16 +286,14 @@ class TestPairExtraction:
 
     def test_handles_multiple_jsonl_files(self, tmp_path):
         """spec §4.1: load accepts a list of JSONL paths."""
-        file1 = tmp_path / "a.jsonl"
-        file2 = tmp_path / "b.jsonl"
-        _write_jsonl(file1, [
+        file1 = _write_full_and_convert(tmp_path, [
             _make_simple_proof("FileA", "goal_a",
                                [("t1.", "g1", [("P1", "lemma")])]),
-        ])
-        _write_jsonl(file2, [
+        ], name="a")
+        file2 = _write_full_and_convert(tmp_path, [
             _make_simple_proof("FileB", "goal_b",
                                [("t2.", "g2", [("P2", "lemma")])]),
-        ])
+        ], name="b")
 
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, [
@@ -326,8 +322,7 @@ class TestPairExtraction:
             _make_step(5, "t5.", [_make_goal("g5")], []),  # empty
         ]
         record = _make_extraction_record("Stdlib.Init.Nat", steps)
-        jsonl_path = tmp_path / "data.jsonl"
-        _write_jsonl(jsonl_path, [record])
+        jsonl_path = _write_full_and_convert(tmp_path, [record])
 
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, [
@@ -359,8 +354,7 @@ class TestHypothesisFiltering:
                 ]),
             ],
         )
-        jsonl_path = tmp_path / "data.jsonl"
-        _write_jsonl(jsonl_path, [record])
+        jsonl_path = _write_full_and_convert(tmp_path, [record])
 
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, [
@@ -386,8 +380,7 @@ class TestHypothesisFiltering:
                 ]),
             ],
         )
-        jsonl_path = tmp_path / "data.jsonl"
-        _write_jsonl(jsonl_path, [record])
+        jsonl_path = _write_full_and_convert(tmp_path, [record])
 
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path)
@@ -405,8 +398,7 @@ class TestHypothesisFiltering:
                 ("t1.", "g1", [("L", "lemma"), ("D", "definition"), ("C", "constructor")]),
             ],
         )
-        jsonl_path = tmp_path / "data.jsonl"
-        _write_jsonl(jsonl_path, [record])
+        jsonl_path = _write_full_and_convert(tmp_path, [record])
 
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, [
@@ -430,14 +422,13 @@ class TestFileLevelSplit:
 
     def test_split_positions_for_10_files(self, tmp_path):
         """spec §4.1: position % 10 == 8 → val, == 9 → test, else → train."""
-        jsonl_path = tmp_path / "data.jsonl"
         records = []
         for i in range(10):
             records.append(_make_simple_proof(
                 f"file_{i:02d}", f"goal_{i}",
                 [(f"t{i}.", f"g{i}", [(f"premise_{i}", "lemma")])],
             ))
-        _write_jsonl(jsonl_path, records)
+        jsonl_path = _write_full_and_convert(tmp_path, records)
 
         db_path = tmp_path / "index.db"
         decls = [(i + 1, f"premise_{i}", f"stmt_{i}", f"file_{i:02d}") for i in range(10)]
@@ -452,14 +443,13 @@ class TestFileLevelSplit:
 
     def test_split_positions_for_100_files(self, tmp_path):
         """spec §4.1: Given 100 files, indices 8,18,28,...→val; 9,19,29,...→test."""
-        jsonl_path = tmp_path / "data.jsonl"
         records = []
         for i in range(100):
             records.append(_make_simple_proof(
                 f"file_{i:03d}", f"goal_{i}",
                 [(f"t{i}.", f"g{i}", [(f"premise_{i}", "lemma")])],
             ))
-        _write_jsonl(jsonl_path, records)
+        jsonl_path = _write_full_and_convert(tmp_path, records)
 
         db_path = tmp_path / "index.db"
         decls = [(i + 1, f"premise_{i}", f"stmt_{i}", f"file_{i:03d}") for i in range(100)]
@@ -473,7 +463,6 @@ class TestFileLevelSplit:
 
     def test_no_pair_in_multiple_splits(self, tmp_path):
         """spec §4.1 MAINTAINS: No pair from same file in more than one split."""
-        jsonl_path = tmp_path / "data.jsonl"
         records = []
         for i in range(20):
             # Multiple tactic steps per proof
@@ -484,7 +473,7 @@ class TestFileLevelSplit:
                     (f"t{i}b.", f"gb_{i}", [(f"premise_{i}", "lemma")]),
                 ],
             ))
-        _write_jsonl(jsonl_path, records)
+        jsonl_path = _write_full_and_convert(tmp_path, records)
 
         db_path = tmp_path / "index.db"
         decls = [(i + 1, f"premise_{i}", f"stmt_{i}", f"file_{i:02d}") for i in range(20)]
@@ -502,13 +491,12 @@ class TestFileLevelSplit:
 
     def test_split_is_deterministic(self, tmp_path):
         """Split should be identical across two calls with the same data."""
-        jsonl_path = tmp_path / "data.jsonl"
         records = [
             _make_simple_proof(f"file_{i:02d}", f"g{i}",
                                [(f"t{i}.", f"ga{i}", [(f"p{i}", "lemma")])])
             for i in range(15)
         ]
-        _write_jsonl(jsonl_path, records)
+        jsonl_path = _write_full_and_convert(tmp_path, records)
 
         db_path = tmp_path / "index.db"
         decls = [(i + 1, f"p{i}", f"stmt_{i}", f"file_{i:02d}") for i in range(15)]
@@ -888,31 +876,27 @@ class TestTrainingDataValidator:
 
     def test_report_fields(self, tmp_path):
         """spec §4.7: ValidationReport has all specified fields."""
-        jsonl_path = tmp_path / "data.jsonl"
         record = self._make_validator_record("file_a", [
             ([_make_goal("g1")], [_make_premise("P1"), _make_premise("P2")]),
             ([_make_goal("g2")], []),  # empty premises
             ([_make_goal("g3")], [_make_premise("P1")]),
         ])
-        _write_jsonl(jsonl_path, [record])
+        jsonl_path = _write_full_and_convert(tmp_path, [record])
 
         report = TrainingDataValidator.validate([jsonl_path])
 
+        # Compact format: empty-premise steps are filtered during conversion
         assert report.total_pairs == 2
-        assert report.empty_premise_pairs == 1
+        assert report.empty_premise_pairs == 0
         assert isinstance(report.malformed_pairs, int)
         assert isinstance(report.unique_premises, int)
         assert isinstance(report.unique_states, int)
         assert isinstance(report.top_premises, list)
         assert isinstance(report.warnings, list)
 
-    def test_warning_over_10_pct_empty(self, tmp_path):
-        """spec §4.7: Warning when empty / (total + empty) > 0.10.
-
-        9 non-empty + 2 empty = 11 total steps.
-        2 / 11 ≈ 18% > 10%.
-        """
-        jsonl_path = tmp_path / "data.jsonl"
+    def test_no_empty_premise_warning_in_compact_format(self, tmp_path):
+        """Compact format: empty-premise steps are filtered during conversion,
+        so the validator never sees them and no empty-premise warning fires."""
         step_data = [
             ([_make_goal(f"g{i}")], [_make_premise(f"P{i}")]) for i in range(9)
         ] + [
@@ -920,31 +904,19 @@ class TestTrainingDataValidator:
             ([_make_goal("empty2")], []),
         ]
         records = [self._make_validator_record("file_a", step_data)]
-        _write_jsonl(jsonl_path, records)
+        jsonl_path = _write_full_and_convert(tmp_path, records)
 
         report = TrainingDataValidator.validate([jsonl_path])
-        assert any("empty premise" in w.lower() for w in report.warnings)
-
-    def test_no_warning_when_empty_below_threshold(self, tmp_path):
-        """No warning when empty rate <= 10%."""
-        jsonl_path = tmp_path / "data.jsonl"
-        step_data = [
-            ([_make_goal(f"g{i}")], [_make_premise(f"P{i}")]) for i in range(95)
-        ] + [([_make_goal("empty1")], [])]
-        records = [self._make_validator_record("file_a", step_data)]
-        _write_jsonl(jsonl_path, records)
-
-        report = TrainingDataValidator.validate([jsonl_path])
+        # Only 9 pairs survive conversion (2 empty-premise steps filtered out)
+        assert report.total_pairs == 9
+        assert report.empty_premise_pairs == 0
         assert not any("empty premise" in w.lower() for w in report.warnings)
 
     def test_warning_malformed_pairs(self, tmp_path):
         """spec §4.7: Warning when malformed_pairs > 0."""
         jsonl_path = tmp_path / "data.jsonl"
-        record = self._make_validator_record("file_a", [
-            ([_make_goal("g1")], [_make_premise("P1")]),
-        ])
         with open(jsonl_path, "w") as f:
-            f.write(json.dumps(record) + "\n")
+            f.write(json.dumps({"t": "p", "f": "file_a", "s": "g1", "p": ["P1"]}) + "\n")
             f.write("not valid json\n")
 
         report = TrainingDataValidator.validate([jsonl_path])
@@ -953,26 +925,24 @@ class TestTrainingDataValidator:
 
     def test_warning_too_few_pairs(self, tmp_path):
         """spec §4.7: Warning when total_pairs < 5000."""
-        jsonl_path = tmp_path / "data.jsonl"
         records = [
             self._make_validator_record(f"file_{i}", [
                 ([_make_goal(f"g{i}")], [_make_premise(f"P{i}")]),
             ]) for i in range(100)
         ]
-        _write_jsonl(jsonl_path, records)
+        jsonl_path = _write_full_and_convert(tmp_path, records)
 
         report = TrainingDataValidator.validate([jsonl_path])
         assert any("training pairs" in w.lower() for w in report.warnings)
 
     def test_warning_too_few_unique_premises(self, tmp_path):
         """spec §4.7: Warning when unique_premises < 1000."""
-        jsonl_path = tmp_path / "data.jsonl"
         records = [
             self._make_validator_record(f"file_{i}", [
                 ([_make_goal(f"g{i}")], [_make_premise("CommonPremise")]),
             ]) for i in range(100)
         ]
-        _write_jsonl(jsonl_path, records)
+        jsonl_path = _write_full_and_convert(tmp_path, records)
 
         report = TrainingDataValidator.validate([jsonl_path])
         assert any("unique premises" in w.lower() for w in report.warnings)
@@ -990,21 +960,20 @@ class TestTrainingDataValidator:
                 f"file_{i:03d}",
                 [([_make_goal(f"g{i}")], premises)],
             ))
-        _write_jsonl(jsonl_path, records)
+        jsonl_path = _write_full_and_convert(tmp_path, records)
 
         report = TrainingDataValidator.validate([jsonl_path])
         assert any("DominantPremise" in w for w in report.warnings)
 
     def test_top_premises_returns_10(self, tmp_path):
         """spec §4.7: top_premises contains 10 most frequently referenced premises."""
-        jsonl_path = tmp_path / "data.jsonl"
         records = []
         for i in range(50):
             records.append(self._make_validator_record(
                 f"file_{i:03d}",
                 [([_make_goal(f"g{i}")], [_make_premise(f"premise_{i % 15}")])],
             ))
-        _write_jsonl(jsonl_path, records)
+        jsonl_path = _write_full_and_convert(tmp_path, records)
 
         report = TrainingDataValidator.validate([jsonl_path])
         assert len(report.top_premises) <= 10
@@ -1383,20 +1352,12 @@ class TestVocabularyBuilderTrainingDataExtraction:
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, [(1, "Nat.add", "stmt", "Stdlib.Init.Nat")])
 
-        record = _make_simple_proof(
-            "Stdlib.Init.Nat",
-            "forall n : nat, n + 0 = n",
-            [
-                ("intros n.", "n + 0 = n", [("Nat.add", "lemma")]),
-            ],
-        )
-        # Add hypotheses to step 0
-        record["steps"][0]["goals"][0]["hypotheses"] = [
-            _make_hypothesis("myvar", "nat"),
-            _make_hypothesis("H_special", "myvar > 0"),
-        ]
+        # Compact format: "s" contains the serialized proof state text
+        # that serialize_goals would produce, with hypothesis names as tokens.
         jsonl_path = tmp_path / "data.jsonl"
-        _write_jsonl(jsonl_path, [record])
+        _write_jsonl(jsonl_path, [
+            {"t": "p", "f": "Stdlib.Init.Nat", "s": "myvar : nat\nH_special : myvar > 0\nforall n : nat, n + 0 = n", "p": ["Nat.add"]},
+        ])
         output_path = tmp_path / "vocab.json"
 
         VocabularyBuilder.build(db_path, [jsonl_path], output_path)
@@ -1411,15 +1372,10 @@ class TestVocabularyBuilderTrainingDataExtraction:
         _make_minimal_index_db(db_path, [(1, "nat", "stmt", "Stdlib.Init")])
 
         # "nat" appears both in the index and in proof state text
-        record = _make_simple_proof(
-            "Stdlib.Init.Nat",
-            "forall n : nat, n = n",
-            [
-                ("reflexivity.", "", [("nat", "definition")]),
-            ],
-        )
         jsonl_path = tmp_path / "data.jsonl"
-        _write_jsonl(jsonl_path, [record])
+        _write_jsonl(jsonl_path, [
+            {"t": "p", "f": "Stdlib.Init.Nat", "s": "forall n : nat, n = n", "p": ["nat"]},
+        ])
         output_path = tmp_path / "vocab.json"
 
         VocabularyBuilder.build(db_path, [jsonl_path], output_path)
@@ -1434,20 +1390,12 @@ class TestVocabularyBuilderTrainingDataExtraction:
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, [(1, "X.y", "stmt", "X")])
 
-        record = _make_simple_proof(
-            "X",
-            "forall zebra : animal, True",
-            [
-                ("auto.", "", [("X.y", "lemma")]),
-            ],
-        )
-        # Modify goals to include specific hypothesis names
-        record["steps"][0]["goals"][0]["hypotheses"] = [
-            _make_hypothesis("zebra", "animal"),
-            _make_hypothesis("alpha_var", "nat"),
-        ]
+        # Compact format: "s" contains hypothesis names and goal type as tokens.
+        # serialize_goals would produce "zebra : animal\nalpha_var : nat\nforall zebra : animal, True"
         jsonl_path = tmp_path / "data.jsonl"
-        _write_jsonl(jsonl_path, [record])
+        _write_jsonl(jsonl_path, [
+            {"t": "p", "f": "X", "s": "zebra : animal\nalpha_var : nat\nforall zebra : animal, True", "p": ["X.y"]},
+        ])
         output_path = tmp_path / "vocab.json"
 
         VocabularyBuilder.build(db_path, [jsonl_path], output_path)
@@ -1459,17 +1407,13 @@ class TestVocabularyBuilderTrainingDataExtraction:
             assert vocab["alpha_var"] < vocab["zebra"]
 
     def test_skips_non_proof_trace_records(self, tmp_path):
-        """spec §4.0: Non-proof records (metadata, summary) are skipped."""
+        """spec §4.0: Non-pair/goal records (metadata, summary) are skipped."""
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, [(1, "X.y", "stmt", "X")])
 
         records = [
             {"record_type": "campaign_metadata", "coq_version": "8.18"},
-            _make_simple_proof(
-                "X",
-                "True",
-                [("auto.", "", [("X.y", "lemma")])],
-            ),
+            {"t": "p", "f": "X", "s": "True", "p": ["X.y"]},
             {"record_type": "extraction_summary", "found": 1, "extracted": 1},
         ]
         jsonl_path = tmp_path / "data.jsonl"
@@ -1571,16 +1515,12 @@ class TestVocabularyBuilderReport:
         db_path = tmp_path / "index.db"
         _make_minimal_index_db(db_path, declarations)
 
-        record = _make_simple_proof(
-            "Stdlib.Init.Nat",
-            "forall n : nat, True",
-            [("auto.", "", [("Nat.add", "lemma")])],
-        )
-        record["steps"][0]["goals"][0]["hypotheses"] = [
-            _make_hypothesis("unique_test_var", "nat"),
-        ]
+        # Compact format: "s" contains tokens that serialize_goals would produce.
+        # "unique_test_var" must appear as a token the vocab builder can discover.
         jsonl_path = tmp_path / "data.jsonl"
-        _write_jsonl(jsonl_path, [record])
+        _write_jsonl(jsonl_path, [
+            {"t": "p", "f": "Stdlib.Init.Nat", "s": "unique_test_var : nat\nforall n : nat, True", "p": ["Nat.add"]},
+        ])
         output_path = tmp_path / "vocab.json"
 
         report = VocabularyBuilder.build(db_path, [jsonl_path], output_path)
@@ -1866,3 +1806,235 @@ class TestCoqTokenizerIntegration:
         ids, _ = tok.encode("Nat.add nat", max_length=10)
         assert ids[1] != tok.unk_token_id  # Nat.add known
         assert ids[2] != tok.unk_token_id  # nat known
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Compact Training Data Format (spec §4.0.5)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _write_full_and_convert(tmp_path, records, name="data"):
+    """Write full JSONL records and convert to compact format.
+
+    Returns the compact JSONL path for use with TrainingDataLoader.load().
+    """
+    full_path = tmp_path / f"{name}_full.jsonl"
+    compact_path = tmp_path / f"{name}.jsonl"
+    _write_jsonl(full_path, records)
+    convert_training_data([full_path], compact_path)
+    return compact_path
+
+
+def _write_compact_jsonl(path, pairs, goals=None):
+    """Write compact training data JSONL with pair and goal records."""
+    with open(path, "w") as f:
+        for source_file, state_text, premises in pairs:
+            f.write(json.dumps(
+                {"t": "p", "f": source_file, "s": state_text, "p": premises},
+                ensure_ascii=False,
+            ) + "\n")
+        for state_text in (goals or []):
+            f.write(json.dumps(
+                {"t": "g", "s": state_text},
+                ensure_ascii=False,
+            ) + "\n")
+
+
+class TestConvertTrainingData:
+    """spec §4.0.5: convert_training_data extracts pairs from full JSONL."""
+
+    def test_extracts_pairs(self, tmp_path):
+        """Pairs are extracted from proof trace records."""
+        record = _make_simple_proof("file_a.v", "A", [
+            ("apply H", "B", [("lem1", "lemma")]),
+        ])
+        full_path = tmp_path / "full.jsonl"
+        _write_jsonl(full_path, [record])
+        out_path = tmp_path / "compact.jsonl"
+
+        report = convert_training_data([full_path], out_path)
+
+        assert report["pairs"] >= 1
+        lines = out_path.read_text().strip().split("\n")
+        pair_lines = [json.loads(l) for l in lines if json.loads(l).get("t") == "p"]
+        assert len(pair_lines) == 1
+        assert pair_lines[0]["f"] == "file_a.v"
+        assert pair_lines[0]["p"] == ["lem1"]
+
+    def test_supplementary_goal_states(self, tmp_path):
+        """Final step goals not in any pair are written as 'g' records."""
+        record = _make_simple_proof("file_a.v", "A", [
+            ("apply H", "B", [("lem1", "lemma")]),
+        ])
+        full_path = tmp_path / "full.jsonl"
+        _write_jsonl(full_path, [record])
+        out_path = tmp_path / "compact.jsonl"
+
+        convert_training_data([full_path], out_path)
+
+        lines = out_path.read_text().strip().split("\n")
+        goal_lines = [json.loads(l) for l in lines if json.loads(l).get("t") == "g"]
+        # The last step's goal "B" is not covered by any pair's state_text
+        assert any(g["s"] == "B" for g in goal_lines)
+
+    def test_passthrough_metadata(self, tmp_path):
+        """campaign_metadata and extraction_summary are passed through."""
+        metadata = {"record_type": "campaign_metadata", "tool": "test"}
+        summary = {"record_type": "extraction_summary", "total": 1}
+        record = _make_simple_proof("file_a.v", "A", [
+            ("apply H", "B", [("lem1", "lemma")]),
+        ])
+        full_path = tmp_path / "full.jsonl"
+        _write_jsonl(full_path, [metadata, record, summary])
+        out_path = tmp_path / "compact.jsonl"
+
+        convert_training_data([full_path], out_path)
+
+        lines = [json.loads(l) for l in out_path.read_text().strip().split("\n")]
+        meta_lines = [l for l in lines if l.get("record_type") == "campaign_metadata"]
+        summ_lines = [l for l in lines if l.get("record_type") == "extraction_summary"]
+        assert len(meta_lines) == 1
+        assert len(summ_lines) == 1
+
+    def test_filters_hypotheses(self, tmp_path):
+        """Hypothesis-kind premises are excluded from pairs."""
+        steps = [
+            _make_step(0, None, [_make_goal("A")]),
+            _make_step(1, "apply", [_make_goal("B")], [
+                _make_premise("H", "hypothesis"),
+                _make_premise("lem1", "lemma"),
+            ]),
+        ]
+        record = _make_extraction_record("file_a.v", steps)
+        full_path = tmp_path / "full.jsonl"
+        _write_jsonl(full_path, [record])
+        out_path = tmp_path / "compact.jsonl"
+
+        convert_training_data([full_path], out_path)
+
+        lines = [json.loads(l) for l in out_path.read_text().strip().split("\n")]
+        pair_lines = [l for l in lines if l.get("t") == "p"]
+        assert pair_lines[0]["p"] == ["lem1"]
+
+
+class TestLoadCompactFormat:
+    """spec §4.1: TrainingDataLoader.load reads compact training data."""
+
+    def test_loads_pairs(self, tmp_path):
+        """Pairs from compact JSONL are loaded into the dataset."""
+        pairs = [
+            ("file_a.v", "state1", ["lem1"]),
+            ("file_a.v", "state2", ["lem2"]),
+        ]
+        data_path = tmp_path / "data.jsonl"
+        _write_compact_jsonl(data_path, pairs)
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "lem1", "stmt1", "Mod")])
+
+        dataset = TrainingDataLoader.load([data_path], db_path)
+
+        total = len(dataset.train) + len(dataset.val) + len(dataset.test)
+        assert total == 2
+
+    def test_file_level_split(self, tmp_path):
+        """File-level split assigns pairs by source_file position % 10."""
+        # Create pairs across 10 distinct files to cover all split positions
+        pairs = []
+        for i in range(10):
+            pairs.append((f"file_{i:02d}.v", f"state_{i}", [f"lem_{i}"]))
+        data_path = tmp_path / "data.jsonl"
+        _write_compact_jsonl(data_path, pairs)
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "lem_0", "s", "M")])
+
+        dataset = TrainingDataLoader.load([data_path], db_path)
+
+        # position % 10 == 8 → val, == 9 → test, rest → train
+        assert len(dataset.val) == 1
+        assert len(dataset.test) == 1
+        assert len(dataset.train) == 8
+
+    def test_ignores_goal_records(self, tmp_path):
+        """'g' records are ignored by the data loader (only 'p' matters)."""
+        pairs = [("file_a.v", "state1", ["lem1"])]
+        goals = ["extra_goal_state"]
+        data_path = tmp_path / "data.jsonl"
+        _write_compact_jsonl(data_path, pairs, goals)
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "lem1", "s", "M")])
+
+        dataset = TrainingDataLoader.load([data_path], db_path)
+
+        total = len(dataset.train) + len(dataset.val) + len(dataset.test)
+        assert total == 1  # only the pair, not the goal
+
+    def test_loads_premise_corpus(self, tmp_path):
+        """Premise corpus is loaded from the index DB."""
+        pairs = [("file_a.v", "state1", ["lem1"])]
+        data_path = tmp_path / "data.jsonl"
+        _write_compact_jsonl(data_path, pairs)
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [
+            (1, "lem1", "forall n, n = n", "Mod"),
+        ])
+
+        dataset = TrainingDataLoader.load([data_path], db_path)
+
+        assert "lem1" in dataset.premise_corpus
+        assert dataset.premise_corpus["lem1"] == "forall n, n = n"
+
+
+class TestConvertThenLoad:
+    """Round-trip: convert full JSONL to compact, then load."""
+
+    def test_round_trip_preserves_pairs(self, tmp_path):
+        """Converting then loading produces the same pairs as direct extraction."""
+        record = _make_simple_proof("file_a.v", "A", [
+            ("apply H", "B", [("lem1", "lemma")]),
+            ("exact H2", "C", [("lem2", "lemma")]),
+        ])
+        full_path = tmp_path / "full.jsonl"
+        _write_jsonl(full_path, [record])
+        compact_path = tmp_path / "compact.jsonl"
+
+        convert_training_data([full_path], compact_path)
+
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "lem1", "s", "M")])
+        dataset = TrainingDataLoader.load([compact_path], db_path)
+
+        total = len(dataset.train) + len(dataset.val) + len(dataset.test)
+        assert total == 2
+
+
+class TestVocabularyBuilderCompactFormat:
+    """spec §4.0: VocabularyBuilder reads 's' from both 'p' and 'g' records."""
+
+    def test_vocab_from_compact_pairs(self, tmp_path):
+        """Tokens from pair state_text appear in vocabulary."""
+        pairs = [("file_a.v", "custom_token_xyz", ["lem1"])]
+        data_path = tmp_path / "data.jsonl"
+        _write_compact_jsonl(data_path, pairs)
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "lem1", "s", "M")])
+        vocab_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [data_path], vocab_path)
+
+        vocab = json.loads(vocab_path.read_text())
+        assert "custom_token_xyz" in vocab
+
+    def test_vocab_from_compact_goals(self, tmp_path):
+        """Tokens from supplementary 'g' records appear in vocabulary."""
+        pairs = [("file_a.v", "pair_token", ["lem1"])]
+        goals = ["supplementary_token_abc"]
+        data_path = tmp_path / "data.jsonl"
+        _write_compact_jsonl(data_path, pairs, goals)
+        db_path = tmp_path / "index.db"
+        _make_minimal_index_db(db_path, [(1, "lem1", "s", "M")])
+        vocab_path = tmp_path / "vocab.json"
+
+        VocabularyBuilder.build(db_path, [data_path], vocab_path)
+
+        vocab = json.loads(vocab_path.read_text())
+        assert "supplementary_token_abc" in vocab
