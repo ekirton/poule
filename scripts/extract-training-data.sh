@@ -19,9 +19,10 @@ LIBRARIES="$ALL_LIBRARIES"
 OUTPUT_DIR="/data"
 FORCE=false
 WATCHDOG_TIMEOUT=600
+WORKERS=0
 
 usage() {
-    echo "Usage: $(basename "$0") [--libraries lib1,lib2,...] [--force] [--watchdog-timeout N]" >&2
+    echo "Usage: $(basename "$0") [--libraries lib1,lib2,...] [--force] [--watchdog-timeout N] [--workers N]" >&2
     echo "" >&2
     echo "Extract proof traces from Coq libraries for neural training." >&2
     echo "Only re-extracts libraries whose installed version differs from" >&2
@@ -31,6 +32,7 @@ usage() {
     echo "  --libraries          Comma-separated list of libraries (default: all 6)" >&2
     echo "  --force              Re-extract all libraries regardless of version" >&2
     echo "  --watchdog-timeout N Inactivity threshold in seconds (default: 600, 0 to disable)" >&2
+    echo "  --workers N          Parallel workers per library (default: 0 = auto-detect CPU count)" >&2
     echo "  --output-dir         Output directory (default: /data)" >&2
     echo "" >&2
     echo "Libraries: stdlib, mathcomp, stdpp, flocq, coquelicot, coqinterval" >&2
@@ -52,6 +54,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --watchdog-timeout)
             WATCHDOG_TIMEOUT="$2"
+            shift 2
+            ;;
+        --workers)
+            WORKERS="$2"
             shift 2
             ;;
         --output-dir)
@@ -223,7 +229,7 @@ for lib in "${LIB_ARRAY[@]}"; do
 
     echo "Extracting proof traces for ${lib}..." >&2
     module_prefix="${MODULE_PREFIXES[$lib]:-}"
-    if poule extract "$lib_path" --output "$output_file" --watchdog-timeout "$WATCHDOG_TIMEOUT" --index-db "$INDEX_DB" --module-prefix "$module_prefix"; then
+    if poule extract "$lib_path" --output "$output_file" --watchdog-timeout "$WATCHDOG_TIMEOUT" --workers "$WORKERS" --index-db "$INDEX_DB" --module-prefix "$module_prefix"; then
         RESULTS[$lib]="extracted"
         EXTRACTED=$((EXTRACTED + 1))
     else

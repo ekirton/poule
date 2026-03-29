@@ -427,7 +427,7 @@ def _handle_session_error(exc: SessionError) -> None:
 @click.option("--resume", "resume_flag", is_flag=True, default=False, help="Resume interrupted extraction (P1).")
 @click.option("--include-diffs", is_flag=True, default=False, help="Include proof state diffs (P1).")
 @click.option("--watchdog-timeout", default=600, type=int, help="Inactivity threshold (seconds) before declaring backend dead. 0 to disable.")
-@click.option("--workers", default=1, type=int, help="Number of parallel file workers (default: 1).")
+@click.option("--workers", default=0, type=int, help="Number of parallel file workers (0 = auto-detect CPU count, default: 0).")
 def cmd_extract(
     project_dirs: tuple[str, ...],
     output: str,
@@ -464,10 +464,11 @@ def cmd_extract(
     import os
     from Poule.session.backend import create_coq_backend
     rss_limit = int(os.environ.get("POULE_LSP_RSS_LIMIT", 5 * 1024 * 1024 * 1024))
+    effective_workers = workers if workers > 0 else (os.cpu_count() or 4)
     kwargs = {
         "backend_factory": create_coq_backend,
         "watchdog_timeout": wt,
-        "workers": workers,
+        "workers": effective_workers,
         "rss_threshold": rss_limit,
         "index_db_path": index_db,
     }
@@ -478,6 +479,7 @@ def cmd_extract(
     if include_diffs:
         kwargs["include_diffs"] = include_diffs
 
+    click.echo(f"Workers: {effective_workers}", err=True)
     summary = asyncio.run(run_campaign(
         list(project_dirs), output, kwargs,
     ))
