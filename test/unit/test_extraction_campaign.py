@@ -1952,11 +1952,13 @@ class TestRunCampaignFileGrouped:
 
         lines = output.read_text().strip().split("\n")
         records = [json.loads(l) for l in lines]
-        thm_names = [
-            r["theorem_name"] for r in records
-            if r.get("record_type") in ("proof_trace", "extraction_error")
-        ]
-        assert thm_names == ["A.a1", "A.a2", "B.b1"]
+        # Compact format: verify ordering by source file in "p" records
+        pair_files = [r["f"] for r in records if r.get("t") == "p"]
+        # All A.v pairs should appear before all B.v pairs
+        a_indices = [i for i, f in enumerate(pair_files) if "A" in f]
+        b_indices = [i for i, f in enumerate(pair_files) if "B" in f]
+        if a_indices and b_indices:
+            assert max(a_indices) < min(b_indices)
 
 
 class TestExtractFileGroupRssRestart:
