@@ -89,11 +89,13 @@ extract_single_proof(project, file, theorem)
   │
   ├─ Extract proof trace via SessionManager.extract_proof_trace(session_id)
   │
-  ├─ Extract premise annotations via SessionManager.get_proof_premises(session_id)
+  ├─ Resolve per-step premises via proof term diffing (coqtop Show Proof.)
+  │    For each tactic step: diff constants in consecutive partial proof terms
+  │    → 1-5 actually-used premises per step (not 16K accessible premises)
   │
   ├─ Compute proof state diffs if enabled (P1)
   │
-  ├─ Assemble ExtractionRecord from trace + premises + diffs
+  ├─ Assemble ExtractionRecord from trace + resolved premises + diffs
   │
   ├─ Close session via SessionManager.close_session(session_id)
   │    Always executed (even on partial success), via finally block
@@ -203,7 +205,7 @@ The campaign orchestrator is a new component that reuses (does not fork or reimp
 | `SessionManager` | Session lifecycle (create, close) for each proof |
 | `CoqBackend` | Per-session Coq process management |
 | `extract_proof_trace()` | Proof state extraction at every tactic step |
-| `get_proof_premises()` | Per-step premise annotation extraction |
+| `get_used_premises_at_step()` | Per-step premise resolution via proof term diffing |
 | Proof state diff computation | Step-level diff generation (P1) |
 | Proof serialization | JSON field mapping, determinism rules |
 
@@ -245,6 +247,35 @@ The SessionManager is designed for interactive use — open a session, step thro
 ### Why sequential processing over parallel
 
 Deterministic output is a P0 requirement. Sequential processing makes determinism trivial — proofs are extracted and emitted in enumeration order. Parallel extraction would require buffering and reordering, adding complexity and memory overhead. The throughput target (stdlib in under 1 hour) does not require parallelism.
+
+### Premise Resolution via Proof Term Diffing
+
+The `petanque/premises` endpoint returns all premises *accessible* at a proof state (~16K for standard library proofs) — the entire transitive import closure. Training neural premise selection requires the 1-5 premises each tactic *actually used*. coq-lsp does not expose proof terms through Petanque.
+
+The extraction pipeline resolves this by maintaining a parallel coqtop subprocess alongside the coq-lsp backend. After each tactic step, `Show Proof.` is executed in coqtop to obtain the partial proof term as text. Constant references are extracted from the proof term and diffed against the previous step's constants to determine which premises the tactic introduced.
+
+```
+coq-lsp (Petanque)           coqtop subprocess
+─────────────────            ─────────────────
+load_file(path)              Load file prelude (imports + defs)
+position_at_proof(name)      Enter proof: "Proof."
+                             Show Proof. → term_0, consts_0 = extract(term_0)
+run(st, tactic_1)            Execute tactic_1
+  → goals, state             Show Proof. → term_1, consts_1 = extract(term_1)
+                             used_1 = consts_1 - consts_0
+run(st, tactic_2)            Execute tactic_2
+  → goals, state             Show Proof. → term_2, consts_2 = extract(term_2)
+                             used_2 = consts_2 - consts_1
+...                          ...
+```
+
+**Constant extraction**: The proof term text produced by `Show Proof.` contains fully qualified constant references (e.g., `@Nat.add_comm`). These are extracted via pattern matching. The parser does not need to fully parse the `constr` tree — it only needs to identify `@Qualified.Name` tokens, which are syntactically unambiguous in Coq's pretty-printer output.
+
+**Overhead**: Each tactic step incurs one additional coqtop round-trip (`Show Proof.` + response). For a typical proof with 10 steps, this adds ~10 coqtop interactions per proof. The coqtop subprocess is spawned once per file (alongside the coq-lsp backend) and reused across all proofs in that file.
+
+**Fallback**: If coqtop fails to execute a tactic (divergence from coq-lsp's replay), the extraction falls back to an empty premise list for that step. The step is still recorded with its proof state; only the premise annotation is missing. This is tracked in the extraction summary as `premise_resolution_failures`.
+
+**Future**: When coq-lsp adds a `petanque/proof` endpoint (see `coq-lsp-feature-request.md`), the coqtop subprocess becomes unnecessary. The architecture isolates premise resolution behind `CoqBackend.get_used_premises_at_step()`, so switching from coqtop-based to Petanque-based resolution requires no changes to the campaign orchestrator.
 
 ### Why one backend per file rather than one per proof
 

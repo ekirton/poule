@@ -646,3 +646,121 @@ class TestLivenessWatchdog:
             assert backend._watchdog_timeout == 42.0
         finally:
             await backend.shutdown()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Proof Term Constant Extraction (spec §4.1)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestExtractConstantsFromProofTerm:
+    """spec §4.1: extract_constants_from_proof_term extracts qualified names."""
+
+    def test_extracts_at_qualified_names(self):
+        """@Qualified.Name references are extracted."""
+        from Poule.session.premise_resolution import extract_constants_from_proof_term
+
+        term = "(fun n : nat => @Nat.add_comm n 0)"
+        result = extract_constants_from_proof_term(term)
+        assert "Nat.add_comm" in result
+
+    def test_extracts_at_unqualified_names(self):
+        """@name (no dot) are extracted (Set Printing All output)."""
+        from Poule.session.premise_resolution import extract_constants_from_proof_term
+
+        term = "(fun n : nat => @eq_refl nat n)"
+        result = extract_constants_from_proof_term(term)
+        assert "eq_refl" in result
+
+    def test_excludes_bare_names_without_at(self):
+        """Bare names without @ are local variables, not constants."""
+        from Poule.session.premise_resolution import extract_constants_from_proof_term
+
+        term = "(fun n : nat => @Nat.add_comm n 0)"
+        result = extract_constants_from_proof_term(term)
+        assert "n" not in result
+        assert "nat" not in result
+        assert "fun" not in result
+
+    def test_excludes_goal_placeholders(self):
+        """?Goal placeholders are excluded."""
+        from Poule.session.premise_resolution import extract_constants_from_proof_term
+
+        term = "?Goal"
+        result = extract_constants_from_proof_term(term)
+        assert len(result) == 0
+
+    def test_handles_empty_string(self):
+        """Empty proof term returns empty set."""
+        from Poule.session.premise_resolution import extract_constants_from_proof_term
+
+        result = extract_constants_from_proof_term("")
+        assert result == set()
+
+    def test_multiple_constants(self):
+        """Multiple distinct constants are all extracted."""
+        from Poule.session.premise_resolution import extract_constants_from_proof_term
+
+        term = "(@Nat.add_comm n (@Coq.Init.Logic.eq_ind_r nat (@Nat.add n 0) (fun x => P x) H n (@Nat.add_0_r n)))"
+        result = extract_constants_from_proof_term(term)
+        assert "Nat.add_comm" in result
+        assert "Coq.Init.Logic.eq_ind_r" in result
+        assert "Nat.add_0_r" in result
+        assert "Nat.add" in result
+
+    def test_deeply_qualified_names(self):
+        """Names with multiple dot separators are extracted."""
+        from Poule.session.premise_resolution import extract_constants_from_proof_term
+
+        term = "@Coq.Arith.PeanoNat.Nat.add_comm"
+        result = extract_constants_from_proof_term(term)
+        assert "Coq.Arith.PeanoNat.Nat.add_comm" in result
+
+
+class TestResolveStepPremises:
+    """spec §4.1: resolve_step_premises diffs constant sets."""
+
+    def test_new_constants_are_premises(self):
+        """Constants in current but not previous are the step's premises."""
+        from Poule.session.premise_resolution import resolve_step_premises
+
+        previous = {"Nat.add_0_r"}
+        current_term = "(fun n => @Nat.add_0_r n (@Nat.add_comm n 0))"
+        result = resolve_step_premises(1, previous, current_term)
+        names = {p["name"] for p in result}
+        assert "Nat.add_comm" in names
+        assert "Nat.add_0_r" not in names  # was already in previous
+
+    def test_no_new_constants(self):
+        """When no new constants are introduced, result is empty."""
+        from Poule.session.premise_resolution import resolve_step_premises
+
+        previous = {"Nat.add_comm"}
+        current_term = "(fun n => @Nat.add_comm n 0)"
+        result = resolve_step_premises(1, previous, current_term)
+        assert result == []
+
+    def test_result_format(self):
+        """Each result item has name and kind fields."""
+        from Poule.session.premise_resolution import resolve_step_premises
+
+        result = resolve_step_premises(1, set(), "(fun n => @Nat.add_comm n)")
+        assert len(result) == 1
+        assert result[0]["name"] == "Nat.add_comm"
+        assert result[0]["kind"] == "lemma"
+
+    def test_unqualified_at_name(self):
+        """@name without dot is captured (e.g., @eq_refl from Set Printing All)."""
+        from Poule.session.premise_resolution import resolve_step_premises
+
+        result = resolve_step_premises(1, set(), "(fun n : @nat => @eq_refl @nat n)")
+        names = {p["name"] for p in result}
+        assert "eq_refl" in names
+        assert "nat" in names
+
+    def test_empty_proof_term(self):
+        """Empty proof term returns empty list."""
+        from Poule.session.premise_resolution import resolve_step_premises
+
+        result = resolve_step_premises(1, set(), "")
+        assert result == []

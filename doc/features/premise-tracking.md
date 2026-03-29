@@ -34,6 +34,14 @@ A premise is any named entity that a tactic consumes or references during execut
 
 This classification aligns with LeanDojo's premise categories, enabling comparable training data.
 
+## Resolution Mechanism
+
+Premise resolution uses **proof term diffing**: after each tactic step, the partial proof term is captured via Coq's `Show Proof.` command (executed in a coqtop subprocess). Constants (`Const` references) are extracted from the proof term text and diffed against the previous step's constants. New constants are the premises that tactic introduced.
+
+This captures all premise usage — explicit (`apply X`), implicit from automation (`auto`, `simp`, `ring`), and term-style proof fragments — because the kernel's proof term is the ground truth for what was referenced.
+
+The coqtop subprocess runs alongside the coq-lsp backend during extraction. coq-lsp handles proof state observation (goals, hypotheses); coqtop handles proof term capture. This dual-process approach works around coq-lsp's limitation of not exposing proof terms through Petanque. When coq-lsp adds a `petanque/proof` endpoint, the coqtop subprocess becomes unnecessary.
+
 ## Accuracy Target
 
 Premise annotations must match hand-curated ground truth on a set of at least 50 proofs. This target validates that the extraction is reliable enough for downstream ML training — incorrect annotations would inject noise into training data.

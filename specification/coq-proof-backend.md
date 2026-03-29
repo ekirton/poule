@@ -161,6 +161,38 @@ The returned `ProofState` shall have:
 > **When** `get_premises_at_step(1)` is called
 > **Then** the returned list is empty
 
+#### get_proof_term_at_step(step)
+
+- REQUIRES: A coqtop subprocess is available (spawned alongside the coq-lsp backend). The proof has been replayed through step `step` in coqtop. `step` is a non-negative integer (0 = initial state before any tactic).
+- ENSURES: Returns the partial proof term text as produced by Coq's `Show Proof.` command at the given step. The text contains the proof term built so far, with `?Goal` placeholders for unsolved goals and fully qualified constant references (e.g., `@Nat.add_comm`).
+- On coqtop failure (process crashed, tactic divergence): returns an empty string.
+
+> **Given** a proof at step 0 (initial state)
+> **When** `get_proof_term_at_step(0)` is called
+> **Then** the returned text contains only `?Goal` (no constants yet)
+
+> **Given** a proof where step 1 is `apply Nat.add_comm.`
+> **When** `get_proof_term_at_step(1)` is called
+> **Then** the returned text contains `@Nat.add_comm` (or its fully qualified form)
+
+#### extract_constants_from_proof_term(proof_term_text)
+
+- REQUIRES: `proof_term_text` is a string produced by `Show Proof.`.
+- ENSURES: Returns a `set[str]` of fully qualified constant names found in the proof term. Extracts names matching the pattern `@Qualified.Name` or bare `Qualified.Name` where `Qualified.Name` contains at least one dot separator. Local variables, de Bruijn indices, and `?Goal` placeholders are excluded.
+
+> **Given** proof term text `"(fun n : nat => @Nat.add_comm n 0)"`
+> **When** `extract_constants_from_proof_term` is called
+> **Then** the result includes `"Nat.add_comm"` and excludes `"n"`, `"nat"`, `"fun"`
+
+#### resolve_step_premises(step, previous_constants, current_proof_term_text)
+
+- REQUIRES: `step` is a positive integer. `previous_constants` is the set of constants from the proof term at step-1. `current_proof_term_text` is the `Show Proof.` output at step.
+- ENSURES: Returns a list of `{"name": str, "kind": "lemma"}` dicts for constants that are in the current proof term but not in `previous_constants`. This is the set of constants the tactic at step `step` introduced.
+
+> **Given** `previous_constants = {"Nat.add_0_r"}` and current proof term containing `{"Nat.add_0_r", "Nat.add_comm"}`
+> **When** `resolve_step_premises` is called
+> **Then** the result is `[{"name": "Nat.add_comm", "kind": "lemma"}]`
+
 #### shutdown()
 
 - REQUIRES: None (may be called at any time, including on a crashed or already-shut-down backend).
