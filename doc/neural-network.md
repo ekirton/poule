@@ -154,7 +154,7 @@ m - n + n = m
 - **Proof state** (before the tactic): the goal `n + (m - n) = m` with hypotheses `n m : nat`, `H : n <= m`
 - **Premises used** (by the tactic): `["Nat.add_comm"]`
 
-**Data quality.** The extraction pipeline produces a campaign metadata record (Coq version, project commits, tool version) and an extraction summary with counts. The `validate-training-data` command checks for: >10% empty-premise steps, malformed fields, fewer than 5,000 pairs, fewer than 1,000 unique premises, and any single premise exceeding 5% of all occurrences. A minimum of 10,000 pairs is required for training; the Stdlib alone provides approximately 15,000.
+**Data quality.** The extraction pipeline produces a campaign metadata record (Coq version, project commits, tool version) and an extraction summary with counts. The `validate-training-data` command checks for: >10% empty-premise steps, malformed fields, fewer than 5,000 pairs, fewer than 1,000 unique premises, and any single premise exceeding 5% of all occurrences. A minimum of 5,000 pairs is required for training; the Stdlib alone provides approximately 4,800. The six target libraries combined yield approximately 8,300 pairs.
 
 ### 3.2 Data Splitting
 

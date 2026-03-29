@@ -72,7 +72,7 @@ The validator reports:
 - Unique premise count and premise frequency distribution (top 10)
 - Warnings for: >10% empty premises, malformed fields, <5,000 pairs, <1,000 unique premises, any premise >5% of all occurrences
 
-The training pipeline constructs pairs by pairing the goals from step k-1 (state before the tactic) with the global premises from step k (filtering out local hypotheses). A minimum of 10,000 pairs is needed; the stdlib alone provides ~67K.
+The training pipeline constructs pairs by pairing the goals from step k-1 (state before the tactic) with the global premises from step k (filtering out local hypotheses). A minimum of 5,000 pairs is needed; the stdlib alone provides ~4,800. The six target libraries combined yield ~8,300 pairs.
 
 ## Step 3: Build the vocabulary
 
@@ -121,12 +121,12 @@ poule train \
   --vocabulary coq-vocabulary.json \
   --db index.db \
   --output model.pt \
-  --sample 0.1 \
+  --sample 0.15 \
   --epochs 2 \
   training-data.jsonl
 ```
 
-The `--sample` flag randomly sub-samples the training split to the given fraction (e.g., `--sample 0.1` uses 10% of pairs). Validation and test splits are not affected. **This is for test runs only** — production models should train on the full dataset.
+The `--sample` flag randomly sub-samples the training split to the given fraction (e.g., `--sample 0.15` uses 15% of pairs). Validation and test splits are not affected. **This is for test runs only** — production models should train on the full dataset.
 
 Training details:
 - **Architecture**: ~98M parameter bi-encoder (CodeBERT 125M base with closed-vocabulary embedding layer, 768-dim embeddings, mean pooling)
@@ -141,13 +141,11 @@ Estimated wall time for a **single training run** on M2 Pro (32GB, MPS backend, 
 
 | `--sample` | Training pairs | Estimated wall time |
 |------------|---------------|---------------------|
-| `0.01` | ~1,300 | ~15 min |
-| `0.05` | ~6,500 | ~1 hour |
-| `0.10` | ~13,000 | ~2 hours |
-| `0.25` | ~32,500 | ~5 hours |
-| `0.50` | ~65,000 | ~10 hours |
-| `0.75` | ~97,500 | ~15 hours |
-| *(none)* | ~130,000 | ~20 hours |
+| `0.15` | ~1,100 | ~10 min |
+| `0.25` | ~1,800 | ~15 min |
+| `0.50` | ~3,600 | ~30 min |
+| `0.75` | ~5,300 | ~45 min |
+| *(none)* | ~7,100 | ~1 hour |
 
 Hyperparameter tuning (`poule tune`) runs 20 Optuna trials by default. With median pruning, roughly half the trials are killed early (after 3-4 epochs). The total cost is equivalent to approximately 8–12 full training runs.
 
