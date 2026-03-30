@@ -299,18 +299,19 @@ async def _extract_one_on_backend(
     project_id: str,
     source_file: str,
     theorem_name: str,
-    resolver: "ProofTermResolver | None" = None,
+    resolver: "Any | None" = None,
 ) -> Union[ExtractionRecord, PartialExtractionRecord, ExtractionError]:
     """Extract a single proof trace from an already-loaded backend.
 
     The backend must already have the file loaded via ``load_file``.
-    This function calls ``position_at_proof`` (which resets per-proof state),
-    queries goals for each pre-computed state token, queries premises per
-    step, and assembles an ExtractionRecord.
+    This function calls ``position_at_proof`` (which resets per-proof state
+    and caches proof states + proof terms at each step), reads from the
+    cached states, resolves premises via proof term diffing, and assembles
+    an ExtractionRecord.
     """
     proof_name = fqn_to_proof_name(theorem_name, source_file)
 
-    # Position at proof — resets original_script and _original_states
+    # Position at proof — resets original_script and original_states
     try:
         initial_state = await backend.position_at_proof(proof_name)
     except (ValueError, KeyError, LookupError) as exc:
@@ -323,28 +324,13 @@ async def _extract_one_on_backend(
 
     original_script = getattr(backend, "original_script", []) or []
     total_steps = len(original_script)
-    original_states = getattr(backend, "_original_states", [])
+    cached_states = getattr(backend, "original_states", [])
 
-    # Resolve per-step premises via proof term diffing (if resolver available)
+    # Resolve per-step premises via proof term diffing (integrated in backend)
     resolved_premises: list[list[dict[str, str]]] | None = None
-    if resolver is not None:
+    if cached_states:
         try:
-            # Extract the initial goal type for entering proof mode in coqtop
-            initial_goal_type = None
-            initial_goals = getattr(initial_state, "goals", [])
-            if initial_goals:
-                initial_goal_type = getattr(initial_goals[0], "type", None)
-            async with asyncio.timeout(120):
-                resolved_premises = await resolver.resolve_proof_premises(
-                    theorem_name, original_script,
-                    goal_type=initial_goal_type,
-                )
-        except TimeoutError:
-            logger.warning(
-                "Premise resolution timed out for %s; "
-                "shutting down resolver", theorem_name,
-            )
-            await resolver.shutdown()
+            resolved_premises = await backend.get_premises()
         except Exception:
             logger.debug("Premise resolution failed for %s", theorem_name)
 
@@ -358,45 +344,31 @@ async def _extract_one_on_backend(
     failure_step: int | None = None
     failure_message = ""
 
-    # Steps 1..N via pre-computed state tokens
-    for i in range(1, min(len(original_states), total_steps + 1)):
-        st_token = original_states[i]
-        try:
-            goals_result = await backend._petanque_goals(st_token)
-            state = backend._translate_petanque_goals(goals_result, step_index=i)
-        except Exception as exc:
-            failure_step = i
-            failure_message = str(exc)
-            break
+    # Steps 1..N from cached states
+    for i in range(1, min(len(cached_states), total_steps + 1)):
+        cached = cached_states[i]
+        # Use the cached proof state directly
+        state = cached.proof_state if hasattr(cached, 'proof_state') else cached
 
         goals_i, focused_i = _convert_proof_state(state)
 
-        # Premises for this step — from proof term diffing if available
+        # Premises for this step — from proof term diffing
         ext_premises: list[ExtPremise] = []
         if resolved_premises is not None and (i - 1) < len(resolved_premises):
             ext_premises = [
                 ExtPremise(name=p["name"], kind=p.get("kind", "lemma"))
                 for p in resolved_premises[i - 1]
             ]
-        else:
-            # Fallback: petanque/premises (returns accessible set, not used set)
-            try:
-                raw = await backend.get_premises_at_step(i)
-                ext_premises = [
-                    ExtPremise(name=p["name"], kind=p["kind"]) for p in raw
-                ]
-            except Exception:
-                pass
 
         steps.append(ExtractionStep(
             step_index=i, tactic=original_script[i - 1], goals=goals_i,
             focused_goal_index=focused_i, premises=ext_premises, diff=None,
         ))
 
-    # If original_states is shorter than total_steps, some tactics failed
-    if failure_step is None and len(original_states) <= total_steps:
-        if len(original_states) < total_steps + 1:
-            failure_step = len(original_states)
+    # If cached_states is shorter than total_steps, some tactics failed
+    if failure_step is None and len(cached_states) <= total_steps:
+        if len(cached_states) < total_steps + 1:
+            failure_step = len(cached_states)
             failure_message = "Backend replay failed during positioning"
 
     # Handle partial trace
@@ -453,11 +425,8 @@ async def _extract_file_group(
     When *load_paths* is provided, each ``(directory, prefix)`` pair is
     passed to the backend factory as ``-R`` flags so bare imports resolve.
     """
-    from Poule.session.premise_resolution import ProofTermResolver
-
     abs_file = str(Path(project_path) / source_file) if project_path else source_file
     backend = None
-    resolver: ProofTermResolver | None = None
     # Track how many theorems have been yielded for "remaining" calculations.
     yielded = 0
 
@@ -494,24 +463,9 @@ async def _extract_file_group(
                 )
             return
 
-        # Spawn coqtop resolver for proof-term-based premise resolution
-        resolver: ProofTermResolver | None = None
-        try:
-            async with asyncio.timeout(120):
-                resolver = ProofTermResolver()
-                await resolver.start(load_paths=load_paths)
-                await resolver.load_file(abs_file, "")
-        except TimeoutError:
-            logger.warning(
-                "Premise resolver timed out loading %s; "
-                "continuing without proof-term resolution", source_file,
-            )
-            if resolver is not None:
-                await resolver.shutdown()
-            resolver = None
-        except Exception as exc:
-            logger.warning("Failed to start premise resolver for %s: %s", source_file, exc)
-            resolver = None
+        # Premise resolution is now integrated into the coqtop backend.
+        # No separate ProofTermResolver needed — the backend caches
+        # proof terms at each step during position_at_proof().
 
         # Post-load RSS check: warn if type-checking alone exceeds threshold.
         if rss_threshold is not None and backend is not None:
@@ -526,22 +480,16 @@ async def _extract_file_group(
                 )
 
         for thm_idx, thm in enumerate(theorem_names):
-            # Disable dead resolver (killed after timeout on earlier theorem)
-            if resolver is not None and resolver._proc is None:
-                logger.info(
-                    "Resolver dead; disabling for remaining theorems in %s",
-                    source_file,
-                )
-                resolver = None
+            _t0 = __import__('time').monotonic()
             try:
                 result = await _extract_one_on_backend(
                     backend, project_id, source_file, thm,
-                    resolver=resolver,
                 )
+                object.__setattr__(result, '_extraction_time_s', __import__('time').monotonic() - _t0)
                 yield result
                 yielded += 1
             except ConnectionError as exc:
-                # Backend crashed — fail current + remaining theorems
+                # Backend crashed — fail current theorem, then restart
                 yield ExtractionError(
                     schema_version=1, record_type="extraction_error",
                     theorem_name=thm, source_file=source_file,
@@ -549,15 +497,28 @@ async def _extract_file_group(
                     error_message=str(exc),
                 )
                 yielded += 1
-                for remaining_thm in theorem_names[thm_idx + 1:]:
-                    yield ExtractionError(
-                        schema_version=1, record_type="extraction_error",
-                        theorem_name=remaining_thm, source_file=source_file,
-                        project_id=project_id, error_kind="backend_crash",
-                        error_message="Backend crashed on earlier proof",
-                    )
-                    yielded += 1
-                break
+                # Shut down crashed backend
+                if backend is not None:
+                    try:
+                        await backend.shutdown()
+                    except Exception:
+                        pass
+                # Restart backend and reload file for remaining theorems
+                try:
+                    backend = await _spawn_and_load()
+                except Exception as restart_exc:
+                    # Restart failed — fail all remaining theorems
+                    for remaining_thm in theorem_names[thm_idx + 1:]:
+                        yield ExtractionError(
+                            schema_version=1, record_type="extraction_error",
+                            theorem_name=remaining_thm, source_file=source_file,
+                            project_id=project_id, error_kind="backend_crash",
+                            error_message=f"Backend restart failed: {restart_exc}",
+                        )
+                        yielded += 1
+                    backend = None
+                    break
+                continue
             except KeyboardInterrupt:
                 raise
             except Exception as exc:
@@ -574,7 +535,7 @@ async def _extract_file_group(
                 rss = getattr(backend, "get_rss_bytes", lambda: 0)()
                 if rss > rss_threshold:
                     logger.debug(
-                        "Restarting coq-lsp for %s (RSS=%.0f MiB, threshold=%.0f MiB)",
+                        "Restarting coqtop for %s (RSS=%.0f MiB, threshold=%.0f MiB)",
                         source_file, rss / (1024 * 1024),
                         rss_threshold / (1024 * 1024),
                     )
@@ -597,11 +558,6 @@ async def _extract_file_group(
                         backend = None
                         break
     finally:
-        if resolver is not None:
-            try:
-                await resolver.shutdown()
-            except Exception:
-                pass
         if backend is not None:
             try:
                 await backend.shutdown()
@@ -927,6 +883,8 @@ async def run_campaign(
     partial_count = 0
     failed_count = 0
     no_proof_body_count = 0
+    max_proof_time_s = 0.0
+    max_proof_time_name = ""
     idx = 0
 
     backend_factory = all_kwargs.get("backend_factory")
@@ -972,15 +930,20 @@ async def run_campaign(
             groups_done = 0
             total_groups = len(file_groups)
 
+            import time as _time
+            _campaign_start = _time.monotonic()
+
             async def _bounded(group_idx, pid, sf, thms):
                 nonlocal groups_done
                 async with sem:
                     results = await _collect_group(pid, sf, thms)
                     groups_done += 1
                     if groups_done % 20 == 0 or groups_done == total_groups:
+                        elapsed = _time.monotonic() - _campaign_start
+                        m, s = divmod(int(elapsed), 60)
                         print(
                             f"  File groups: {groups_done}/{total_groups} "
-                            f"completed",
+                            f"completed  [{m}m{s:02d}s elapsed]",
                             file=sys.stderr,
                         )
                     return group_idx, results
@@ -1009,6 +972,10 @@ async def run_campaign(
                         if isinstance(result, ExtractionRecord):
                             fs["extracted"] += 1
                             extracted_count += 1
+                            t = getattr(result, '_extraction_time_s', 0.0)
+                            if t > max_proof_time_s:
+                                max_proof_time_s = t
+                                max_proof_time_name = result.theorem_name
                         elif isinstance(result, ExtractionError) and result.error_kind == "no_proof_body":
                             fs["no_proof_body"] += 1
                             no_proof_body_count += 1
@@ -1033,6 +1000,10 @@ async def run_campaign(
                         if isinstance(result, ExtractionRecord):
                             fs["extracted"] += 1
                             extracted_count += 1
+                            t = getattr(result, '_extraction_time_s', 0.0)
+                            if t > max_proof_time_s:
+                                max_proof_time_s = t
+                                max_proof_time_name = result.theorem_name
                         elif isinstance(result, ExtractionError) and result.error_kind == "no_proof_body":
                             fs["no_proof_body"] += 1
                             no_proof_body_count += 1
@@ -1083,6 +1054,10 @@ async def run_campaign(
             if isinstance(result, ExtractionRecord):
                 fs["extracted"] += 1
                 extracted_count += 1
+                t = getattr(result, '_extraction_time_s', 0.0)
+                if t > max_proof_time_s:
+                    max_proof_time_s = t
+                    max_proof_time_name = theorem_name
             elif isinstance(result, ExtractionError) and result.error_kind == "no_proof_body":
                 fs["no_proof_body"] += 1
                 no_proof_body_count += 1
@@ -1187,6 +1162,10 @@ async def run_campaign(
         total_skipped=total_skipped,
         per_project=per_project,
     )
+
+    # Attach max proof timing for CLI reporting (frozen dataclass).
+    object.__setattr__(summary, 'max_proof_time_s', max_proof_time_s)
+    object.__setattr__(summary, 'max_proof_time_name', max_proof_time_name)
 
     # Write final summary record and close the output file.
     outfile.write(json.dumps(_record_to_dict(summary), default=str) + "\n")

@@ -1648,56 +1648,38 @@ def _make_mock_backend(
 
     async def _position_at_proof(proof_name):
         if crash_on and proof_name == crash_on:
-            raise ConnectionError("coq-lsp died")
+            raise ConnectionError("coqtop died")
         if proof_name in position_raises_for:
             raise ValueError(f"Proof not found: {proof_name}")
         tactics = proofs.get(proof_name, ["auto."])
         n = len(tactics)
-        # State tokens are just integers for testing
-        states = list(range(n + 1))
+
+        # Build cached states with proof_state and proof_term
+        class _FakeCachedState:
+            def __init__(self, step, is_last=False):
+                self.proof_state = ProofState(
+                    schema_version=1, session_id="", step_index=step,
+                    is_complete=is_last, focused_goal_index=None if is_last else 0,
+                    goals=[] if is_last else [Goal(index=0, type="True", hypotheses=[])],
+                )
+                self.proof_term = f"?term_{step}"
+
+        states = [_FakeCachedState(i, is_last=(i == n)) for i in range(n + 1)]
         _current_proof["name"] = proof_name
         _current_proof["states"] = states
         _current_proof["script"] = tactics
         backend.original_script = tactics
-        backend._original_states = states
-        return ProofState(
-            schema_version=1,
-            session_id="",
-            step_index=0,
-            is_complete=False,
-            focused_goal_index=0,
-            goals=[Goal(index=0, type="True", hypotheses=[])],
-        )
+        backend.original_states = states
+        return states[0].proof_state
 
     backend.position_at_proof = AsyncMock(side_effect=_position_at_proof)
 
-    async def _petanque_goals(st):
-        # Return None (proof complete) for final state, goals otherwise
-        states = _current_proof["states"]
-        if st == states[-1]:
-            return None
-        return {"goals": [{"ty": "True", "hyps": []}]}
+    async def _get_premises():
+        # Return one premise per tactic step
+        n = len(_current_proof["script"])
+        return [[{"name": "Coq.Init.Logic.I", "kind": "lemma"}] for _ in range(n)]
 
-    backend._petanque_goals = AsyncMock(side_effect=_petanque_goals)
-
-    def _translate_goals(goals_result, step_index=0):
-        if goals_result is None:
-            return ProofState(
-                schema_version=1, session_id="", step_index=step_index,
-                is_complete=True, focused_goal_index=None, goals=[],
-            )
-        return ProofState(
-            schema_version=1, session_id="", step_index=step_index,
-            is_complete=False, focused_goal_index=0,
-            goals=[Goal(index=0, type="True", hypotheses=[])],
-        )
-
-    backend._translate_petanque_goals = MagicMock(side_effect=_translate_goals)
-
-    async def _get_premises_at_step(step):
-        return [{"name": "Coq.Init.Logic.I", "kind": "lemma"}]
-
-    backend.get_premises_at_step = AsyncMock(side_effect=_get_premises_at_step)
+    backend.get_premises = AsyncMock(side_effect=_get_premises)
     backend.shutdown = AsyncMock()
 
     return backend
@@ -1833,11 +1815,41 @@ class TestExtractFileGroupProofNotFound:
 
 
 class TestExtractFileGroupBackendCrash:
-    """Backend crash fails current + remaining theorems (§4.3)."""
+    """Backend crash restarts backend and continues (§4.3)."""
 
-    def test_crash_fails_remaining_theorems(self):
-        """When backend crashes on theorem B, B and C get backend_crash error.
-        A (already extracted) is unaffected."""
+    def test_crash_restarts_backend_and_continues(self):
+        """When backend crashes on theorem B, B gets backend_crash error,
+        but the backend is restarted and C is extracted normally."""
+        from Poule.extraction.campaign import _extract_file_group
+        from Poule.extraction.types import ExtractionError, ExtractionRecord
+
+        # First backend crashes on thm_b; second backend works fine.
+        backend1 = _make_mock_backend(
+            proofs={"thm_a": ["auto."]},
+            crash_on="thm_b",
+        )
+        backend2 = _make_mock_backend(
+            proofs={"thm_c": ["auto."]},
+        )
+        factory = AsyncMock(side_effect=[backend1, backend2])
+
+        results = asyncio.run(_collect(_extract_file_group(
+            factory, 600, "proj", "test.v",
+            ["thm_a", "thm_b", "thm_c"], "/path/to/proj",
+        )))
+
+        assert len(results) == 3
+        assert isinstance(results[0], ExtractionRecord)
+        assert isinstance(results[1], ExtractionError)
+        assert results[1].error_kind == "backend_crash"
+        assert isinstance(results[2], ExtractionRecord)
+        assert results[2].theorem_name == "thm_c"
+        # Factory called twice: initial + restart
+        assert factory.call_count == 2
+
+    def test_crash_restart_failure_fails_remaining(self):
+        """When backend crashes and restart also fails, remaining theorems
+        get backend_crash error."""
         from Poule.extraction.campaign import _extract_file_group
         from Poule.extraction.types import ExtractionError, ExtractionRecord
 
@@ -1845,7 +1857,8 @@ class TestExtractFileGroupBackendCrash:
             proofs={"thm_a": ["auto."]},
             crash_on="thm_b",
         )
-        factory = AsyncMock(return_value=backend)
+        # First call returns backend, second call (restart) raises.
+        factory = AsyncMock(side_effect=[backend, RuntimeError("spawn failed")])
 
         results = asyncio.run(_collect(_extract_file_group(
             factory, 600, "proj", "test.v",
@@ -1858,6 +1871,7 @@ class TestExtractFileGroupBackendCrash:
         assert results[1].error_kind == "backend_crash"
         assert isinstance(results[2], ExtractionError)
         assert results[2].error_kind == "backend_crash"
+        assert "restart failed" in results[2].error_message.lower()
 
 
 class TestExtractFileGroupShutdown:
@@ -1878,14 +1892,15 @@ class TestExtractFileGroupShutdown:
     def test_shutdown_called_after_crash(self):
         from Poule.extraction.campaign import _extract_file_group
 
-        backend = _make_mock_backend(crash_on="t")
-        factory = AsyncMock(return_value=backend)
+        backend1 = _make_mock_backend(crash_on="t")
+        # Restart fails — no second backend, but first must still be shut down
+        factory = AsyncMock(side_effect=[backend1, RuntimeError("spawn failed")])
 
         asyncio.run(_collect(_extract_file_group(
             factory, 600, "proj", "f.v", ["t"], "/p",
         )))
 
-        backend.shutdown.assert_called_once()
+        backend1.shutdown.assert_called_once()
 
 
 class TestRunCampaignFileGrouped:

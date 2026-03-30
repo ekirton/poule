@@ -196,7 +196,7 @@ When a `backend_factory` is provided, the orchestrator groups targets by source 
 - REQUIRES: `backend_factory` is an async callable `(file_path, watchdog_timeout=) → CoqProofBackend`. `source_file` is a relative path. `theorem_names` is a non-empty list of fully-qualified theorem names. `project_path` is the absolute path to the project root.
 - ENSURES: Creates one backend instance, loads the file once, then extracts each theorem by calling `position_at_proof`, querying proof states, and querying premises. Returns a list of ExtractionRecord/PartialExtractionRecord/ExtractionError in the same order as `theorem_names`. The backend is shut down in a finally block.
 - On file load failure: returns ExtractionError with `error_kind = "load_failure"` for every theorem in the group.
-- On backend crash (ConnectionError) during extraction of theorem k: returns ExtractionError with `error_kind = "backend_crash"` for theorem k and all remaining theorems.
+- On backend crash (ConnectionError) during extraction of theorem k: returns ExtractionError with `error_kind = "backend_crash"` for theorem k, then restarts the backend and reloads the file to continue with theorem k+1. If the restart fails, returns ExtractionError with `error_kind = "backend_crash"` and message `"Backend restart failed: {exc}"` for all remaining theorems.
 - On proof not found for theorem k: returns ExtractionError with `error_kind = "no_proof_body"` for theorem k, continues to theorem k+1 (the backend is still alive).
 - On tactic failure during replay at step j > 1: assembles a PartialExtractionRecord from steps 0..j-1, continues to next theorem.
 - MAINTAINS: The backend is loaded once per file, not once per theorem. `position_at_proof` cleanly resets per-proof state on each call.
@@ -232,7 +232,11 @@ The RSS threshold defaults to 5 GiB, overridable via the `POULE_LSP_RSS_LIMIT` e
 
 > **Given** a file where the backend crashes during theorem B extraction
 > **When** `_extract_file_group(...)` is called with theorems `[A, B, C]`
-> **Then** results are [ExtractionRecord(A), ExtractionError(B, "backend_crash"), ExtractionError(C, "backend_crash")]
+> **Then** results are [ExtractionRecord(A), ExtractionError(B, "backend_crash"), ExtractionRecord(C)] — the backend was restarted and the file reloaded after the crash
+>
+> **Given** a file where the backend crashes during theorem B and the restart also fails
+> **When** `_extract_file_group(...)` is called with theorems `[A, B, C]`
+> **Then** results are [ExtractionRecord(A), ExtractionError(B, "backend_crash"), ExtractionError(C, "backend_crash", "Backend restart failed: ...")]
 
 #### Parallel file processing
 
@@ -325,8 +329,8 @@ When `backend_factory` is provided, the orchestrator drives backends directly:
 | 1 | `backend = await backend_factory(file_path, watchdog_timeout=wt)` |
 | 2 | `await backend.load_file(file_path)` |
 | 3 | For each theorem: `await backend.position_at_proof(proof_name)` |
-| 4 | For each state token: `await backend._petanque_goals(st)` |
-| 5 | For each step: `await backend.get_premises_at_step(k)` |
+| 4 | For each cached state: parse proof state from `original_states[k]` |
+| 5 | `premises = await backend.get_premises()` |
 | 6 | `await backend.shutdown()` |
 
 ### Extraction Campaign Orchestrator → Proof Session Manager (legacy path)
