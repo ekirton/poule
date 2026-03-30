@@ -17,7 +17,14 @@ EducationEncoder               all-MiniLM-L6-v2 (INT8 ONNX, 384-dim)
 education.db                   SQLite: chunks + embeddings + FTS5 + metadata
         │
         ▼
-EducationRAG                   In-memory cosine search via EmbeddingIndex
+EducationRAG                   Hybrid retrieval: embedding + FTS5
+  ┌─────┴─────┐
+  │            │
+EmbeddingIndex  FTS5/BM25          Two retrieval channels
+  │            │
+  └─────┬─────┘
+        │
+  Additive score fusion            embed_score + 2.0 * bm25_score
         │
         ▼
 education_context MCP tool     Returns passages with citations + browser paths
@@ -31,7 +38,8 @@ education_context MCP tool     Returns passages with citations + browser paths
 | `src/Poule/education/encoder.py` | all-MiniLM ONNX wrapper (384-dim, INT8) |
 | `src/Poule/education/storage.py` | SQLite schema + read/write |
 | `src/Poule/education/build.py` | Build pipeline: HTML → chunks → embeddings → DB |
-| `src/Poule/education/__init__.py` | `EducationRAG` facade (query-time) |
+| `src/Poule/education/fts.py` | FTS5 query preprocessing + domain term detection |
+| `src/Poule/education/__init__.py` | `EducationRAG` facade (hybrid retrieval) |
 | `src/Poule/education/handler.py` | MCP tool handler |
 | `commands/textbook.md` | `/textbook` slash command |
 
@@ -170,7 +178,7 @@ The education database (`education.db`) contains:
 | `chunks` | Chunk text + metadata (volume, chapter, section, anchor ID) |
 | `education_embeddings` | 384-dim float32 vectors (1536 bytes each) |
 | `education_meta` | Key-value metadata (schema_version, model_hash, build_date, chunk_count) |
-| `chunks_fts` | FTS5 full-text index for keyword fallback search |
+| `chunks_fts` | FTS5 full-text index (text, section_title, chapter) for hybrid retrieval |
 
 ## Chunking Details
 
@@ -186,6 +194,50 @@ Each chunk preserves:
 - Coq code blocks as separate strings (for display)
 - Source attribution: volume, chapter, section title, section breadcrumb path, anchor ID
 - Chapter filename (for browser link construction)
+
+## Hybrid Retrieval
+
+Query-time retrieval uses two channels fused by additive scoring.
+
+### Channel 1: Embedding similarity
+
+The query is encoded with the same all-MiniLM-L6-v2 model used at build time. `EmbeddingIndex` returns the top candidates ranked by cosine similarity (scores in `[0, 1]`).
+
+### Channel 2: FTS5 keyword search (BM25)
+
+The query is preprocessed by `education_fts_query()` in `fts.py`:
+
+1. Tokenize and lowercase.
+2. Check for **domain terms** — Coq tactic and command names that overlap with common English words (e.g., `apply`, `rewrite`, `induction`, `case`, `set`). These are defined in the `COQ_DOMAIN_TERMS` set.
+3. If domain terms are found, **use only those** as the FTS query. This prevents generic English words from diluting BM25 scores with irrelevant matches.
+4. If no domain terms are found, strip stop words and use the remaining tokens.
+5. Tokens are joined with `OR`.
+
+BM25 column weights give chapter and section title matches a 10x boost over body text:
+
+| Column | Weight |
+|--------|--------|
+| `text` | 1.0 |
+| `section_title` | 10.0 |
+| `chapter` | 10.0 |
+
+BM25 scores are negated (SQLite returns negative-is-better) and normalized to `[0, 1]`.
+
+### Score fusion
+
+The two channels are combined with additive fusion:
+
+```
+fused_score = embed_score + 2.0 * bm25_score
+```
+
+The `_FTS_WEIGHT = 2.0` multiplier means a strong chapter-title keyword match outweighs embedding similarity. Using raw scores (not ranks) preserves the large BM25 gap between chapter-title hits and body-text hits.
+
+After fusion, candidates are sorted by fused score and the top `limit` results are returned, filtered by volume if specified.
+
+### Why hybrid search
+
+Pure embedding search failed for keyword-heavy queries like "how does induction work in Coq?" — returning VFA/Trie content instead of the LF/Induction chapter. Adding FTS5 with chapter/title boosting fixed this class of failure. Eval harness results with hybrid: recall@1 53.5% (+10pp), recall@3 71.8% (+3pp).
 
 ## Troubleshooting
 
