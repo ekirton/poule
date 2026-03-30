@@ -25,7 +25,7 @@ Define the session manager that creates and destroys proof sessions, dispatches 
 | Step history | An ordered list of ProofState snapshots maintained per session, indexed by step number |
 | Current step | The session's current position in the step history; 0 = initial state |
 | Original script | The tactic list from a completed proof's source; null for interactively constructed proofs |
-| CoqBackend | An abstraction over a single coqtop subprocess providing bidirectional, stateful proof interaction |
+| CoqBackend | An abstraction over a single coq-lsp or SerAPI process providing bidirectional, stateful proof interaction |
 
 ## 4. Behavioral Requirements
 
@@ -138,7 +138,7 @@ MAINTAINS: Every operation that targets a session by ID shall call `lookup_sessi
 #### extract_trace(session_id)
 
 - REQUIRES: Session exists and is active. The session has an original script (`total_steps` is not null).
-- ENSURES: If step_history length < `total_steps + 1`, replays the original script from the last cached step to the end, caching all states and recording wall-clock time (monotonic) for each tactic execution. When the backend has pre-computed cached states from the initial replay (via `original_states`), the session manager shall use those cached states directly rather than re-executing tactics, avoiding redundant replay. Assembles and returns a ProofTrace containing all `total_steps + 1` TraceSteps (step 0 with `tactic = null` and `duration_ms = null`, steps 1..N with the original tactic strings and `duration_ms` set to the wall-clock milliseconds measured during replay, or `null` if the step was already cached before this call).
+- ENSURES: If step_history length < `total_steps + 1`, replays the original script from the last cached step to the end, caching all states and recording wall-clock time (monotonic) for each tactic execution. When the backend has pre-computed state tokens from the initial replay (via `original_states`), the session manager shall use those tokens to query `petanque/goals` directly rather than re-executing tactics, avoiding redundant replay. Assembles and returns a ProofTrace containing all `total_steps + 1` TraceSteps (step 0 with `tactic = null` and `duration_ms = null`, steps 1..N with the original tactic strings and `duration_ms` set to the wall-clock milliseconds measured during replay, or `null` if the step was already cached before this call).
 - **Partial trace recovery**: When tactic replay fails at step k (due to `TACTIC_ERROR` or `BACKEND_CRASHED`), the session manager shall not discard the successfully replayed steps. Instead, it shall assemble a ProofTrace from steps 0..k-1 with `partial = True`, `failure_step = k`, and `failure_message` set to the error description. This enables downstream consumers to recover training data from the completed prefix of failing proofs.
 - On session with no original script: returns `STEP_OUT_OF_RANGE` error (no complete proof to trace).
 - On failure at step 1 (before any tactic succeeds): returns a partial ProofTrace with 1 step (the initial state only). This is valid but produces zero training pairs.
@@ -245,23 +245,45 @@ MAINTAINS: Every operation that targets a session by ID shall call `lookup_sessi
 > **When** `submit_command(session_id, "Check nat.")` is called
 > **Then** a `SESSION_EXPIRED` error is returned
 
-#### 4.4.1 Vernacular Commands via CoqBackend
+#### 4.4.1 Coqtop Subprocess for Vernacular Commands
 
-The session's CoqBackend (coqtop) natively supports vernacular command output capture — coqtop returns the output of Print, Check, About, Locate, Search, Compute, and Eval commands directly on stdout. See [coq-proof-backend.md](coq-proof-backend.md) §4.6.
+The session's CoqBackend (coq-lsp) communicates via the LSP protocol, which does not expose the output of successful vernacular introspection commands (Print, Check, About, Locate). See [coq-proof-backend.md](coq-proof-backend.md) §4.5. To capture vernacular output, `submit_command` routes commands through a coqtop subprocess.
 
-`submit_command` routes commands through the session's CoqBackend via `backend.submit_command(command)`. The command executes in the session's current file context — all imports, definitions, and notations loaded during `load_file` and `position_at_proof` are available for introspection.
+The session manager shall lazily spawn a coqtop subprocess on the first `submit_command` call for a given session. The subprocess:
 
-> **Given** an active session on `add_comm`
-> **When** `submit_command(session_id, "Check nat.")` is called
-> **Then** the CoqBackend executes the command and returns the output
+1. Is spawned with stdout and stderr merged into a single stream.
+2. Loads the session's file context — all vernacular commands from the entire `.v` file (imports, definitions, notations, section variables, all lemmas with their proofs, etc.) — so that vernacular introspection commands can reference any definition in the file. If the session has no proof target (i.e., `proof_name` is empty), loads only the file's `Require`/`Import` commands.
+3. Persists for the lifetime of the session — subsequent `submit_command` calls reuse the same subprocess.
+4. Is terminated when the session is closed, times out, or the CoqBackend crashes.
+
+The coqtop subprocess is independent of the CoqBackend process. Commands executed in coqtop do not affect the CoqBackend's proof state, and tactic operations in the CoqBackend do not affect the coqtop environment.
+
+| Property | CoqBackend (coq-lsp) | Coqtop subprocess |
+|----------|---------------------|-------------------|
+| Purpose | Proof interaction (tactics, undo, state observation) | Vernacular output capture |
+| Protocol | LSP JSON-RPC | stdin/stdout with sentinel-based detection |
+| Spawning | Eager (at session creation) | Lazy (on first `submit_command`) |
+| Lifecycle | Session creation → session close | First `submit_command` → session close |
+
+> **Given** a session that has never called `submit_command`
+> **When** `submit_command(session_id, "Check nat.")` is called for the first time
+> **Then** a coqtop subprocess is spawned, the entire file's vernacular content is loaded, the command is executed, and the output is returned
 
 > **Given** a session on `add_comm` in a file containing `Lemma my_lemma : ... Proof. ... Qed.` before `add_comm`
 > **When** `submit_command(session_id, "Check my_lemma.")` is called
-> **Then** the output contains the type of `my_lemma`, because the file content up to the proof target was loaded into the coqtop process
+> **Then** the output contains the type of `my_lemma`, because the entire file content was loaded into the coqtop subprocess
+
+> **Given** a session on `add_0_r_v1` in a file containing `add_0_r_v1`, `add_0_r_v2`, and `add_0_r_v3` defined in sequence
+> **When** `submit_command(session_id, "Print Assumptions add_0_r_v3.")` is called
+> **Then** the output contains the assumptions of `add_0_r_v3`, because the entire file — including definitions after the proof target — was loaded into the coqtop subprocess
+
+> **Given** a session with an active coqtop subprocess
+> **When** `submit_command(session_id, "Print nat.")` is called
+> **Then** the existing coqtop subprocess is reused (no new process is spawned)
 
 #### Output model
 
-The coqtop process is spawned with stdout and stderr merged into a single stream. This is required because the sentinel-based end-of-output detection relies on a probe command whose output destination varies across Coq/Rocq versions and flags. Merging at the OS level ensures the sentinel is always visible.
+The coqtop subprocess is spawned with stdout and stderr merged into a single stream. This is required because the sentinel-based end-of-output detection relies on a `Fail` command whose output destination varies across Coq/Rocq versions and flags. Merging at the OS level ensures the sentinel is always visible.
 
 Consumers that need to distinguish code from errors or warnings (e.g., the extraction handler) use pattern matching on the merged output string. The session manager does not perform any classification — it returns the raw merged output.
 
@@ -271,7 +293,7 @@ Consumers that need to distinguish code from errors or warnings (e.g., the extra
 
 | Property | `submit_tactic` | `submit_command` |
 |----------|-----------------|------------------|
-| Backend | CoqBackend (coqtop) | CoqBackend (coqtop) |
+| Backend | CoqBackend (coq-lsp) | Coqtop subprocess |
 | Return type | `ProofState` (structured) | `str` (raw merged output) |
 | State tracking | Updates `step_history` and `current_step` | No state tracking |
 | Use case | Interactive proof stepping | Extraction, notation inspection, assumption auditing, queries |
@@ -394,14 +416,12 @@ Each session owns one CoqBackend instance. The interface is defined by the `CoqB
 | `load_file(path)` | File path string | None | Raises on file not found or Coq check failure |
 | `position_at_proof(name)` | Proof name string | Initial ProofState | Raises on proof not found |
 | `execute_tactic(tactic)` | Tactic string | ProofState | Raises on tactic failure (includes Coq error message) |
-| `get_proof_state()` | None | ProofState | None |
-| `get_proof_term()` | None | Proof term text (str) | Returns empty string on failure |
-| `undo()` | None | None | May fail |
-| `get_premises()` | None | Per-step premise annotations | None |
-| `submit_command(cmd)` | Command string | Output text (str) | Raises on coqtop error |
+| `get_current_state()` | None | ProofState | None |
+| `undo()` | None | None | Backend-dependent; may fail if undo is unsupported |
+| `get_premises_at_step(step)` | Step index integer | List of raw premise references | Backend-dependent |
 | `shutdown()` | None | None | Always succeeds (kills process) |
 
-The CoqBackend wraps a coqtop subprocess. It provides proof interaction (tactics, state observation), proof term access (`Show Proof.`), premise extraction (proof term diffing), and vernacular command execution — all through a single process.
+The CoqBackend abstracts the difference between coq-lsp and SerAPI. The session manager does not know which backend is in use.
 
 ## 7. State and Lifecycle
 
@@ -412,7 +432,7 @@ The CoqBackend wraps a coqtop subprocess. It provides proof interaction (tactics
 | — | `create_session` | File exists, proof found | Spawn backend, read initial state, register | `active` |
 | — | `create_session` | File not found | Return `FILE_NOT_FOUND` | — |
 | — | `create_session` | Proof not found | Kill backend, return `PROOF_NOT_FOUND` | — |
-| `active` | `close_session` | — | Kill backend, deregister | `closed` (terminal) |
+| `active` | `close_session` | — | Kill backend and coqtop subprocess (if spawned), deregister | `closed` (terminal) |
 | `active` | `submit_tactic` | Tactic succeeds | Truncate forward history, append state, increment step | `active` |
 | `active` | `submit_tactic` | Tactic fails | Return `TACTIC_ERROR` | `active` |
 | `active` | `step_forward` | `current_step < total_steps` | Execute next original tactic, append state, increment step | `active` |
@@ -428,8 +448,9 @@ The CoqBackend wraps a coqtop subprocess. It provides proof interaction (tactics
 | `active` | `get_step_premises` | Valid step | Ensure stepped through, return premises | `active` |
 | `active` | `get_step_premises` | Invalid step | Return `STEP_OUT_OF_RANGE` | `active` |
 | `active` | `submit_tactic_batch` | — | Process sequentially per §4.3 | `active` |
-| `active` | `submit_command` | — | Send command to backend, return output | `active` |
-| `active` | timeout sweep | Idle > 30 min | Kill backend, deregister, log | `timed_out` (terminal) |
+| `active` | `submit_command` | coqtop not spawned | Spawn coqtop, load imports, send command, return output | `active` |
+| `active` | `submit_command` | coqtop already spawned | Send command to existing coqtop, return output | `active` |
+| `active` | timeout sweep | Idle > 30 min | Kill backend and coqtop subprocess (if spawned), deregister, log | `timed_out` (terminal) |
 | `active` | backend crash | Process exited unexpectedly | Mark crashed, log | `crashed` |
 | `crashed` | `close_session` | — | Deregister | `closed` (terminal) |
 | `crashed` | Any operation except `close_session` | — | Return `BACKEND_CRASHED` | `crashed` |

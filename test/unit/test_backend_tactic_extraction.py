@@ -19,12 +19,13 @@ from Poule.session.backend import CoqProofBackend
 
 
 def _make_backend_stub() -> CoqProofBackend:
-    """Create a CoqProofBackend with a mocked process (no real coqtop)."""
+    """Create a CoqProofBackend with a mocked process (no real coq-lsp)."""
     proc = MagicMock()
     proc.returncode = None
     backend = CoqProofBackend.__new__(CoqProofBackend)
     backend._proc = proc
     backend._shut_down = False
+    backend._doc_uri = None
     backend._file_path = None
     return backend
 
@@ -164,6 +165,125 @@ class TestExtractTacticsRegexWithFQN:
         assert any("induction" in t for t in tactics)
 
 
-# _extract_tactics_from_spans tests removed: coq-lsp document model
-# is no longer used (coqtop backend migration). Tactic extraction now
-# uses regex splitting via _extract_tactics_regex and tactic_splitter.
+# ═══════════════════════════════════════════════════════════════════════════
+# FQN → short name in _extract_tactics_from_spans
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestExtractTacticsFromSpansWithFQN:
+    """_extract_tactics_from_spans must find proof body when proof_name
+    is a fully-qualified name."""
+
+    def _make_spans(self, texts):
+        """Build fake document spans from a list of text strings."""
+        spans = []
+        line = 0
+        for txt in texts:
+            spans.append({
+                "range": {
+                    "start": {"line": line, "character": 0},
+                    "end": {"line": line, "character": len(txt)},
+                },
+            })
+            line += 1
+        return spans
+
+    def test_fqn_finds_lemma_span(self):
+        """FQN matches the declaration span containing the short name."""
+        backend = _make_backend_stub()
+        texts = [
+            "Lemma add_comm : forall n m, n + m = m + n.",
+            "Proof.",
+            "intros n m.",
+            "ring.",
+            "Qed.",
+        ]
+        full_text = "\n".join(texts)
+        spans = self._make_spans(texts)
+
+        tactics = backend._extract_tactics_from_spans(
+            full_text, spans, "Stdlib.Arith.PeanoNat.Nat.add_comm",
+        )
+        assert len(tactics) == 2
+        assert "intros" in tactics[0]
+        assert "ring" in tactics[1]
+
+    def test_short_name_still_works_spans(self):
+        """Short name continues to work in span-based extraction."""
+        backend = _make_backend_stub()
+        texts = [
+            "Lemma add_comm : forall n m, n + m = m + n.",
+            "Proof.",
+            "intros n m.",
+            "ring.",
+            "Qed.",
+        ]
+        full_text = "\n".join(texts)
+        spans = self._make_spans(texts)
+
+        tactics = backend._extract_tactics_from_spans(full_text, spans, "add_comm")
+        assert len(tactics) == 2
+
+    def test_definition_does_not_steal_next_proof_spans(self):
+        """Definition followed by Lemma+Proof must not capture the Proof."""
+        backend = _make_backend_stub()
+        texts = [
+            "Definition in_int p q r := p <= r /\\ r < q.",
+            "Lemma in_int_intro : forall p q r, p <= r -> r < q -> in_int p q r.",
+            "Proof.",
+            "  split; assumption.",
+            "Qed.",
+        ]
+        full_text = "\n".join(texts)
+        spans = self._make_spans(texts)
+
+        tactics = backend._extract_tactics_from_spans(full_text, spans, "in_int")
+        assert tactics == []
+
+    def test_fixpoint_does_not_steal_next_proof_spans(self):
+        """Fixpoint followed by Lemma+Proof must not capture the Proof."""
+        backend = _make_backend_stub()
+        texts = [
+            "Fixpoint fact (n:nat) : nat := match n with | O => 1 | S n => S n * fact n end.",
+            "Lemma lt_O_fact n : 0 < fact n.",
+            "Proof.",
+            "  induction n; simpl; auto.",
+            "Qed.",
+        ]
+        full_text = "\n".join(texts)
+        spans = self._make_spans(texts)
+
+        tactics = backend._extract_tactics_from_spans(full_text, spans, "fact")
+        assert tactics == []
+
+    def test_no_proof_keyword_extracts_tactics_spans(self):
+        """Proof without explicit Proof. keyword extracts tactics from spans.
+
+        Spec: coq-proof-backend.md §original_script — proofs without Proof.
+        keyword shall return the tactic list."""
+        backend = _make_backend_stub()
+        texts = [
+            "Lemma Iftrue_inv : forall (A B:Prop) (b:bool), IfProp A B b -> b = true -> A.",
+            "destruct 1; intros; auto with bool.",
+            "case diff_true_false; auto with bool.",
+            "Qed.",
+        ]
+        full_text = "\n".join(texts)
+        spans = self._make_spans(texts)
+
+        tactics = backend._extract_tactics_from_spans(full_text, spans, "Iftrue_inv")
+        assert len(tactics) == 2
+        assert "destruct" in tactics[0]
+        assert "case" in tactics[1]
+
+    def test_no_proof_keyword_definition_without_body_spans(self):
+        """Definition without := and without Proof. or tactics returns empty."""
+        backend = _make_backend_stub()
+        texts = [
+            "Definition foo := 42.",
+        ]
+        full_text = "\n".join(texts)
+        spans = self._make_spans(texts)
+
+        tactics = backend._extract_tactics_from_spans(full_text, spans, "foo")
+        assert tactics == []

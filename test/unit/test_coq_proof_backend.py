@@ -140,20 +140,11 @@ class TestLoadFile:
         finally:
             await backend.shutdown()
 
-    async def test_load_file_with_coq_error_in_prelude(self, tmp_path):
-        """Contract test: Coq check failure in prelude raises.
-
-        Note: with the coqtop backend, load_file only sends the prelude
-        (content before the first proof). Errors in non-prelude content
-        are caught at position_at_proof time.
-        """
+    async def test_load_file_with_coq_error(self, tmp_path):
+        """Contract test: Coq check failure raises."""
         create = _import_create_coq_backend()
         v_file = tmp_path / "bad.v"
-        # Put the error in the prelude (before any proof definition)
-        v_file.write_text(
-            "Require Import NonexistentModule.\n"
-            "Lemma foo : True. Proof. exact I. Qed.\n"
-        )
+        v_file.write_text("Definition broken := undefined_term.\n")
 
         backend = await create(str(v_file))
         try:
@@ -596,23 +587,25 @@ class TestLivenessWatchdog:
 
     async def test_watchdog_fires_on_inactivity(self):
         """When the backend produces no output for watchdog_timeout seconds,
-        _read_until_sentinel raises ConnectionError."""
+        _read_message raises ConnectionError."""
         from Poule.session.backend import CoqProofBackend
         from unittest.mock import AsyncMock, MagicMock
 
         proc = MagicMock()
-        proc.returncode = None
         # stdout.readline that never returns (simulates dead backend)
+        never_future = asyncio.Future()
+        proc.stdout = MagicMock()
+        proc.stdout.readline = AsyncMock(return_value=never_future)
+        # Make readline actually hang by using a coroutine that never completes
         async def hang_forever():
             await asyncio.sleep(3600)
             return b""
-        proc.stdout = MagicMock()
         proc.stdout.readline = hang_forever
 
         backend = CoqProofBackend(proc, watchdog_timeout=0.1)
 
         with pytest.raises(ConnectionError, match="unresponsive"):
-            await backend._read_until_sentinel()
+            await backend._read_message()
 
     async def test_no_watchdog_when_none(self):
         """When watchdog_timeout is None, reads block normally (no timeout).

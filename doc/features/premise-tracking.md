@@ -36,11 +36,11 @@ This classification aligns with LeanDojo's premise categories, enabling comparab
 
 ## Resolution Mechanism
 
-Premise resolution uses **proof term diffing**: after each tactic step, the partial proof term is captured via Coq's `Show Proof.` command. Constants (`Const` references) are extracted from the proof term text and diffed against the previous step's constants. New constants are the premises that tactic introduced.
+Premise resolution uses **proof term diffing**: after each tactic step, the partial proof term is captured via Coq's `Show Proof.` command (executed in a coqtop subprocess). Constants (`Const` references) are extracted from the proof term text and diffed against the previous step's constants. New constants are the premises that tactic introduced.
 
 This captures all premise usage — explicit (`apply X`), implicit from automation (`auto`, `simp`, `ring`), and term-style proof fragments — because the kernel's proof term is the ground truth for what was referenced.
 
-The proof backend uses a single coqtop process per session for both proof state observation and proof term capture. coqtop provides direct access to `Show.` (proof state), `Show Proof.` (proof terms), and tactic execution in one process — no dual-process coordination required.
+The coqtop subprocess runs alongside the coq-lsp backend during extraction. coq-lsp handles proof state observation (goals, hypotheses); coqtop handles proof term capture. This dual-process approach works around coq-lsp's limitation of not exposing proof terms through Petanque. When coq-lsp adds a `petanque/proof` endpoint, the coqtop subprocess becomes unnecessary.
 
 ## Accuracy Target
 

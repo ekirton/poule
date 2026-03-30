@@ -962,7 +962,7 @@ class TestSubmitCommand:
         """submit_command returns merged Coq output as a single str."""
         SessionManager = _import_manager()
         backend = _make_mock_backend()
-        backend.submit_command = AsyncMock(return_value="Nat.add : nat -> nat -> nat")
+        backend.execute_vernacular = AsyncMock(return_value="Nat.add : nat -> nat -> nat")
         mgr = SessionManager(backend_factory=_make_backend_factory(backend))
 
         sid, _ = await mgr.create_session("/file.v", "proof1")
@@ -974,7 +974,7 @@ class TestSubmitCommand:
         """MAINTAINS: submit_command does not track states or update step_history."""
         SessionManager = _import_manager()
         backend = _make_mock_backend()
-        backend.submit_command = AsyncMock(return_value="some output")
+        backend.execute_vernacular = AsyncMock(return_value="some output")
         mgr = SessionManager(backend_factory=_make_backend_factory(backend))
 
         sid, initial = await mgr.create_session("/file.v", "proof1")
@@ -987,7 +987,7 @@ class TestSubmitCommand:
         SessionManager = _import_manager()
         state1 = _make_stepped_state(1)
         backend = _make_mock_backend(tactic_results=[state1])
-        backend.submit_command = AsyncMock(return_value="ok")
+        backend.execute_vernacular = AsyncMock(return_value="ok")
         mgr = SessionManager(backend_factory=_make_backend_factory(backend))
 
         sid, _ = await mgr.create_session("/file.v", "proof1")
@@ -1029,7 +1029,7 @@ class TestSubmitCommand:
         """submit_command updates last_active_at timestamp."""
         SessionManager = _import_manager()
         backend = _make_mock_backend()
-        backend.submit_command = AsyncMock(return_value="output")
+        backend.execute_vernacular = AsyncMock(return_value="output")
         mgr = SessionManager(backend_factory=_make_backend_factory(backend))
 
         sid, _ = await mgr.create_session("/file.v", "proof1")
@@ -1045,7 +1045,7 @@ class TestSubmitCommand:
         SessionManager = _import_manager()
         backend = _make_mock_backend()
         merged_output = "let my_fn x = x + 1\nWarning: axiom has no body."
-        backend.submit_command = AsyncMock(return_value=merged_output)
+        backend.execute_vernacular = AsyncMock(return_value=merged_output)
         mgr = SessionManager(backend_factory=_make_backend_factory(backend))
 
         sid, _ = await mgr.create_session("/file.v", "proof1")
@@ -1058,28 +1058,35 @@ class TestSubmitCommand:
     async def test_serialized_per_session(self):
         """Concurrency: submit_command is serialized per session (§7.2).
 
-        submit_command routes through the backend's submit_command method,
-        which is serialized by the per-session lock."""
+        submit_command routes through coqtop (prefer_coqtop=True per §4.4),
+        so we mock _read_until_sentinel to inject delays and track ordering."""
         SessionManager = _import_manager()
         backend = _make_mock_backend()
+        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
+
+        sid, _ = await mgr.create_session("/file.v", "proof1")
+
+        # Pre-set a coqtop_proc so _ensure_coqtop is not called
+        fake_proc = MagicMock()
+        fake_proc.stdin = MagicMock()
+        fake_proc.stdin.write = MagicMock()
+        fake_proc.stdin.drain = AsyncMock()
+        mgr._registry[sid].coqtop_proc = fake_proc
 
         call_order = []
 
-        async def slow_submit(cmd):
+        async def slow_sentinel(proc, timeout=30.0):
             cmd_label = f"cmd{len([e for e in call_order if e[0] == 'start']) + 1}"
             call_order.append(("start", cmd_label))
             await asyncio.sleep(0.01)
             call_order.append(("end", cmd_label))
             return f"result of {cmd_label}"
 
-        backend.submit_command = AsyncMock(side_effect=slow_submit)
-        mgr = SessionManager(backend_factory=_make_backend_factory(backend))
-
-        sid, _ = await mgr.create_session("/file.v", "proof1")
-        r1, r2 = await asyncio.gather(
-            mgr.submit_command(sid, "cmd1"),
-            mgr.submit_command(sid, "cmd2"),
-        )
+        with patch.object(mgr, '_read_until_sentinel', new_callable=AsyncMock, side_effect=slow_sentinel):
+            r1, r2 = await asyncio.gather(
+                mgr.submit_command(sid, "cmd1"),
+                mgr.submit_command(sid, "cmd2"),
+            )
         assert isinstance(r1, str)
         assert isinstance(r2, str)
         # Serialization: first command must finish before second starts
@@ -1845,23 +1852,38 @@ class TestCoqtopSubprocessLifecycle:
         assert ss.coqtop_proc is None
 
     async def test_submit_command_routes_through_coqtop_not_backend(self):
-        """Spec §4.4: submit_command routes through the session's CoqBackend
-        (coqtop), which natively captures vernacular output.
+        """Spec §4.4: submit_command sends command to a coqtop subprocess,
+        NOT the session's CoqBackend.
 
         Given an active session,
         When submit_command is called,
-        Then the command is routed through backend.submit_command."""
+        Then the command is routed through a coqtop subprocess
+        and NOT through coq_backend.execute_vernacular.
+
+        Note: the spec was updated to require coqtop routing for
+        submit_command because coq-lsp cannot capture vernacular output."""
         SessionManager = _import_manager()
         backend = _make_mock_backend()
-        backend.submit_command = AsyncMock(return_value="nat : Set")
+        backend.execute_vernacular = AsyncMock(return_value="should not be called")
         mgr = SessionManager(backend_factory=_make_backend_factory(backend))
 
         sid, _ = await mgr.create_session("/file.v", "proof1")
-        result = await mgr.submit_command(sid, "Check nat.")
+
+        # Pre-set a coqtop_proc to test routing
+        fake_proc = MagicMock()
+        fake_proc.stdin = MagicMock()
+        fake_proc.stdin.write = MagicMock()
+        fake_proc.stdin.drain = AsyncMock()
+        ss = mgr._registry[sid]
+        ss.coqtop_proc = fake_proc
+
+        with patch.object(mgr, '_read_until_sentinel', new_callable=AsyncMock, return_value="nat : Set"):
+            result = await mgr.submit_command(sid, "Check nat.")
 
         assert isinstance(result, str)
-        assert result == "nat : Set"
-        backend.submit_command.assert_called_once_with("Check nat.")
+        # Spec requires coqtop routing — coq_backend.execute_vernacular
+        # should NOT have been called
+        backend.execute_vernacular.assert_not_called()
 
     async def test_close_session_terminates_coqtop_subprocess(self):
         """Spec §7.1 / §4.4.1: close_session kills backend AND coqtop
@@ -1979,7 +2001,7 @@ class TestCoqtopSubprocessLifecycle:
         SessionManager = _import_manager()
         state1 = _make_stepped_state(1)
         backend = _make_mock_backend(tactic_results=[state1])
-        backend.submit_command = AsyncMock(return_value="output")
+        backend.execute_vernacular = AsyncMock(return_value="output")
         mgr = SessionManager(backend_factory=_make_backend_factory(backend))
 
         sid, _ = await mgr.create_session("/file.v", "proof1")
@@ -1996,23 +2018,40 @@ class TestCoqtopSubprocessLifecycle:
         state = await mgr.observe_state(sid)
         assert state.step_index == 1
 
-    async def test_vernacular_routes_through_backend(self):
-        """Spec §4.4.1: Vernacular commands route through the backend's
-        submit_command method.
+    async def test_coqtop_loads_file_context(self):
+        """Spec §4.4.1 step 2: The subprocess loads the session's file context —
+        all vernacular commands preceding the proof target.
 
         Given a session opened on a .v file with a proof_name,
-        When submit_vernacular is called,
-        Then the command is routed through backend.submit_command."""
+        When coqtop is lazily spawned,
+        Then _ensure_coqtop has access to file_path and proof_name for context extraction."""
         SessionManager = _import_manager()
         backend = _make_mock_backend()
-        backend.submit_command = AsyncMock(return_value="output")
         mgr = SessionManager(backend_factory=_make_backend_factory(backend))
 
         sid, _ = await mgr.create_session("/file.v", "proof1")
-        result = await mgr.submit_vernacular(sid, "Check nat.")
 
-        assert result == "output"
-        backend.submit_command.assert_called_once_with("Check nat.")
+        ensure_called = False
+
+        async def tracking_ensure(ss):
+            nonlocal ensure_called
+            ensure_called = True
+            # Verify both file_path and proof_name are available
+            assert ss.file_path == "/file.v"
+            assert ss.proof_name == "proof1"
+            # Set up a fake proc so we can proceed
+            fake_proc = MagicMock()
+            fake_proc.stdin = MagicMock()
+            fake_proc.stdin.write = MagicMock()
+            fake_proc.stdin.drain = AsyncMock()
+            ss.coqtop_proc = fake_proc
+            return fake_proc
+
+        with patch.object(mgr, '_ensure_coqtop', side_effect=tracking_ensure):
+            with patch.object(mgr, '_read_until_sentinel', new_callable=AsyncMock, return_value="output"):
+                await mgr.submit_vernacular(sid, "Check nat.")
+
+        assert ensure_called, "_ensure_coqtop must be called on first submit_vernacular"
 
     async def test_coqtop_persists_for_session_lifetime(self):
         """Spec §4.4.1 step 3: The coqtop subprocess persists for the

@@ -84,8 +84,8 @@ The `session_id` parameter determines the execution backend.
 #### Session-aware execution (session_id provided)
 
 1. The handler shall resolve the session via the Proof Session Manager's session registry.
-2. The handler shall submit the vernacular command string to the session via `submit_command`. The session manager routes this through the session's CoqBackend (coqtop). See [proof-session.md](proof-session.md) §4.4.1.
-3. The command shall execute in the session's file context: all vernacular commands from the `.v` file that precede the proof target (imports, definitions, notations, prior lemmas, etc.) are loaded into the coqtop process. This makes same-file definitions available for introspection.
+2. The handler shall submit the vernacular command string to the session via `submit_command`. The session manager routes this through a coqtop subprocess (not the session's coq-lsp backend), because coq-lsp's LSP protocol does not expose vernacular command output. See [proof-session.md](proof-session.md) §4.4.1.
+3. The command shall execute in the session's file context: all vernacular commands from the `.v` file that precede the proof target (imports, definitions, notations, prior lemmas, etc.) are loaded into the coqtop subprocess. This makes same-file definitions available for introspection. Local proof hypotheses and let-bindings from the coq-lsp proof state are not available in the coqtop subprocess.
 
 - MAINTAINS: The session's proof state (managed by the CoqBackend) is not modified. The coqtop subprocess environment may be modified by side-effecting commands, but this does not affect the proof state.
 

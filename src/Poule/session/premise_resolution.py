@@ -19,21 +19,11 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-# Match global constant references in Show Proof. output:
-# Pattern 1: @Qualified.Name or @name (e.g., @eq_refl — @ marks it as global)
-_AT_CONST_PATTERN = re.compile(r"@([A-Za-z_][A-Za-z0-9_.']*)")
-
-# Pattern 2: Qualified.Name without @ prefix (Rocq 9.x sometimes omits @).
-# Must contain at least one dot to distinguish from local variables.
-# Negative lookbehind for @ to avoid double-matching.
-_QUALIFIED_PATTERN = re.compile(
-    r"(?<!@)\b([A-Z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_']*)+)"
-)
-
-# Keywords and type names to exclude from qualified name matching
-_EXCLUDED_NAMES = frozenset({
-    "Set", "Prop", "Type", "SProp",
-})
+# Match global constant references in Show Proof. output (with Set Printing All):
+# - @Qualified.Name (e.g., @Nat.add_comm)
+# - @name (e.g., @eq_refl — unqualified but @ marks it as global)
+# The @ prefix is required to distinguish globals from local variables.
+_CONST_PATTERN = re.compile(r"@([A-Za-z_][A-Za-z0-9_.']*)")
 
 
 def extract_constants_from_proof_term(proof_term_text: str) -> set[str]:
@@ -41,20 +31,10 @@ def extract_constants_from_proof_term(proof_term_text: str) -> set[str]:
 
     Returns a set of names like {"Nat.add_comm", "Coq.Init.Logic.eq_refl"}.
     Local variables, de Bruijn indices, and ?Goal placeholders are excluded.
-
-    Matches both @-prefixed names and bare qualified names (with dots).
-    Rocq 9.x may omit the @ prefix for some constants in Show Proof. output.
     """
     if not proof_term_text:
         return set()
-    # Collect @-prefixed names
-    result = set(_AT_CONST_PATTERN.findall(proof_term_text))
-    # Collect qualified names without @ (must contain at least one dot)
-    for m in _QUALIFIED_PATTERN.finditer(proof_term_text):
-        name = m.group(1)
-        if name not in _EXCLUDED_NAMES:
-            result.add(name)
-    return result
+    return set(_CONST_PATTERN.findall(proof_term_text))
 
 
 def resolve_step_premises(

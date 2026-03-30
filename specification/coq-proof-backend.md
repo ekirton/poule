@@ -1,6 +1,6 @@
 # Coq Proof Backend
 
-Per-session coqtop process wrapper providing bidirectional, stateful proof interaction.
+Per-session Coq process wrapper providing bidirectional, stateful proof interaction.
 
 **Architecture**: [proof-session.md](../doc/architecture/proof-session.md) (CoqBackend Interface, Process Isolation, Crash Detection), [component-boundaries.md](../doc/architecture/component-boundaries.md) (Proof Session Manager → Coq Backend Processes)
 **Data models**: [proof-types.md](../doc/architecture/data-models/proof-types.md)
@@ -9,40 +9,36 @@ Per-session coqtop process wrapper providing bidirectional, stateful proof inter
 
 ## 1. Purpose
 
-Define the `CoqBackend` protocol and the `create_coq_backend` factory function that the Proof Session Manager uses to spawn and communicate with per-session coqtop processes. The backend provides a uniform async interface for file loading, proof positioning, tactic execution, state observation, undo, premise extraction, and process shutdown — all through a single coqtop subprocess per session.
+Define the `CoqBackend` protocol and the `create_coq_backend` factory function that the Proof Session Manager uses to spawn and communicate with per-session Coq processes. The backend abstracts the difference between coq-lsp and SerAPI, presenting a uniform async interface for file loading, proof positioning, tactic execution, state observation, undo, premise extraction, and process shutdown.
 
 ## 2. Scope
 
-**In scope**: `CoqBackend` protocol definition, `create_coq_backend` factory, coqtop process spawning and communication (sentinel-based framing), `.v` file loading and proof positioning, tactic execution and state translation (parsing `Show.` output), tactic boundary detection (sentence splitting), undo mechanism, premise extraction via proof term diffing (`Show Proof.`), vernacular command execution, process shutdown and crash detection, error translation.
+**In scope**: `CoqBackend` protocol definition, `create_coq_backend` factory, process spawning and communication, `.v` file loading and proof positioning, tactic execution and state translation, undo mechanism, premise extraction, process shutdown and crash detection, error translation.
 
-**Out of scope**: Session registry and lifecycle management (owned by proof-session), proof state serialization (owned by proof-serialization), MCP protocol handling (owned by mcp-server), extraction of declarations from `.vo` files (owned by extraction — uses coq-lsp, a separate backend with a different interface).
+**Out of scope**: Session registry and lifecycle management (owned by proof-session), proof state serialization (owned by proof-serialization), MCP protocol handling (owned by mcp-server), extraction of declarations from `.vo` files (owned by extraction — separate backend with a different interface), vernacular command output capture (see §4.5).
 
 ## 3. Definitions
 
 | Term | Definition |
 |------|-----------|
-| CoqBackend | An async protocol wrapping a single coqtop subprocess for interactive proof exploration |
-| Backend factory | An async callable `(file_path: str) -> CoqBackend` that spawns a new coqtop process |
-| Proof positioning | Loading a `.v` file prelude and navigating to a named proof, making its initial state observable |
-| Original script | The sequence of tactic strings comprising a completed proof's body, extracted by sentence splitting |
-| Sentence splitter | A regex-based parser that segments a proof body into individual tactic commands |
-| Sentinel framing | An output boundary detection mechanism using a probe command (`Check __POULE_SENTINEL__.`) whose known error response marks the end of the previous command's output |
-| Proof term diffing | Extracting per-tactic premise annotations by comparing the `Show Proof.` output before and after each tactic step |
+| CoqBackend | An async protocol abstracting a single coq-lsp or SerAPI process for interactive proof exploration |
+| Backend factory | An async callable `(file_path: str) -> CoqBackend` that spawns a new backend process |
+| Proof positioning | Navigating a loaded `.v` file to the start of a named proof, making its initial state observable |
+| Original script | The sequence of tactic strings comprising a completed proof's body, extracted during positioning |
+| Raw premise reference | A backend-dependent representation of a premise used by a tactic, before classification into the `Premise` type |
 
 ## 4. Behavioral Requirements
 
 ### 4.1 CoqBackend Protocol
 
-The `CoqBackend` protocol defines 10 async operations. All operations except `shutdown` may raise exceptions on failure. Every `CoqBackend` instance is bound to a single coqtop process — it is not reusable across processes.
+The `CoqBackend` protocol defines 7 async operations. All operations except `shutdown` may raise exceptions on failure. Every `CoqBackend` instance is bound to a single Coq process — it is not reusable across processes.
 
 #### load_file(file_path)
 
 - REQUIRES: `file_path` is a non-empty string pointing to a `.v` source file.
-- ENSURES: The backend reads the `.v` file and sends all content preceding the target proof to the coqtop process: `Require Import` directives, module headers, prior definitions, and notation declarations. After successful return, the file's context is loaded and proofs are available for positioning. The backend retains the file path and parsed prelude for the lifetime of the process.
+- ENSURES: The backend process loads and checks the file. After successful return, the file's definitions and proofs are accessible for positioning. The backend retains the file context for the lifetime of the process.
 - On file not found or unreadable: raises `FileNotFoundError` or `OSError`.
 - On Coq check failure (syntax error, dependency missing): raises an exception with the Coq error message.
-
-The prelude is extracted from the source file using the same `_extract_prelude_up_to_proof` mechanism currently used by `ProofTermResolver`: all content from the file start up to (but not including) the first proof-mode-entering command is sent to coqtop sentence by sentence.
 
 > **Given** a valid `.v` file with no Coq errors
 > **When** `load_file(path)` is called
@@ -52,17 +48,15 @@ The prelude is extracted from the source file using the same `_extract_prelude_u
 > **When** `load_file(path)` is called
 > **Then** `FileNotFoundError` is raised
 
-> **Given** a `.v` file with a syntax error in its prelude
+> **Given** a `.v` file with a syntax error
 > **When** `load_file(path)` is called
 > **Then** an exception is raised containing the Coq error diagnostic
 
 #### position_at_proof(proof_name)
 
 - REQUIRES: `load_file` has been called successfully. `proof_name` is a non-empty string.
-- ENSURES: The backend sends the named proof's theorem statement and `Proof.` command to coqtop, entering proof mode. It queries `Show.` for the initial proof state and parses the output into a `ProofState`. If the proof has an existing tactic script, the backend makes it accessible via `original_script`. During positioning, the backend caches the proof state text and proof term text at each step of the original script replay (see `original_states`).
+- ENSURES: The backend navigates to the start of the named proof. Returns a `ProofState` representing the initial state (step 0) — the state immediately after the proof command (`Theorem`, `Lemma`, `Proof`, etc.) but before any tactic. If the proof has an existing tactic script, the backend makes the original script accessible via the `original_script` attribute.
 - On proof not found: raises `ValueError`, `KeyError`, or `LookupError`.
-
-The backend locates the proof in the source file using the proof name and extracts the theorem statement. For proofs that follow a previous proof in the same file, the backend sends all intervening vernacular (definitions, imports, etc.) to coqtop before the theorem statement.
 
 The returned `ProofState` shall have:
 - `schema_version`: the current schema version (1)
@@ -85,16 +79,8 @@ The returned `ProofState` shall have:
 - REQUIRES: `position_at_proof` has been called successfully.
 - ENSURES: A `list[str]` containing the tactic strings from the proof's existing script, in order. Empty list if the proof has no script (e.g., opened interactively without a body).
 - Each string is a single tactic command as it appears in the source, including the trailing period (e.g., `"intros n m."`).
-- Tactic boundaries shall be derived from a sentence splitter that segments the proof body text (between the `Proof.` keyword and the `Qed`/`Defined`/`Admitted`/`Abort` terminator) into individual sentences.
-
-The sentence splitter shall handle:
-- **Standard period-terminated sentences**: Split on `.` followed by whitespace or EOF.
-- **Bullet markers** (`-`, `+`, `*`, `--`, `++`, `**`): Each bullet at line start is a separate sentence. Split before each bullet.
-- **Braces** (`{`, `}`): Each brace is its own sentence.
-- **Periods inside comments** (`(* ... *)`): Strip comments before splitting.
-- **Periods inside strings** (`"..."`): Skip string literals.
-- **ssreflect tactic chains** (`move=> /eqP H; rewrite H.`): The period ends the chain; semicolons are internal. This parses correctly with period-based splitting.
-- **Numeric literals** (`1`, `2.5`): Not a concern — Coq tactic-mode periods are always followed by whitespace or EOF.
+- Tactic boundaries shall be derived from the coq-lsp document model (`coq/getDocument` sentence ranges) when available. The backend queries `coq/getDocument` for the loaded file, identifies spans within the proof body (between the `Proof.` keyword and the `Qed`/`Defined`/`Admitted` terminator), and extracts the source text for each sentence span. This produces exact tactic boundaries as parsed by coq-lsp's Fleche engine — handling bullets (`-`, `+`, `*`), braces (`{`, `}`), comments containing periods, numeric literals, ssreflect tactic chains, and all other Coq syntax that a regex-based splitter cannot reliably handle.
+- When `coq/getDocument` is unavailable or returns no spans (e.g., a non-Fleche backend), the backend shall fall back to regex-based sentence splitting as a degraded mode.
 
 > **Given** a proof with body `intros n m. ring.`
 > **When** `original_script` is accessed after `position_at_proof`
@@ -106,7 +92,7 @@ The sentence splitter shall handle:
 
 > **Given** a proof with body `intros n. - simpl. ring. - reflexivity.` (using bullet markers)
 > **When** `original_script` is accessed after `position_at_proof`
-> **Then** each bullet marker and its tactic are correctly split as separate sentences
+> **Then** each bullet marker and its tactic are correctly split as separate sentences, matching coq-lsp's sentence segmentation
 
 > **Given** a proof without an explicit `Proof.` keyword where tactics begin directly after the statement (e.g., `Lemma foo : P. intros. auto. Qed.`)
 > **When** `original_script` is accessed after `position_at_proof`
@@ -115,26 +101,25 @@ The sentence splitter shall handle:
 #### original_states (attribute)
 
 - REQUIRES: `position_at_proof` has been called successfully.
-- ENSURES: A `list` of cached state records, one per successfully replayed step of the original script (index 0 = initial state before any tactic, index k = state after tactic k). Each record contains the parsed proof state text (`Show.` output) and the proof term text (`Show Proof.` output) at that step.
-- During `position_at_proof`, the backend replays the original script by sending each tactic to coqtop and caching `Show.` and `Show Proof.` output at each step. If a tactic fails at step k, the list contains states 0..k-1 (the successfully replayed prefix).
-- The session manager uses `original_states` to provide proof states and premise annotations without requiring a second replay.
+- ENSURES: A `list` of backend state tokens, one per successfully replayed step of the original script (index 0 = initial state before any tactic, index k = state after tactic k). During `position_at_proof`, the backend replays the original script via `petanque/run` to build this state history. If a tactic fails at step k, the list contains states 0..k-1 (the successfully replayed prefix). These state tokens are valid for subsequent calls to `petanque/goals` and `petanque/premises` without requiring a second replay.
+- The session manager may use `original_states` to extract proof states and premises without invoking `execute_tactic`, avoiding redundant replay of the original proof script.
 
 > **Given** a proof with 5 tactics that all replay successfully
 > **When** `original_states` is accessed after `position_at_proof`
-> **Then** it contains 6 cached state records (initial + one per tactic)
+> **Then** it contains 6 state tokens (initial + one per tactic)
 
 > **Given** a proof with 5 tactics where tactic 3 fails during replay
 > **When** `original_states` is accessed after `position_at_proof`
-> **Then** it contains 3 cached state records (initial + states after tactics 1 and 2)
+> **Then** it contains 3 state tokens (initial + states after tactics 1 and 2)
 
 #### execute_tactic(tactic)
 
 - REQUIRES: A proof is active (either via `position_at_proof` or a previous `execute_tactic` that did not complete the proof). `tactic` is a non-empty string.
-- ENSURES: The tactic is sent to coqtop for execution. On success, queries `Show.` and parses the output into a `ProofState`. On Coq-level failure (invalid tactic, type mismatch, etc.), raises an exception containing the Coq error message; the backend's internal state is unchanged (the failed tactic is not applied).
+- ENSURES: The tactic is sent to the Coq process for execution. On success, returns a `ProofState` reflecting the state after the tactic. On Coq-level failure (invalid tactic, type mismatch, etc.), raises an exception containing the Coq error message; the backend's internal state is unchanged (the failed tactic is not applied).
 
 The returned `ProofState` shall have:
 - `step_index`: the value the session manager will assign (the backend may return 0; the session manager overwrites this)
-- `is_complete`: true if no goals remain after the tactic (coqtop prints `No more goals.` or `No more subgoals.`)
+- `is_complete`: true if no goals remain after the tactic
 - `focused_goal_index`: the index of the focused goal, or null if complete
 - `goals`: the updated goal list
 
@@ -150,102 +135,45 @@ The returned `ProofState` shall have:
 > **When** `execute_tactic("reflexivity.")` closes the last goal
 > **Then** the returned ProofState has `is_complete = true`, `focused_goal_index = null`, and `goals = []`
 
-#### get_proof_state()
-
-- REQUIRES: A proof is active.
-- ENSURES: Sends `Show.` to coqtop and parses the output into a `ProofState`.
-
 #### undo()
 
 - REQUIRES: A proof is active and at least one tactic has been executed.
-- ENSURES: Sends `Undo.` to coqtop. The last applied tactic is undone. coqtop supports `Undo` natively, so this is a single command.
-- On failure: may raise an exception. The session manager treats undo failure as best-effort.
+- ENSURES: The last applied tactic is undone. The backend's internal state reverts to the state before the last tactic. The mechanism is backend-dependent (coq-lsp may replay from the start; SerAPI may use `Undo 1.`).
+- On failure (undo unsupported or backend error): may raise an exception. The session manager treats undo failure as best-effort (per architecture: "Backend-dependent; best-effort").
 
 > **Given** a proof at step 3 after executing tactics T1, T2, T3
 > **When** `undo()` is called
 > **Then** the backend state is equivalent to the state after T1 and T2 (step 2)
 
-#### get_proof_term()
+#### get_premises_at_step(step)
 
-- REQUIRES: A proof is active.
-- ENSURES: Sends `Show Proof.` to coqtop and returns the raw proof term text. The text contains the proof term built so far, with `?Goal` placeholders for unsolved goals and fully qualified constant references (e.g., `@Nat.add_comm`).
-- On coqtop failure: returns an empty string.
+- REQUIRES: A proof is active. `step` is a positive integer representing a tactic step index (1-based, corresponding to the tactic at `original_script[step - 1]`). The proof has been executed through at least step `step`.
+- ENSURES: Returns a list of raw premise reference dicts. Each dict contains at minimum `{"name": str, "kind": str}` where `name` is the fully qualified canonical name of the premise and `kind` is one of `"lemma"`, `"hypothesis"`, `"constructor"`, `"definition"`.
+- The extraction mechanism is backend-dependent:
+  - **coq-lsp**: Query proof state annotations or document model at the tactic position
+  - **SerAPI**: Inspect the `Environ` and tactic trace after the step
+
+> **Given** a proof where step 2 uses `rewrite Nat.add_comm.`
+> **When** `get_premises_at_step(2)` is called
+> **Then** the returned list includes `{"name": "Coq.Arith.PeanoNat.Nat.add_comm", "kind": "lemma"}`
+
+> **Given** a proof where step 1 uses `intros n m.` (no external premises)
+> **When** `get_premises_at_step(1)` is called
+> **Then** the returned list is empty
+
+#### get_proof_term_at_step(step)
+
+- REQUIRES: A coqtop subprocess is available (spawned alongside the coq-lsp backend). The proof has been replayed through step `step` in coqtop. `step` is a non-negative integer (0 = initial state before any tactic).
+- ENSURES: Returns the partial proof term text as produced by Coq's `Show Proof.` command at the given step. The text contains the proof term built so far, with `?Goal` placeholders for unsolved goals and fully qualified constant references (e.g., `@Nat.add_comm`).
+- On coqtop failure (process crashed, tactic divergence): returns an empty string.
 
 > **Given** a proof at step 0 (initial state)
-> **When** `get_proof_term()` is called
+> **When** `get_proof_term_at_step(0)` is called
 > **Then** the returned text contains only `?Goal` (no constants yet)
 
-> **Given** a proof where the last tactic was `apply Nat.add_comm.`
-> **When** `get_proof_term()` is called
+> **Given** a proof where step 1 is `apply Nat.add_comm.`
+> **When** `get_proof_term_at_step(1)` is called
 > **Then** the returned text contains `@Nat.add_comm` (or its fully qualified form)
-
-#### get_premises()
-
-- REQUIRES: `position_at_proof` has been called and the proof has been fully replayed (all steps in `original_states` are cached).
-- ENSURES: Returns a `list[list[dict]]` of per-step premise annotations, computed by diffing proof terms from `original_states`. Each inner list contains `{"name": str, "kind": "lemma"}` dicts for the constants introduced at that step.
-- The diffing uses `extract_constants_from_proof_term` (see §4.3) on each consecutive pair of cached proof terms.
-
-> **Given** a proof with 3 steps where step 2 introduces `Nat.add_comm`
-> **When** `get_premises()` is called
-> **Then** the result is `[[], [{"name": "Nat.add_comm", "kind": "lemma"}], [...]]`
-
-#### submit_command(command)
-
-- REQUIRES: The coqtop process is running.
-- ENSURES: Sends the command to coqtop and returns the output as a string. This captures the output of vernacular commands (Print, Check, About, Locate, Search, Compute, Eval) directly — coqtop returns command output on stdout, unlike coq-lsp which does not expose vernacular output.
-
-> **Given** an active backend with a loaded file
-> **When** `submit_command("Print nat.")` is called
-> **Then** the output contains the definition of `nat`
-
-#### shutdown()
-
-- REQUIRES: None (may be called at any time, including on a crashed or already-shut-down backend).
-- ENSURES: The coqtop process is terminated. All associated resources (file handles, pipes, memory) are released. After shutdown, no other operation may be called. Shutdown shall not raise exceptions — it always succeeds (kills the process if necessary).
-
-> **Given** an active backend with a running coqtop process
-> **When** `shutdown()` is called
-> **Then** the process is terminated and resources are released
-
-> **Given** a backend whose process has already exited (crashed)
-> **When** `shutdown()` is called
-> **Then** the call succeeds without error (idempotent cleanup)
-
-### 4.2 Backend Factory
-
-The system shall provide an async factory function:
-
-#### create_coq_backend(file_path, watchdog_timeout=None, load_paths=None)
-
-- REQUIRES: `file_path` is a non-empty string. `watchdog_timeout` is a positive float (seconds) or `None`. `load_paths` is an optional list of `(directory, logical_prefix)` tuples specifying recursive load path bindings (equivalent to coqtop `-R` flags).
-- ENSURES: Spawns a new coqtop process with `-quiet` flag. When `load_paths` is provided, the process is started with the corresponding `-R` flags so that bare `Require Import` directives in source files resolve correctly. Returns a `CoqBackend` instance connected to that process with the given `watchdog_timeout` configured. The process is ready for `load_file` to be called.
-- On process spawn failure (coqtop not installed, binary not found): raises an exception with a descriptive message.
-
-The factory is the only way to create `CoqBackend` instances. The session manager receives it as a constructor parameter, enabling test injection of mock backends.
-
-#### Load path configuration
-
-Libraries installed under `user-contrib/` are automatically available for fully-qualified imports (e.g., `From Flocq.Core Require Import Zaux`). However, some libraries use bare imports (e.g., `Require Import Zaux`) that rely on recursive load path bindings set during the library's original build. These bare imports fail without the corresponding `-R` flags.
-
-The `load_paths` parameter provides these bindings. For a library installed at `<user-contrib>/<Lib>` with module prefix `<Lib>.`, the binding is `(<user-contrib>/<Lib>, <Lib>)`. The campaign orchestrator derives this from the project path and module prefix.
-
-> **Given** coqtop is installed and available on PATH
-> **When** `create_coq_backend("/path/to/file.v")` is called
-> **Then** a CoqBackend instance is returned with a running coqtop process
-
-> **Given** coqtop is installed and a watchdog_timeout of 600
-> **When** `create_coq_backend("/path/to/file.v", watchdog_timeout=600)` is called
-> **Then** a CoqBackend instance is returned with watchdog_timeout=600 configured
-
-> **Given** coqtop is installed and load_paths=[("/opt/coq/user-contrib/Flocq", "Flocq")]
-> **When** `create_coq_backend("/opt/coq/user-contrib/Flocq/Core/Raux.v", load_paths=[...])` is called
-> **Then** a CoqBackend instance is returned and `load_file` succeeds (bare `Require Import Zaux` resolves via the `-R` flag)
-
-> **Given** coqtop is not installed
-> **When** `create_coq_backend("/path/to/file.v")` is called
-> **Then** an exception is raised indicating no Coq backend is available
-
-### 4.3 Proof Term Diffing
 
 #### extract_constants_from_proof_term(proof_term_text)
 
@@ -265,33 +193,56 @@ The `load_paths` parameter provides these bindings. For a library installed at `
 > **When** `resolve_step_premises` is called
 > **Then** the result is `[{"name": "Nat.add_comm", "kind": "lemma"}]`
 
-### 4.4 ProofState Translation
+#### shutdown()
 
-The backend shall parse coqtop's `Show.` output into the `ProofState` type defined in [proof-types.md](../doc/architecture/data-models/proof-types.md).
+- REQUIRES: None (may be called at any time, including on a crashed or already-shut-down backend).
+- ENSURES: The Coq process is terminated. All associated resources (file handles, pipes, memory) are released. After shutdown, no other operation may be called. Shutdown shall not raise exceptions — it always succeeds (kills the process if necessary).
 
-coqtop's `Show.` output has the following structure:
+> **Given** an active backend with a running Coq process
+> **When** `shutdown()` is called
+> **Then** the process is terminated and resources are released
 
-```
-N goal(s)
+> **Given** a backend whose process has already exited (crashed)
+> **When** `shutdown()` is called
+> **Then** the call succeeds without error (idempotent cleanup)
 
-  h1[, h2, ...] : type
-  h3 := body : type
-  ============================
-  goal_type
+### 4.2 Backend Factory
 
-  ============================
-  goal_type_2
-```
+The system shall provide an async factory function:
 
-The parser (`parse_coqtop_goals`) shall handle:
-- **Header line**: `"N goal(s)"`, `"1 goal"`, or `"No more goals."` / `"No more subgoals."`
-- **Hypothesis block**: Indented lines before `====...`, each with format `name[, name...] : type` or `name := body : type`
-- **Multi-line hypothesis types**: Continuation lines are indented further than the name line
-- **Let-bound hypotheses**: `name := body : type` — the body is stored in `Hypothesis.body`
-- **Hypotheses with multiple names**: `n, m : nat` expands to two Hypothesis objects
-- **Goal separator**: `====...` (4+ equals signs)
-- **Multiple goals**: Subsequent goals may have their own hypothesis blocks or share the context
-- **Unicode and notation**: Types may contain Unicode characters and Coq notation; they are stored verbatim
+#### create_coq_backend(file_path, watchdog_timeout=None, load_paths=None)
+
+- REQUIRES: `file_path` is a non-empty string. `watchdog_timeout` is a positive float (seconds) or `None`. `load_paths` is an optional list of `(directory, logical_prefix)` tuples specifying recursive load path bindings (equivalent to coq-lsp `-R` flags).
+- ENSURES: Spawns a new Coq process (coq-lsp or SerAPI, determined by configuration or availability). When `load_paths` is provided, the process is started with the corresponding `-R` flags so that bare `Require Import` directives in source files resolve correctly. Returns a `CoqBackend` instance connected to that process with the given `watchdog_timeout` configured. The process is ready for `load_file` to be called.
+- On process spawn failure (coq-lsp not installed, binary not found): raises an exception with a descriptive message.
+
+The factory is the only way to create `CoqBackend` instances. The session manager receives it as a constructor parameter, enabling test injection of mock backends.
+
+#### Load path configuration
+
+Libraries installed under `user-contrib/` are automatically available for fully-qualified imports (e.g., `From Flocq.Core Require Import Zaux`). However, some libraries use bare imports (e.g., `Require Import Zaux`) that rely on recursive load path bindings set during the library's original build. These bare imports fail without the corresponding `-R` flags.
+
+The `load_paths` parameter provides these bindings. For a library installed at `<user-contrib>/<Lib>` with module prefix `<Lib>.`, the binding is `(<user-contrib>/<Lib>, <Lib>)`. The campaign orchestrator derives this from the project path and module prefix.
+
+> **Given** coq-lsp is installed and available on PATH
+> **When** `create_coq_backend("/path/to/file.v")` is called
+> **Then** a CoqBackend instance is returned with a running coq-lsp process
+
+> **Given** coq-lsp is installed and a watchdog_timeout of 600
+> **When** `create_coq_backend("/path/to/file.v", watchdog_timeout=600)` is called
+> **Then** a CoqBackend instance is returned with watchdog_timeout=600 configured
+
+> **Given** coq-lsp is installed and load_paths=[("/opt/coq/user-contrib/Flocq", "Flocq")]
+> **When** `create_coq_backend("/opt/coq/user-contrib/Flocq/Core/Raux.v", load_paths=[...])` is called
+> **Then** a CoqBackend instance is returned and `load_file` succeeds (bare `Require Import Zaux` resolves via the `-R` flag)
+
+> **Given** neither coq-lsp nor SerAPI is installed
+> **When** `create_coq_backend("/path/to/file.v")` is called
+> **Then** an exception is raised indicating no Coq backend is available
+
+### 4.3 ProofState Translation
+
+The backend shall translate Coq's internal proof state representation into the `ProofState` type defined in [proof-types.md](../doc/architecture/data-models/proof-types.md).
 
 | Coq concept | ProofState field |
 |-------------|-----------------|
@@ -299,30 +250,55 @@ The parser (`parse_coqtop_goals`) shall handle:
 | Goal conclusion type | `Goal.type` (pretty-printed as a Coq expression string) |
 | Local context entry (variable or assumption) | `Hypothesis` object |
 | Let-binding in local context | `Hypothesis` with `body` set to the definition term |
-| Focused goal (first goal in output) | `focused_goal_index = 0` |
+| Focused goal (selected subgoal) | `focused_goal_index` |
 | No remaining goals | `is_complete = true`, `goals = []` |
-
-Goals shall be ordered by their index as coqtop presents them. Hypotheses within each goal shall be ordered as coqtop presents them in the local context (typically oldest-first).
 
 The backend shall use Coq's pretty-printer for type and body strings. The same Coq version on the same input shall produce identical strings (determinism requirement from proof-serialization spec §4.13).
 
-### 4.5 Premise Classification
+Goals shall be ordered by their index as Coq presents them. Hypotheses within each goal shall be ordered as Coq presents them in the local context (typically oldest-first).
 
-Proof term diffing produces fully qualified constant names. All constants extracted from proof terms are classified as `kind = "lemma"` — proof term constants are always global references (lemmas, theorems, definitions used as lemmas). Local hypotheses do not appear as `@`-prefixed constants in proof terms; they appear as bound variables.
+### 4.4 Premise Classification
+
+When `get_premises_at_step` extracts raw premise references, the backend shall classify each premise:
+
+| Source in the Coq environment | Assigned `kind` |
+|-------------------------------|----------------|
+| Previously proved lemma or theorem | `"lemma"` |
+| Local hypothesis in the proof context | `"hypothesis"` |
+| Inductive type constructor | `"constructor"` |
+| Definition (unfolded or referenced) | `"definition"` |
+
+Classification shall use the Coq environment's declaration metadata. When a local name shadows a global name, the premise shall be classified based on what Coq actually resolved — determined by Coq's scoping rules, not by name lookup in the global environment.
+
+> **Given** a tactic `apply H.` where `H` is a local hypothesis
+> **When** premises are extracted for that step
+> **Then** the premise has `kind = "hypothesis"`
 
 > **Given** a tactic `apply Nat.add_comm.` where `Nat.add_comm` is a global lemma
-> **When** premises are extracted via proof term diffing
-> **Then** the premise has `name = "Nat.add_comm"` and `kind = "lemma"`
+> **When** premises are extracted for that step
+> **Then** the premise has `name = "Coq.Arith.PeanoNat.Nat.add_comm"` and `kind = "lemma"`
 
-### 4.6 Vernacular Output Capture
+> **Given** a local hypothesis named `Nat.add_comm` that shadows the global lemma
+> **When** `apply Nat.add_comm.` is used and Coq resolves it to the local hypothesis
+> **Then** the premise has `kind = "hypothesis"` (matches what Coq resolved, not the global name)
 
-The `CoqBackend` provides vernacular command execution via `submit_command`. coqtop returns the output of Print, Check, About, Locate, Search, Compute, and Eval commands directly on stdout. This eliminates the coq-lsp limitation where successful vernacular queries produced no capturable output.
+### 4.5 Vernacular Output Capture Limitation
 
-The session manager may use the backend's `submit_command` directly for vernacular queries instead of spawning a separate coqtop subprocess.
+The `CoqBackend` protocol does not include a vernacular command execution operation. The coq-lsp backend communicates via the LSP JSON-RPC protocol, which does not expose the output of successful vernacular introspection commands (Print, Check, About, Locate, Search, Compute, Eval):
 
-> **Given** a coqtop backend with a loaded file
-> **When** `submit_command("Print nat.")` is called
-> **Then** the output contains the definition of `nat` (e.g., `"Inductive nat : Set := O : nat | S : nat -> nat."`)
+| coq-lsp mechanism | What it returns | Captures vernacular output? |
+|---|---|---|
+| LSP diagnostics | Errors and warnings only | No — successful queries emit no diagnostic |
+| `textDocument/hover` | Type information for identifiers at cursor position | No — returns hover data, not command output |
+| `coq/getDocument` | Document span ranges | No — returns structural metadata without content |
+
+This is an inherent limitation of the LSP protocol as implemented by coq-lsp, not a bug.
+
+The session manager is responsible for vernacular output capture. When a session requires vernacular command execution (via `submit_command`), the session manager shall use a coqtop subprocess rather than the session's CoqBackend. See [proof-session.md](proof-session.md) §4.4 for the coqtop subprocess lifecycle and routing.
+
+> **Given** a coq-lsp backend with a loaded file
+> **When** a `Print nat.` command is executed via LSP diagnostics
+> **Then** the diagnostics collection is empty (no error occurred, but no output is captured)
 
 ## 5. Data Model
 
@@ -332,13 +308,9 @@ The `CoqBackend` protocol has no persistent data model — it is a stateful proc
 |-----------|---------|
 | `position_at_proof` | `ProofState` |
 | `execute_tactic` | `ProofState` |
-| `get_proof_state` | `ProofState` |
-| `get_proof_term` | `str` (proof term text) |
-| `get_premises` | `list[list[dict]]` with `{"name": str, "kind": str}` entries |
-| `submit_command` | `str` (command output) |
+| `get_premises_at_step` | `list[dict]` with `{"name": str, "kind": str}` entries |
 
 The `original_script` attribute is a `list[str]` — plain tactic strings, not a domain type.
-The `original_states` attribute is a `list` of cached state records (implementation-defined), each containing parsed proof state and proof term text.
 
 ## 6. Interface Contracts
 
@@ -351,11 +323,9 @@ The session manager is the sole consumer of the `CoqBackend` protocol. The contr
 | `load_file(path)` | File path string | None | `FileNotFoundError`, `OSError`, or Coq check error |
 | `position_at_proof(name)` | Proof name string | `ProofState` (initial state) | `ValueError`, `KeyError`, `LookupError` |
 | `execute_tactic(tactic)` | Tactic string | `ProofState` (new state) | Exception with Coq error message |
-| `get_proof_state()` | None | `ProofState` | None |
-| `get_proof_term()` | None | `str` (proof term text) | Returns empty string on failure |
+| `get_current_state()` | None | `ProofState` | None |
 | `undo()` | None | None | Backend-dependent; may fail |
-| `get_premises()` | None | `list[list[dict]]` of per-step premise annotations | Backend-dependent |
-| `submit_command(cmd)` | Command string | `str` (output text) | Exception on coqtop error |
+| `get_premises_at_step(step)` | Step index integer | `list[dict]` of raw premise references | Backend-dependent |
 | `shutdown()` | None | None | Never raises |
 
 Concurrency: each `CoqBackend` instance is used by exactly one session. The session manager's per-session lock ensures that operations on a single backend are serialized. No concurrent calls to the same backend instance.
@@ -365,30 +335,15 @@ Concurrency: each `CoqBackend` instance is used by exactly one session. The sess
 | Property | Value |
 |----------|-------|
 | Transport | stdin/stdout pipes via `asyncio.subprocess` |
-| Protocol | Line-buffered stdin/stdout with sentinel-based output framing |
+| Protocol | coq-lsp: LSP JSON-RPC (Content-Length framed); SerAPI: S-expression protocol |
 | Direction | Bidirectional, stateful |
-| Cardinality | One coqtop process per CoqBackend instance |
+| Cardinality | One Coq process per CoqBackend instance |
 | Lifecycle | Process spawned by `create_coq_backend`, terminated by `shutdown` |
-| Stderr | Merged with stdout via `stderr=subprocess.STDOUT` |
-
-#### Sentinel-based output framing
-
-coqtop does not provide explicit end-of-output markers. The backend uses a sentinel command after each real command to detect when output is complete:
-
-1. Send the real command (e.g., `intros n.`).
-2. Send a sentinel: `Check __POULE_SENTINEL__.`
-3. Read stdout until the sentinel's known error message appears (`Error: The reference __POULE_SENTINEL__ was not found`).
-4. Everything before the sentinel error is the real command's output.
-
-This mechanism is proven in the existing `ProofTermResolver` implementation.
+| Stderr | Redirected to `DEVNULL`; not piped |
 
 #### Stderr handling
 
-The coqtop subprocess stderr shall be merged with stdout via `stderr=subprocess.STDOUT`. This ensures all output — including warnings and error messages — appears on a single stream, preventing pipe buffer deadlocks. The sentinel framing mechanism works on the merged stream.
-
-#### Prompt stripping
-
-coqtop prefixes output lines with prompts (e.g., `Coq < `, `Name < `). The backend shall strip these prompts from all output before parsing. The prompt regex strips patterns matching `^[A-Za-z_]+ < ` from each line.
+The Coq child process stderr shall be redirected to `subprocess.DEVNULL`. Piping stderr without draining it causes a deadlock when the pipe buffer (64 KB on Linux) fills: the child blocks on `write(2, ...)`, cannot read stdin or write stdout, and the parent's `_write_message` / `_read_message` hangs. The watchdog cannot fire because the deadlock occurs in `drain()` before the timed `_read_message`. Redirecting to `DEVNULL` eliminates this class of hang.
 
 ## 7. State and Lifecycle
 
@@ -396,21 +351,19 @@ coqtop prefixes output lines with prompts (e.g., `Coq < `, `Name < `). The backe
 
 | Current State | Event | Guard | Action | Next State |
 |--------------|-------|-------|--------|------------|
-| — | `create_coq_backend` | coqtop binary available | Spawn process | `spawned` |
-| — | `create_coq_backend` | coqtop binary not found | Raise exception | — |
-| `spawned` | `load_file` | File exists, Coq accepts prelude | Send prelude to process | `file_loaded` |
+| — | `create_coq_backend` | Coq binary available | Spawn process, initialize protocol | `spawned` |
+| — | `create_coq_backend` | Coq binary not found | Raise exception | — |
+| `spawned` | `load_file` | File exists, Coq accepts | Send file to process | `file_loaded` |
 | `spawned` | `load_file` | File error | Raise exception | `spawned` |
-| `file_loaded` | `position_at_proof` | Proof found | Send theorem + Proof, parse Show, cache states | `proof_active` |
+| `file_loaded` | `position_at_proof` | Proof found | Navigate to proof start, extract script | `proof_active` |
 | `file_loaded` | `position_at_proof` | Proof not found | Raise exception | `file_loaded` |
-| `proof_active` | `execute_tactic` | Tactic succeeds | Apply tactic, parse Show | `proof_active` |
+| `proof_active` | `execute_tactic` | Tactic succeeds | Apply tactic, return new state | `proof_active` |
 | `proof_active` | `execute_tactic` | Tactic fails | Raise exception, state unchanged | `proof_active` |
-| `proof_active` | `execute_tactic` | Tactic closes all goals | Apply tactic, parse Show | `proof_complete` |
-| `proof_active` | `undo` | Has previous state | Send Undo. | `proof_active` |
-| `proof_active` | `get_premises` | States cached | Diff proof terms, return | `proof_active` |
-| `proof_active` | `submit_command` | — | Send command, return output | `proof_active` |
-| `proof_complete` | `undo` | Has previous state | Send Undo. | `proof_active` |
-| `proof_complete` | `get_premises` | States cached | Diff proof terms, return | `proof_complete` |
-| `proof_complete` | `submit_command` | — | Send command, return output | `proof_complete` |
+| `proof_active` | `execute_tactic` | Tactic closes all goals | Apply tactic, return complete state | `proof_complete` |
+| `proof_active` | `undo` | Has previous state | Revert to previous state | `proof_active` |
+| `proof_active` | `get_premises_at_step` | Valid step | Query and return premises | `proof_active` |
+| `proof_complete` | `undo` | Has previous state | Revert to previous state | `proof_active` |
+| `proof_complete` | `get_premises_at_step` | Valid step | Query and return premises | `proof_complete` |
 | Any | `shutdown` | — | Kill process, release resources | `shut_down` (terminal) |
 | Any | Process exits unexpectedly | — | Mark as crashed | `crashed` (terminal) |
 | `crashed` | `shutdown` | — | No-op (process already gone) | `shut_down` (terminal) |
@@ -418,13 +371,13 @@ coqtop prefixes output lines with prompts (e.g., `Coq < `, `Name < `). The backe
 
 ### 7.2 Process Lifecycle
 
-1. **Spawn**: `create_coq_backend` starts coqtop with `-quiet` and optional `-R` flags.
-2. **Use**: The session manager calls `load_file`, `position_at_proof`, then any combination of `execute_tactic`, `undo`, `get_proof_state`, `get_proof_term`, `get_premises`, and `submit_command`.
+1. **Spawn**: `create_coq_backend` starts the Coq process and completes the protocol initialization handshake (LSP `initialize` for coq-lsp, or SerAPI version query).
+2. **Use**: The session manager calls `load_file`, `position_at_proof`, then any combination of `execute_tactic`, `undo`, `get_premises_at_step`, and `get_current_state`.
 3. **Shutdown**: `shutdown` sends a termination signal and waits for the process to exit. If the process does not exit within a timeout (implementation-defined, recommended 5 seconds), it is forcefully killed (`SIGKILL`).
 
 ### 7.3 Crash Detection
 
-The backend shall monitor its coqtop process. If the process exits unexpectedly (exit code != 0, or signal-terminated):
+The backend shall monitor its Coq process. If the process exits unexpectedly (exit code != 0, or signal-terminated):
 
 1. The backend transitions to `crashed` state.
 2. Any subsequent operation (except `shutdown`) raises an exception.
@@ -434,18 +387,24 @@ The session manager detects the crash when it next calls a backend operation, an
 
 ### 7.4 Liveness Watchdog
 
-When `watchdog_timeout` is configured (non-null), the backend shall wrap each I/O read with a per-read inactivity timeout. If `watchdog_timeout` seconds elapse with no data received on the backend's stdout pipe, the read shall be cancelled and a `ConnectionError` raised with the message `"coqtop unresponsive for {watchdog_timeout}s"`.
+When `watchdog_timeout` is configured (non-null), the backend shall wrap each I/O read in `_read_message` with a per-read inactivity timeout. If `watchdog_timeout` seconds elapse with no data received on the backend's stdout pipe, the read shall be cancelled and a `ConnectionError` raised with the message `"coq-lsp unresponsive for {watchdog_timeout}s"`.
 
-The watchdog timer resets on every successful data read. A tactic that takes several minutes to compute but then produces a response is not affected — the watchdog only fires during complete silence on the pipe.
+The watchdog timer resets on every successful data read. A tactic that takes several minutes to compute but then produces a response in one message is not affected — the watchdog only fires during complete silence on the pipe.
 
 When `watchdog_timeout` is `None`, reads block indefinitely (the default for interactive MCP sessions where the user controls timing).
 
-> **Given** a backend with `watchdog_timeout=600` and a coqtop process that has stopped producing output
-> **When** 600 seconds of inactivity pass during a read
+The `ConnectionError` from a watchdog kill is indistinguishable from a genuine backend crash (EOF on pipe). Both propagate through the same error handling path: `execute_tactic` raises → `extract_trace` catches and returns a partial `ProofTrace` → the campaign emits a `PartialExtractionRecord` or `ExtractionError`.
+
+> **Given** a backend with `watchdog_timeout=600` and a coq-lsp process that has stopped producing output
+> **When** 600 seconds of inactivity pass during a `_read_message` call
 > **Then** a `ConnectionError` is raised with message containing "unresponsive"
 
+> **Given** a backend with `watchdog_timeout=600` and a tactic that takes 300 seconds to compute
+> **When** the tactic completes and coq-lsp responds
+> **Then** the response is received normally (the watchdog did not fire because the 600s window was not exceeded)
+
 > **Given** a backend with `watchdog_timeout=None`
-> **When** the coqtop process stops producing output
+> **When** the coq-lsp process stops producing output
 > **Then** the read blocks indefinitely (no watchdog)
 
 ## 8. Error Specification
@@ -455,34 +414,34 @@ When `watchdog_timeout` is `None`, reads block indefinitely (the default for int
 | Condition | Exception | Category |
 |-----------|-----------|----------|
 | File does not exist or is unreadable | `FileNotFoundError` / `OSError` | Input error |
-| File has Coq syntax or dependency errors | Exception with Coq error message | Dependency error |
+| File has Coq syntax or dependency errors | Backend-specific exception with Coq diagnostic | Dependency error |
 | Proof name not found in loaded file | `ValueError` / `KeyError` / `LookupError` | Input error |
 | Tactic rejected by Coq | Exception with Coq error message | Dependency error |
-| Undo fails | Exception | Dependency error |
-| coqtop not found on PATH | `FileNotFoundError` / `OSError` | Dependency error |
-| coqtop process crashes during operation | Exception (detected by EOF on pipe or nonzero exit) | Dependency error |
-| coqtop process unresponsive (watchdog) | `ConnectionError` (detected by inactivity timeout on pipe) | Dependency error |
+| Undo fails (unsupported or backend error) | Exception (backend-dependent) | Dependency error |
+| Coq process not found on PATH | `FileNotFoundError` / `OSError` | Dependency error |
+| Coq process crashes during operation | Exception (detected by EOF on pipe or nonzero exit) | Dependency error |
+| Coq process unresponsive (watchdog) | `ConnectionError` (detected by inactivity timeout on pipe) | Dependency error |
 | Operation called after shutdown | Undefined behavior (caller's obligation to not call) | Invariant violation |
 
 ### Edge cases
 
 | Condition | Behavior |
 |-----------|----------|
-| `load_file` called twice on same backend | Undefined. Session manager calls it exactly once. |
-| `position_at_proof` called twice | Backend sends `Abort.` to exit current proof, then enters the new proof. |
+| `load_file` called twice on same backend | Backend-dependent; may reload or raise. Session manager calls it exactly once. |
+| `position_at_proof` called twice | Backend-dependent. Session manager calls it exactly once per session. |
 | `execute_tactic` on a completed proof (no goals) | Forwards to Coq; Coq returns an error ("No focused proof") |
-| `undo` at step 0 (before any tactic) | Coqtop returns an error. Session manager guards against this. |
-| `get_premises` before full replay | Returns premises for the replayed prefix only. |
+| `undo` at step 0 (before any tactic) | Backend-dependent; may fail. Session manager guards against this. |
+| `get_premises_at_step` for a step not yet executed | Undefined. Session manager ensures materialization before calling. |
 | `shutdown` called multiple times | Idempotent; second call is a no-op |
 | Process killed by OS (OOM, SIGKILL) | Detected as crash; backend enters `crashed` state |
-| Very large `.v` file (> 10K lines) | No specific limit; bounded by coqtop process memory. |
+| Very large `.v` file (> 10K lines) | No specific limit; bounded by Coq process memory. Session manager does not impose file size limits. |
 
 ## 9. Non-Functional Requirements
 
-- Process spawn time (factory call to ready state): < 2 seconds on a system with Coq installed (coqtop is lighter than coq-lsp).
+- Process spawn time (factory call to ready state): < 5 seconds on a system with Coq installed.
 - Tactic execution overhead (backend wrapper, excluding Coq execution time): < 5 ms per tactic.
 - Shutdown shall complete within 10 seconds (5s graceful + 5s forced kill).
-- Memory: each backend process consumes memory proportional to the Coq environment loaded. Typical: 30–150 MB per process for standard library proofs (lower than coq-lsp due to no LSP overhead).
+- Memory: each backend process consumes memory proportional to the Coq environment loaded. Typical: 50–200 MB per process for standard library proofs.
 
 ## 10. Examples
 
@@ -494,7 +453,6 @@ await backend.load_file("/path/to/arith.v")
 initial_state = await backend.position_at_proof("add_comm")
 # initial_state.goals[0].type ≈ "forall n m, n + m = m + n"
 # backend.original_script = ["intros n m.", "ring."]
-# backend.original_states has 3 entries (initial + 2 tactics)
 
 state1 = await backend.execute_tactic("intros n m.")
 # state1.goals[0].type ≈ "n + m = m + n"
@@ -503,11 +461,8 @@ state1 = await backend.execute_tactic("intros n m.")
 state2 = await backend.execute_tactic("ring.")
 # state2.is_complete = True, state2.goals = []
 
-premises = await backend.get_premises()
-# premises[1] = [{"name": "Coq.setoid_ring.Ring_theory.ring_theory", "kind": "lemma"}]
-
-output = await backend.submit_command("Print nat.")
-# output contains "Inductive nat : Set := O : nat | S : nat -> nat."
+premises = await backend.get_premises_at_step(2)
+# premises = [{"name": "Coq.setoid_ring.Ring_theory.ring_theory", "kind": "lemma"}]
 
 await backend.shutdown()
 # Process terminated, resources released
@@ -530,12 +485,31 @@ except Exception as e:
 await backend.shutdown()
 ```
 
+### Crash scenario
+
+```
+backend = await create_coq_backend("/path/to/file.v")
+await backend.load_file("/path/to/file.v")
+await backend.position_at_proof("my_proof")
+
+# ... Coq process is killed by OS (OOM) ...
+
+try:
+    await backend.execute_tactic("intros.")
+except Exception:
+    # Backend detected process crash
+    pass
+
+await backend.shutdown()  # Succeeds (idempotent)
+```
+
 ## 11. Language-Specific Notes (Python)
 
 - Define `CoqBackend` as a `typing.Protocol` class with async methods.
-- Use `asyncio.create_subprocess_exec` for process spawning, with `stderr=asyncio.subprocess.STDOUT`.
+- Use `asyncio.create_subprocess_exec` for process spawning, with `stderr=asyncio.subprocess.DEVNULL`.
 - Use `asyncio.StreamReader` / `asyncio.StreamWriter` for stdin/stdout pipe communication.
-- Reuse the sentinel-based output framing from `ProofTermResolver` in `premise_resolution.py`.
-- Reuse `extract_constants_from_proof_term` and `resolve_step_premises` from `premise_resolution.py`.
-- Package location: `src/Poule/session/backend.py` (replaces the existing coq-lsp implementation).
-- New modules: `src/Poule/session/coqtop_parser.py` (goal state parser), `src/Poule/extraction/tactic_splitter.py` (sentence splitter).
+- For coq-lsp: reuse the Content-Length framing and JSON-RPC message format from the extraction backend (`poule.extraction.backends.coqlsp_backend`), but implement the proof-specific LSP interactions (document open with tactic stepping, `proof/goals` queries).
+- For SerAPI: use S-expression parsing for responses.
+- The `create_coq_backend` factory should attempt coq-lsp first, falling back to SerAPI if coq-lsp is not available.
+- Package location: `src/poule/session/backend.py`.
+- The `_get_backend_factory` function in `poule.cli.commands` imports `create_coq_backend` from this module.

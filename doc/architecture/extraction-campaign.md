@@ -40,7 +40,7 @@ CLI (extract subcommand)
      Proof Session Manager            JSON Lines output
      (reused from Phase 2)            (see extraction-output.md)
            │
-           │ coqtop subprocess
+           │ coq-lsp / SerAPI
            ▼
      Coq Backend Processes
 ```
@@ -213,28 +213,28 @@ The orchestrator adds: project/file enumeration, failure isolation, streaming ou
 
 ## File-Grouped Extraction
 
-The campaign groups targets by source file and uses one coqtop backend per file. This amortizes the file type-checking cost across all proofs in the file — the dominant CPU cost. The backend's `position_at_proof` cleanly resets per-proof state on each call, so multiple proofs can be extracted from a single loaded document.
+The campaign groups targets by source file and uses one coq-lsp backend per file. This amortizes the file type-checking cost across all proofs in the file — the dominant CPU cost. The backend's `position_at_proof` cleanly resets per-proof state on each call, so multiple proofs can be extracted from a single loaded document.
 
 ```
 For each source file (grouped from campaign plan):
-  spawn coqtop → load_file (type-check once)
+  spawn coq-lsp → load_file (type-check once)
   For each theorem in this file:
     position_at_proof → replay tactics → query goals → query premises
-  shutdown coqtop
+  shutdown coq-lsp
 ```
 
 ### Memory Management (RSS Monitoring)
 
-For large files with many theorems, the coqtop process may accumulate memory during proof extraction. The file-grouped extraction loop monitors the backend's RSS (Resident Set Size) after each proof. When RSS exceeds a configurable threshold, the backend is shut down and respawned, and the file is reloaded. This trades one redundant file type-check for bounded memory usage.
+For large files with many theorems, the coq-lsp process may accumulate memory during proof extraction. The file-grouped extraction loop monitors the backend's RSS (Resident Set Size) after each proof. When RSS exceeds a configurable threshold, the backend is shut down and respawned, and the file is reloaded. This trades one redundant file type-check for bounded memory usage.
 
-The RSS threshold is configurable via environment variable (`POULE_COQTOP_RSS_LIMIT`, default 5 GiB), matching the indexing pipeline's strategy. The RSS check reads `/proc/{pid}/status` (Linux only; on other platforms, the check is a no-op).
+The RSS threshold is configurable via environment variable (`POULE_LSP_RSS_LIMIT`, default 5 GiB), matching the indexing pipeline's strategy. The RSS check reads `/proc/{pid}/status` (Linux only; on other platforms, the check is a no-op).
 
 ## Concurrency Model
 
-The campaign processes files sequentially by default. When `workers > 1`, multiple files are processed concurrently, each with its own coqtop process. Results are collected per-file-group and written in plan order to preserve deterministic output.
+The campaign processes files sequentially by default. When `workers > 1`, multiple files are processed concurrently, each with its own coq-lsp process. Results are collected per-file-group and written in plan order to preserve deterministic output.
 
 Parallel file processing is acceptable because:
-- Each file has its own coqtop process — no shared state between workers
+- Each file has its own coq-lsp process — no shared state between workers
 - Results are written in plan order after each file group completes, preserving determinism
 - The `asyncio.Semaphore(workers)` bounds concurrent resource usage
 
@@ -250,31 +250,33 @@ Deterministic output is a P0 requirement. Sequential processing makes determinis
 
 ### Premise Resolution via Proof Term Diffing
 
-Training neural premise selection requires the 1-5 premises each tactic *actually used*, not the ~16K premises *accessible* at a proof state. The coqtop backend provides direct access to proof terms via `Show Proof.`, enabling proof term diffing within the same process that handles proof state observation and tactic execution.
+The `petanque/premises` endpoint returns all premises *accessible* at a proof state (~16K for standard library proofs) — the entire transitive import closure. Training neural premise selection requires the 1-5 premises each tactic *actually used*. coq-lsp does not expose proof terms through Petanque.
 
-After each tactic step, the backend queries `Show Proof.` to obtain the partial proof term as text. Constant references are extracted from the proof term and diffed against the previous step's constants to determine which premises the tactic introduced.
+The extraction pipeline resolves this by maintaining a parallel coqtop subprocess alongside the coq-lsp backend. After each tactic step, `Show Proof.` is executed in coqtop to obtain the partial proof term as text. Constant references are extracted from the proof term and diffed against the previous step's constants to determine which premises the tactic introduced.
 
 ```
-coqtop backend (unified)
-────────────────────────
+coq-lsp (Petanque)           coqtop subprocess
+─────────────────            ─────────────────
 load_file(path)              Load file prelude (imports + defs)
-position_at_proof(name)      Send theorem statement + "Proof."
+position_at_proof(name)      Enter proof: "Proof."
                              Show Proof. → term_0, consts_0 = extract(term_0)
-execute_tactic(tactic_1)     Execute tactic_1
-  Show. → goals              Show Proof. → term_1, consts_1 = extract(term_1)
+run(st, tactic_1)            Execute tactic_1
+  → goals, state             Show Proof. → term_1, consts_1 = extract(term_1)
                              used_1 = consts_1 - consts_0
-execute_tactic(tactic_2)     Execute tactic_2
-  Show. → goals              Show Proof. → term_2, consts_2 = extract(term_2)
+run(st, tactic_2)            Execute tactic_2
+  → goals, state             Show Proof. → term_2, consts_2 = extract(term_2)
                              used_2 = consts_2 - consts_1
 ...                          ...
 ```
 
 **Constant extraction**: The proof term text produced by `Show Proof.` contains fully qualified constant references (e.g., `@Nat.add_comm`). These are extracted via pattern matching. The parser does not need to fully parse the `constr` tree — it only needs to identify `@Qualified.Name` tokens, which are syntactically unambiguous in Coq's pretty-printer output.
 
-**Overhead**: Each tactic step incurs two coqtop queries (`Show.` for proof state + `Show Proof.` for proof term). For a typical proof with 10 steps, this adds ~20 coqtop interactions per proof. The coqtop process is spawned once per file and reused across all proofs in that file, eliminating the overhead of a separate premise resolution subprocess.
+**Overhead**: Each tactic step incurs one additional coqtop round-trip (`Show Proof.` + response). For a typical proof with 10 steps, this adds ~10 coqtop interactions per proof. The coqtop subprocess is spawned once per file (alongside the coq-lsp backend) and reused across all proofs in that file.
 
-**Fallback**: If a tactic fails during replay, the extraction falls back to an empty premise list for that step. The step is still recorded with its proof state; only the premise annotation is missing. This is tracked in the extraction summary as `premise_resolution_failures`.
+**Fallback**: If coqtop fails to execute a tactic (divergence from coq-lsp's replay), the extraction falls back to an empty premise list for that step. The step is still recorded with its proof state; only the premise annotation is missing. This is tracked in the extraction summary as `premise_resolution_failures`.
+
+**Future**: When coq-lsp adds a `petanque/proof` endpoint (see `coq-lsp-feature-request.md`), the coqtop subprocess becomes unnecessary. The architecture isolates premise resolution behind `CoqBackend.get_used_premises_at_step()`, so switching from coqtop-based to Petanque-based resolution requires no changes to the campaign orchestrator.
 
 ### Why one backend per file rather than one per proof
 
-The dominant cost in extraction is coqtop type-checking the `.v` file prelude on `load_file`. With one backend per proof, a file with M theorems loads the prelude M times. With one backend per file, it is loaded once. The `position_at_proof` method cleanly resets per-proof state (via `Abort.` and re-entering the next proof), so the backend can safely serve multiple proofs from the same loaded file. Failure isolation is preserved: a backend crash fails remaining theorems in the file but not in other files.
+The dominant cost in extraction is coq-lsp type-checking the `.v` file on `load_file`. With one backend per proof, a file with M theorems is type-checked M times. With one backend per file, it is type-checked once. The `position_at_proof` method cleanly resets per-proof state, so the backend can safely serve multiple proofs from the same loaded document. Failure isolation is preserved: a backend crash fails remaining theorems in the file but not in other files.

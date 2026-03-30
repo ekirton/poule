@@ -18,7 +18,7 @@ ALL_LIBRARIES="stdlib,mathcomp,stdpp,flocq,coquelicot,coqinterval"
 LIBRARIES="$ALL_LIBRARIES"
 OUTPUT_DIR="/data"
 FORCE=false
-WATCHDOG_TIMEOUT=180
+WATCHDOG_TIMEOUT=60
 WORKERS=0
 
 usage() {
@@ -31,7 +31,7 @@ usage() {
     echo "Options:" >&2
     echo "  --libraries          Comma-separated list of libraries (default: all 6)" >&2
     echo "  --force              Re-extract all libraries regardless of version" >&2
-    echo "  --watchdog-timeout N Inactivity threshold in seconds (default: 180, 0 to disable)" >&2
+    echo "  --watchdog-timeout N Inactivity threshold in seconds (default: 60, 0 to disable)" >&2
     echo "  --workers N          Parallel workers per library (default: 0 = auto-detect CPU count)" >&2
     echo "  --output-dir         Output directory (default: /data)" >&2
     echo "" >&2

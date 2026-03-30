@@ -35,7 +35,7 @@ Define the assumption auditing component that extracts axiom dependencies from C
 #### audit_assumptions(name)
 
 - REQUIRES: `name` is a non-empty string containing a fully qualified Coq theorem name. An active Coq session exists with the relevant library loaded.
-- ENSURES: Sends `Print Assumptions <name>.` to the Coq backend via the Proof Session Manager's `submit_command` operation (routed through the session's CoqBackend per [proof-session.md](proof-session.md) §4.4.1). Parses the response. Separates axioms from opaque dependencies. Classifies each axiom. Returns an AssumptionResult.
+- ENSURES: Sends `Print Assumptions <name>.` to the Coq backend via the Proof Session Manager's `submit_command` operation (coqtop subprocess routing per [proof-session.md](proof-session.md) §4.4.1 — coq-lsp cannot capture Print output). Parses the response. Separates axioms from opaque dependencies. Classifies each axiom. Returns an AssumptionResult.
 - MAINTAINS: The Coq session state is unchanged after the call. No side effects on the proof environment.
 
 > **Given** a theorem `Coq.Arith.PeanoNat.Nat.add_comm` in the loaded environment that depends on no axioms
@@ -69,7 +69,7 @@ The component shall parse `Print Assumptions` output according to two forms:
 
 After parsing, the component shall classify each dependency as axiom or opaque:
 
-1. The component shall query the Coq environment to determine the declaration kind via the Proof Session Manager's `submit_command` operation (routed through the session's CoqBackend per [proof-session.md](proof-session.md) §4.4.1).
+1. The component shall query the Coq environment to determine the declaration kind via the Proof Session Manager's `submit_command` operation (coqtop subprocess routing per [proof-session.md](proof-session.md) §4.4.1 — coq-lsp cannot capture About output).
 2. When the declaration kind is `Axiom` or `Parameter`, the component shall classify it as an axiom.
 3. When the declaration is opaque (ended with `Qed` or is `Admitted`), the component shall classify it as an opaque dependency.
 4. When the declaration kind cannot be determined, the component shall treat it as an axiom.
@@ -280,7 +280,7 @@ Enumeration with exactly five values:
 
 | Property | Value |
 |----------|-------|
-| Operations used | `submit_command` for `Print Assumptions <name>.`, `Print Module <module>.`, and `About <name>.` (declaration kind query) — all routed through the session's CoqBackend per [proof-session.md](proof-session.md) §4.4.1 |
+| Operations used | `submit_command` for `Print Assumptions <name>.`, `Print Module <module>.`, and `About <name>.` (declaration kind query) — all routed through the coqtop subprocess per [proof-session.md](proof-session.md) §4.4.1 because coq-lsp cannot capture vernacular output |
 | Concurrency | Serialized — one command at a time per session |
 | Error strategy | `NOT_FOUND` → propagate to caller. `SESSION_NOT_FOUND` → propagate. `BACKEND_CRASHED` → propagate. `PARSE_ERROR` → propagate for single-theorem; record and continue for batch. |
 | Idempotency | All operations are read-only queries; safe to retry on transient failure |
