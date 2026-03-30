@@ -183,7 +183,12 @@ def _encode_texts_batched(model, tokenizer, texts, max_seq_length, device, batch
 
 
 def _compute_recall_at_k(model, tokenizer, pairs, premise_corpus, max_seq_length, device, k=32):
-    """Compute Recall@k on (state, positive_names) pairs using current model."""
+    """Compute Recall@k on (state, positive_names) pairs using current model.
+
+    Encodes premises in chunks to avoid materializing a full N×768 tensor
+    (118K premises → 363 MB). Instead, scores are computed per-chunk and
+    only the top-k indices are retained.
+    """
     import torch
 
     if not pairs:
@@ -191,21 +196,47 @@ def _compute_recall_at_k(model, tokenizer, pairs, premise_corpus, max_seq_length
 
     model.eval()
     premise_names = list(premise_corpus.keys())
-    premise_texts = [premise_corpus[n] for n in premise_names]
+
+    # Build chunk list: resolve premise texts via get_batch when
+    # available (single DB round-trip per chunk), else fall back to
+    # individual lookups.
+    _CHUNK = 64
+    premise_chunks = []
+    get_batch = getattr(premise_corpus, "get_batch", None)
+    for start in range(0, len(premise_names), _CHUNK):
+        chunk_names = premise_names[start:start + _CHUNK]
+        if get_batch is not None:
+            chunk_texts = get_batch(chunk_names)
+        else:
+            chunk_texts = [premise_corpus[n] for n in chunk_names]
+        premise_chunks.append((start, chunk_texts))
 
     with torch.no_grad():
-        premise_embs = _encode_texts_batched(
-            model, tokenizer, premise_texts, max_seq_length, device
-        )
-
         hits = 0
         for state_text, positive_names in pairs:
             state_emb = _encode_texts_batched(
                 model, tokenizer, [state_text], max_seq_length, device
             )
-            scores = torch.mm(state_emb, premise_embs.t()).squeeze(0)
-            top_k_idx = torch.topk(scores, min(k, len(scores))).indices.tolist()
-            top_k_names = {premise_names[i] for i in top_k_idx}
+            # Compute top-k across all chunks without holding full matrix
+            top_k_scores = torch.full((k,), -float("inf"))
+            top_k_indices = torch.zeros(k, dtype=torch.long)
+
+            for chunk_start, chunk_texts in premise_chunks:
+                chunk_embs = _encode_texts_batched(
+                    model, tokenizer, chunk_texts, max_seq_length, device
+                )
+                chunk_scores = torch.mm(state_emb, chunk_embs.t()).squeeze(0)
+                # Merge this chunk's scores with running top-k
+                combined_scores = torch.cat([top_k_scores, chunk_scores])
+                combined_indices = torch.cat([
+                    top_k_indices,
+                    torch.arange(chunk_start, chunk_start + len(chunk_texts)),
+                ])
+                sel = torch.topk(combined_scores, min(k, len(combined_scores))).indices
+                top_k_scores = combined_scores[sel]
+                top_k_indices = combined_indices[sel]
+
+            top_k_names = {premise_names[i] for i in top_k_indices.tolist()}
             if set(positive_names) & top_k_names:
                 hits += 1
 
@@ -244,7 +275,11 @@ def _prepare_batch(items, tokenizer, premise_corpus, max_seq_length):
         return None
 
     premise_names = list(unique_premises.keys())
-    premise_texts = [premise_corpus[n] for n in premise_names]
+    get_batch = getattr(premise_corpus, "get_batch", None)
+    if get_batch is not None:
+        premise_texts = get_batch(premise_names)
+    else:
+        premise_texts = [premise_corpus[n] for n in premise_names]
 
     state_tokens = _tokenize_batch(tokenizer, state_texts, max_seq_length)
     premise_tokens = _tokenize_batch(tokenizer, premise_texts, max_seq_length)
@@ -358,8 +393,8 @@ class BiEncoderTrainer:
         vocabulary_path=None, epoch_callback=None,
     ):
         """Shared training loop for train() and fine_tune()."""
+        import gc
         import torch
-        from transformers import AutoTokenizer
 
         from Poule.neural.training.model import BiEncoder
 
@@ -373,8 +408,19 @@ class BiEncoderTrainer:
             tokenizer = CoqTokenizer(Path(vocabulary_path))
             model = BiEncoder(vocab_size=tokenizer.vocab_size)
         else:
+            from transformers import AutoTokenizer
+
             tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
             model = BiEncoder()
+
+        # Free transient allocations from model loading before
+        # the optimizer doubles the memory footprint.
+        gc.collect()
+        try:
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
 
         if initial_state_dict is not None:
             model.load_state_dict(initial_state_dict)
@@ -428,9 +474,19 @@ class BiEncoderTrainer:
                 batch_indices = indices[batch_start : batch_start + micro_batch_size]
 
                 # Build micro-batch with hard negatives
+                # Cap positives per pair to bound memory.  The
+                # extraction can record thousands of transitive
+                # premises per tactic step; encoding them all in
+                # one backward pass would OOM.
+                _MAX_POS = 16
                 items = []
                 for idx in batch_indices:
-                    state_text, pos_names = dataset.train[idx]
+                    state_text, raw_pos = dataset.train[idx]
+                    pos_names = (
+                        random.sample(raw_pos, _MAX_POS)
+                        if len(raw_pos) > _MAX_POS
+                        else raw_pos
+                    )
 
                     # Accessible premises (spec §4.2)
                     source = (
@@ -468,7 +524,22 @@ class BiEncoderTrainer:
 
                     with autocast_ctx():
                         state_embs = model(s_ids, s_mask)
-                        premise_embs = model(p_ids, p_mask)
+
+                        # Encode premises without gradient tracking.
+                        # A single training pair can reference thousands
+                        # of premises; storing backward activations for
+                        # all of them would OOM.  The shared-weight
+                        # encoder learns from state-side gradients.
+                        _P_CHUNK = 64
+                        with torch.no_grad():
+                            if p_ids.size(0) <= _P_CHUNK:
+                                premise_embs = model(p_ids, p_mask)
+                            else:
+                                chunks = []
+                                for ps in range(0, p_ids.size(0), _P_CHUNK):
+                                    pe = min(ps + _P_CHUNK, p_ids.size(0))
+                                    chunks.append(model(p_ids[ps:pe], p_mask[ps:pe]))
+                                premise_embs = torch.cat(chunks, dim=0)
                         loss = (
                             masked_contrastive_loss(
                                 state_embs,

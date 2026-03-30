@@ -96,7 +96,18 @@ At inference time, tokenization is a whitespace split followed by O(1) dictionar
 
 ## Step 4: Train the model
 
-Train a bi-encoder retrieval model from the extracted data. Runs on Apple Silicon (MPS) or NVIDIA GPU; 32GB unified memory or 16GB+ VRAM recommended.
+Train a bi-encoder retrieval model from the extracted data. Runs on Apple Silicon (MPS), NVIDIA GPU, or CPU; 8GB+ RAM recommended.
+
+**Install training dependencies** — torch must be installed separately because the default PyPI wheel bundles ~2.6GB of CUDA libraries that consume memory even without a GPU:
+
+```bash
+# CPU-only (containers, CI, machines without a GPU)
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -e '.[train]'
+
+# NVIDIA GPU
+pip install -e '.[train]' torch
+```
 
 ```bash
 # Train with closed vocabulary

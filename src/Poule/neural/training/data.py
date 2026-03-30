@@ -12,8 +12,84 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# Premise statements beyond this length are truncated on read.
+# The tokenizer truncates to max_seq_length tokens (~256), so text
+# beyond ~4K chars is never used.
+_MAX_STMT = 4096
+
+
+class SQLitePremiseCorpus:
+    """Dict-like mapping of premise name → statement, backed by SQLite.
+
+    Keeps only the set of names in RAM.  Statement text is fetched from
+    the database on demand so that the full 118K-entry corpus (500 MB+
+    in Python UCS-2 strings) never resides in process memory.
+    """
+
+    def __init__(self, db_path: str | Path):
+        self._db_path = str(db_path)
+        conn = sqlite3.connect(self._db_path)
+        self._names: frozenset[str] = frozenset(
+            row[0] for row in conn.execute("SELECT name FROM declarations")
+        )
+        conn.close()
+
+    # -- dict-like interface used by trainer / evaluator --
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._names
+
+    def __len__(self) -> int:
+        return len(self._names)
+
+    def keys(self):
+        return self._names
+
+    def __getitem__(self, name: str) -> str:
+        if name not in self._names:
+            raise KeyError(name)
+        conn = sqlite3.connect(self._db_path)
+        row = conn.execute(
+            "SELECT statement FROM declarations WHERE name = ?", (name,)
+        ).fetchone()
+        conn.close()
+        if row is None:
+            raise KeyError(name)
+        stmt = row[0]
+        return stmt[:_MAX_STMT] if len(stmt) > _MAX_STMT else stmt
+
+    def get_batch(self, names: list[str]) -> list[str]:
+        """Fetch statements for a list of names in one DB round-trip."""
+        if not names:
+            return []
+        conn = sqlite3.connect(self._db_path)
+        placeholders = ",".join("?" * len(names))
+        rows = dict(conn.execute(
+            f"SELECT name, statement FROM declarations WHERE name IN ({placeholders})",
+            names,
+        ).fetchall())
+        conn.close()
+        results = []
+        for n in names:
+            stmt = rows.get(n, "")
+            results.append(stmt[:_MAX_STMT] if len(stmt) > _MAX_STMT else stmt)
+        return results
+
+    def iter_batched(self, batch_size: int = 1024):
+        """Yield (name, statement) pairs from the DB in batches."""
+        conn = sqlite3.connect(self._db_path)
+        cursor = conn.execute("SELECT name, statement FROM declarations")
+        while True:
+            rows = cursor.fetchmany(batch_size)
+            if not rows:
+                break
+            for name, stmt in rows:
+                yield name, (stmt[:_MAX_STMT] if len(stmt) > _MAX_STMT else stmt)
+        conn.close()
 
 
 @dataclass
@@ -23,7 +99,7 @@ class TrainingDataset:
     train: list[tuple[str, list[str]]]
     val: list[tuple[str, list[str]]]
     test: list[tuple[str, list[str]]]
-    premise_corpus: dict
+    premise_corpus: SQLitePremiseCorpus | dict
     train_files: list[str] = field(default_factory=list)
     val_files: list[str] = field(default_factory=list)
     test_files: list[str] = field(default_factory=list)
@@ -186,8 +262,12 @@ class TrainingDataLoader:
         for path in jsonl_paths:
             with open(path, encoding="utf-8") as f:
                 for line in f:
-                    line = line.strip()
-                    if not line:
+                    # Fast pre-filter: only JSON-parse lines that are
+                    # "p" records.  The other 163 K lines (g, errors,
+                    # metadata) would allocate large temporary strings
+                    # that fragment Python's heap without ever being
+                    # retained — pymalloc never returns that memory.
+                    if '"t":"p"' not in line[:25] and '"t": "p"' not in line[:25]:
                         continue
                     try:
                         record = json.loads(line)
@@ -199,24 +279,41 @@ class TrainingDataLoader:
 
                     source_file = record["f"]
                     state_text = record["s"]
-                    premises = record["p"]
+                    if len(state_text) > _MAX_STMT:
+                        state_text = state_text[:_MAX_STMT]
+                    # Intern premise names: 27M references to only ~22K
+                    # unique strings.  Without interning, each json.loads
+                    # creates a fresh str object per name, inflating
+                    # memory from <1 MB to ~2.7 GB.
+                    premises = [sys.intern(p) for p in record["p"]]
 
                     if source_file not in file_pairs:
                         file_pairs[source_file] = []
                     file_pairs[source_file].append((state_text, premises))
 
-        # Load premise corpus and accessibility from index database
-        premise_corpus: dict[str, str] = {}
+        # Return freed JSON-parse memory to the OS.  Python's pymalloc
+        # keeps large-object arenas allocated even after objects are
+        # freed; malloc_trim asks glibc to release them.
+        try:
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
+
+        # Premise corpus: only names live in RAM; statement text is
+        # fetched from SQLite on demand (saves ~500 MB+ of UCS-2 strings).
+        premise_corpus = SQLitePremiseCorpus(index_db_path)
+
+        # Load file-level dependency graph for hard-negative sampling
         file_deps: dict[str, set[str]] = {}
         file_premises: dict[str, set[str]] = {}
         try:
             conn = sqlite3.connect(str(index_db_path))
 
             decl_id_to_module: dict[int, str] = {}
-            for decl_id, name, stmt, module in conn.execute(
-                "SELECT id, name, statement, module FROM declarations"
+            for decl_id, name, module in conn.execute(
+                "SELECT id, name, module FROM declarations"
             ):
-                premise_corpus[name] = stmt
                 decl_id_to_module[decl_id] = module
                 if module not in file_premises:
                     file_premises[module] = set()

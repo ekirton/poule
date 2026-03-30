@@ -40,6 +40,9 @@ class BiEncoder(nn.Module):
             with torch.no_grad():
                 new_embeddings.weight[:overlap] = old_embeddings.weight[:overlap]
             self.encoder.embeddings.word_embeddings = new_embeddings
+            # Free the old embedding tensor immediately
+            del old_embeddings
+            import gc; gc.collect()
 
     @property
     def embedding_dim(self) -> int:

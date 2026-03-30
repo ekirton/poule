@@ -101,23 +101,26 @@ class RetrievalEvaluator:
 
         tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
 
-        # Load premise corpus from index database
-        premise_corpus: dict[str, str] = {}
-        conn = sqlite3.connect(str(index_db_path))
-        for _id, name, stmt in conn.execute(
-            "SELECT id, name, statement FROM declarations"
-        ).fetchall():
-            premise_corpus[name] = stmt
-        conn.close()
+        # Load premise corpus — stream from DB to avoid holding all
+        # statement text in memory simultaneously.
+        from Poule.neural.training.data import SQLitePremiseCorpus, _MAX_STMT
 
-        premise_names = list(premise_corpus.keys())
-        premise_texts = [premise_corpus[n] for n in premise_names]
+        corpus = SQLitePremiseCorpus(index_db_path)
+        premise_names = list(corpus.keys())
 
-        # Encode all premises once
+        # Encode all premises in streaming batches
         with torch.no_grad():
-            premise_embs = _encode_texts_batched(
-                model, tokenizer, premise_texts, max_seq_length, device
-            )
+            all_embs = []
+            _CHUNK = 64
+            for start in range(0, len(premise_names), _CHUNK):
+                chunk_names = premise_names[start:start + _CHUNK]
+                chunk_texts = corpus.get_batch(chunk_names)
+                embs = _encode_texts_batched(
+                    model, tokenizer, chunk_texts, max_seq_length, device
+                )
+                all_embs.append(embs)
+            premise_embs = torch.cat(all_embs, dim=0)
+            del all_embs
 
         # Evaluate each test pair
         hits_at_1 = 0
@@ -226,22 +229,25 @@ class RetrievalEvaluator:
 
         tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
 
-        # Load premise corpus
-        premise_corpus: dict[str, str] = {}
-        conn = sqlite3.connect(str(index_db_path))
-        for _id, name, stmt in conn.execute(
-            "SELECT id, name, statement FROM declarations"
-        ).fetchall():
-            premise_corpus[name] = stmt
+        # Load premise corpus — stream from DB
+        from Poule.neural.training.data import SQLitePremiseCorpus, _MAX_STMT
 
-        premise_names = list(premise_corpus.keys())
-        premise_texts = [premise_corpus[n] for n in premise_names]
+        corpus = SQLitePremiseCorpus(index_db_path)
+        premise_names = list(corpus.keys())
 
-        # Encode all premises for neural retrieval
+        # Encode all premises in streaming batches for neural retrieval
         with torch.no_grad():
-            premise_embs = _encode_texts_batched(
-                model, tokenizer, premise_texts, max_seq_length, device
-            )
+            all_embs = []
+            _CHUNK = 64
+            for start in range(0, len(premise_names), _CHUNK):
+                chunk_names = premise_names[start:start + _CHUNK]
+                chunk_texts = corpus.get_batch(chunk_names)
+                embs = _encode_texts_batched(
+                    model, tokenizer, chunk_texts, max_seq_length, device
+                )
+                all_embs.append(embs)
+            premise_embs = torch.cat(all_embs, dim=0)
+            del all_embs
 
         # Try to set up symbolic retrieval via pipeline
         symbolic_available = False
