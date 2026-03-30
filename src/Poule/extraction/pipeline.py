@@ -475,7 +475,7 @@ def detect_proof_body(
     Uses four signals evaluated in order:
 
     0. **Module alias line**: ``declared_line`` resolves to ``Module X :=`` → 2.
-    1. **Opacity** (About metadata): ``"opaque"`` → 1.
+    1. **Opacity** (informational only): recorded but does not short-circuit.
     2. **Vernacular kind** (Coq ≤8.x): ``"lemma"``/``"theorem"`` → 1.
     3. **Line-anchored .v check**: read the source line at *declared_line*
        and check the Vernacular keyword.
@@ -497,15 +497,16 @@ def detect_proof_body(
                     if _MODULE_ALIAS_RE.match(line):
                         return 2
 
-    # Signal 1: opaque declarations always have tactic proof bodies.
-    if opacity == "opaque":
-        return 1
+    # Signal 1: opacity is informational only — does not short-circuit.
+    # Opaque declarations have tactic proofs, but auto-generated proofs
+    # (HB.instance, Canonical Structure, functor application) are opaque
+    # without an extractable tactic script in the .v source.
 
     # Signal 2: Coq ≤8.x preserves Vernacular kind; these always enter proof mode.
     if kind in ("lemma", "theorem"):
         return 1
 
-    # Signal 3: line-anchored .v source check for transparent definitions/instances.
+    # Signal 3: line-anchored .v source check.
     if declared_line is not None:
         v_path = _resolve_v_path(declared_library, lib_root)
         if v_path is not None:

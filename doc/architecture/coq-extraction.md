@@ -39,14 +39,18 @@ Per-declaration processing:
          opacity annotation in Rocq 9.x: "opaque" for Qed-terminated proofs,
          "transparent" for := definitions and Defined-terminated proofs.
          The backend extracts this flag during kind detection at no extra cost.
-         If opacity == "opaque": set has_proof_body = true (done).
+         Opacity is informational only — it is not sufficient to
+         determine extractability. Auto-generated proofs (HB.instance,
+         Canonical Structure, functor instantiation) are opaque but have
+         no extractable tactic script in the .v source. Opacity does not
+         short-circuit; evaluation continues to Signal 2.
        Signal 2 — Vernacular kind from About output (Coq ≤8.x):
          In Coq ≤8.x, About preserves the original Vernacular keyword
          (e.g., "foo is a Lemma"). If kind ∈ {lemma, theorem}: set
          has_proof_body = true (done). These keywords always enter proof mode.
          In Rocq 9.x this signal is unavailable — all constants report
          "Expands to: Constant" regardless of original keyword.
-       Signal 3 — line-anchored .v source check (for transparent/unknown declarations):
+       Signal 3 — line-anchored .v source check:
          The About output includes "Declared in library X, line Y, characters ..."
          which provides the exact source location. The backend extracts both
          the declared library and the declared line number.
@@ -110,7 +114,7 @@ In Rocq 9.x, the `About` response may include multiple `Expands to:` lines when 
 
 The `About` response also contains two additional signals extracted during the same batch:
 
-- **Opacity**: Rocq 9.x About output includes "`<name> is opaque`" or "`<name> is transparent`". Opaque declarations were proved with `Qed` (tactic proof body); transparent declarations were defined with `:=` or proved with `Defined`. This is the primary signal for proof-body detection (see step 8b above).
+- **Opacity**: Rocq 9.x About output includes "`<name> is opaque`" or "`<name> is transparent`". Opaque declarations were proved with `Qed`; transparent declarations were defined with `:=` or proved with `Defined`. Opacity is informational — it indicates a proof exists but not that it is extractable from the `.v` source (auto-generated proofs are opaque but have no tactic script). Proof-body detection uses the line-anchored `.v` source check (Signal 3) as the authoritative signal.
 - **Declared library and line**: The line "`Declared in library <lib>, line <n>, characters <range>`" names the library and exact source position where the declaration was originally defined. For re-exported declarations (via `Include` or functor application), the declared library differs from the `.vo` file where the declaration was discovered. The backend extracts both the library name and the line number. Proof-body detection uses the declared library to locate the `.v` source file and the declared line to anchor its Vernacular keyword check to the exact declaration (eliminating ambiguity from same-named declarations in nested modules).
 
 ### Kind refinement (Rocq 9.x)
