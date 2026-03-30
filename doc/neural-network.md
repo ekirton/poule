@@ -105,7 +105,31 @@ Our training data is extracted from compiled Coq libraries by replaying each pro
 | Coquelicot | Real analysis | ~2,400 |
 | Interval | Interval arithmetic | ~20,000 |
 
-Target extraction success rates are ≥ 95% for Stdlib and ≥ 90% for MathComp.
+Of the declarations with proof bodies in each library, extraction success rates vary: Stdlib yields ~3,000 proof traces (~20% of declarations with proof bodies), while MathComp yields ~300 (~2%). The low rates reflect the prevalence of auto-generated and Include'd declarations that have opaque proof terms but no extractable tactic scripts — a structural limitation of the Coq ecosystem discussed in detail below.
+
+**Extraction backend: coq-lsp.** The extraction pipeline uses coq-lsp (Gallego Arias et al.) as the backend for proof replay. coq-lsp implements the Language Server Protocol over Coq's document model, providing two capabilities critical for training data extraction: (1) *document-level proof navigation* — the ability to jump to any proof in a loaded `.v` file by position, preserving the full context of Section variables, local notations, and imported modules; and (2) *proof state introspection* — access to the structured proof state (goals, hypotheses, focused goal index) at each tactic step via the `proof/goals` protocol.
+
+We evaluated coqtop (Coq's command-line REPL) as an alternative backend. coqtop processes Vernacular commands sequentially over stdin/stdout, which is simpler to implement. However, coqtop cannot navigate to an arbitrary proof within an already-loaded file. The workaround — loading the entire file (which type-checks all proofs through `Qed`), then re-entering each proof via `Goal <type>.` followed by tactic replay — fails in three common situations:
+
+1. **Section variables.** Proofs inside `Section` blocks reference variables declared with `Variable` or `Hypothesis`. These variables are in scope during the original proof but not available in a standalone `Goal` context. In Stdlib's `Between.v`, all proofs reference section variables `P` and `Q`; the `Goal` command fails because these names are unbound.
+
+2. **Scoped notations.** Coq's `Local Open Scope` and library-specific notations (e.g., MathComp's `%:R`, `\is`, ssreflect's `//=`) are available during proof development but not in a bare `Goal` context after the file is loaded. The `Goal` parser rejects theorem types containing these notations.
+
+3. **Include'd and functor-generated proofs.** Declarations introduced via `Include M` or functor application (`Module N := F A`) exist in the loaded environment but have no proof script in the host `.v` file. coqtop cannot replay what does not exist in the source.
+
+In empirical testing across six libraries, coqtop extracted 4,275 proof traces (plus 196 partial):
+
+| Library | Theorems | coqtop extracted | coqtop failed | coqtop no proof body |
+|---------|----------|-----------------|---------------|---------------------|
+| Stdlib | 14,721 | 3,015 | 47 | 11,531 |
+| MathComp | 15,711 | 308 | 19 | 15,375 |
+| Flocq | 2,081 | 415 | 1 | 1,652 |
+| Coquelicot | 1,809 | 286 | 13 | 1,487 |
+| Coq-Interval | 811 | 243 | 2 | 543 |
+| stdpp | 3,460 | 8 | 5 | 3,447 |
+| **Total** | **38,593** | **4,275** | **87** | **34,035** |
+
+The "no proof body" column — 88% of all declarations — represents the combined effect of all three failure categories. coq-lsp recovers a significant fraction of the category 1 and 2 failures (section variables and scoped notations), yielding approximately twice the training data from the same libraries. Category 3 failures (Include'd and functor-generated proofs) affect both backends equally. coq-lsp's document model avoids these issues entirely because it navigates within the document's existing proof context rather than reconstructing it from scratch.
 
 **Proof trace structure.** For each successfully extracted proof, the pipeline records a sequence of steps. Each step contains: (a) the proof state after the tactic application (goal types and hypotheses), and (b) the premises used by that tactic (with kind annotations distinguishing global declarations from local hypotheses). Step 0 is the initial state with no tactic.
 
@@ -159,6 +183,18 @@ m - n + n = m
 **Memory-efficient loading.** The data loader interns all premise name strings (`sys.intern()`) to avoid duplicating the ~22K unique names across ~27M references, reducing memory from ~2.7 GB to <1 MB. A `SQLitePremiseCorpus` replaces the in-memory premise corpus dict, keeping only names in RAM and fetching statement text from the database on demand (saving ~500 MB+ of UCS-2 strings). After JSONL parsing, `malloc_trim` returns freed memory to the OS.
 
 **Data quality.** The extraction pipeline produces a campaign metadata record (Coq version, project commits, tool version) and an extraction summary with counts. The `validate-training-data` command checks for: >10% empty-premise steps, malformed fields, fewer than 5,000 pairs, fewer than 1,000 unique premises, and any single premise exceeding 5% of all occurrences. A minimum of 5,000 pairs is required for training; the Stdlib alone provides approximately 4,800. The six target libraries combined yield approximately 8,300 pairs.
+
+**The Coq training data gap.** The ~8,300 training pairs extractable from six Coq libraries represent a fundamental limitation compared to the Lean ecosystem. LeanDojo extracts 129,243 tactic-premise pairs from Lean's Mathlib alone — over 15× more training data from a single library. LeanHammer further improves on this by capturing implicit premises from `rw` and `simp` calls. This gap has three structural causes:
+
+1. **Opaque proof terms.** When a Coq proof is closed with `Qed`, the proof term becomes opaque — the kernel retains it for type-checking but does not expose it for inspection. Extracting per-step premises requires replaying the proof interactively, which succeeds only when the `.v` source file contains an explicit tactic script. Declarations introduced via `Include`, functor application, or automation (HB.instance, Canonical Structure) have proof terms but no tactic script, making them invisible to the extraction pipeline. In our six target libraries, only 4,275 of 38,593 declarations with proof bodies (11%) yield extractable tactic proofs. The remaining 89% are opaque with no accessible script.
+
+2. **Multi-step proofs are short.** Coq proofs that do yield training pairs tend to be shorter than Lean proofs. Coq's automation tactics (`auto`, `omega`, `ring`, `lia`) discharge goals in a single step without premise annotations, producing no training signal. SSReflect-style proofs (dominant in MathComp) use tactic combinators that compress multi-step reasoning into single compound tactics, further reducing the number of training pairs per proof.
+
+3. **Library scale.** Lean's Mathlib contains 210,000+ theorems in a single unified library with consistent tooling. Coq's ecosystem is fragmented across independently maintained libraries (Stdlib, MathComp, stdpp, Flocq, Coquelicot, Interval) totaling ~120K declarations, each with different proof styles, notation conventions, and build systems.
+
+The net effect is that training a competitive neural premise selector for Coq requires either (a) significantly more extractable training data from the Coq ecosystem, (b) cross-system transfer learning from Lean (as demonstrated by PROOFWALA), or (c) alternative training signals such as proof similarity (RocqStar's approach). See §5 for a discussion of what changes to the Coq/Rocq framework would enable Lean-comparable extraction.
+
+**Implications for model training.** With ~8,300 pairs, the training set is roughly 15× smaller than LeanHammer's. This limits the effective batch size for contrastive learning (fewer in-batch negatives), reduces premise coverage (many library premises never appear as positives), and increases the risk of overfitting. The masked contrastive loss and accessible-set hard negatives partially mitigate these issues by maximizing the information content of each training example, but the data bottleneck remains the primary obstacle to achieving Lean-competitive retrieval quality.
 
 ### 3.2 Data Splitting
 
@@ -347,6 +383,35 @@ The neural channel is considered successful if both conditions are met on the he
 2. **Hybrid improvement.** Hybrid Recall@32 achieves ≥ 15% relative improvement over symbolic-only Recall@32.
 
 These thresholds are advisory deployment gates, not hard constraints. A model that narrowly misses one threshold but demonstrates strong complementarity (§4.5) may still warrant deployment. Conversely, a model meeting both thresholds but showing negligible neural-only hits would suggest the improvement comes from fusion noise rather than genuine complementary signal.
+
+## 5. Toward Lean-Comparable Training Data Extraction for Coq
+
+The ~15× training data gap between Coq and Lean is not inherent to the mathematics formalized in these systems — it reflects differences in proof assistant architecture and tooling. This section identifies the specific capabilities that would enable Lean-comparable extraction from Coq/Rocq.
+
+### 5.1 The Core Problem: Proof Term Opacity
+
+Lean's kernel stores proof terms in a structured format (`.olean` files) that LeanDojo can traverse programmatically to extract premise dependencies at every tactic step. When a Lean user writes `simp [Nat.add_comm, Nat.mul_assoc]`, LeanDojo can inspect the resulting proof term to identify exactly which lemmas the simplifier invoked — including internal lemmas the user did not name explicitly.
+
+Coq's `Qed` command deliberately makes proof terms opaque: the kernel verifies the proof but discards the term's internal structure from the `.vo` file's public interface. This design choice (motivated by compilation performance and proof irrelevance) means that external tools cannot inspect which lemmas a completed proof used without replaying it from source. The consequence is that only proofs with explicit tactic scripts in `.v` files are extractable, excluding the large class of proofs generated by Include, functor instantiation, and proof automation.
+
+### 5.2 Required Framework Capabilities
+
+The following capabilities, if added to Coq/Rocq, would close the extraction gap:
+
+**1. Proof term introspection API.** A kernel-level API that, given a fully qualified name, returns the proof term in a structured traversable format (analogous to Lean's `Environment.find?`). This would enable extracting premise dependencies from any declaration — including opaque proofs, functor-generated proofs, and automation-generated proofs — without requiring `.v` source access or interactive replay. The API would need to expose the term's constants, inductive types, and constructor references at each sub-term level.
+
+**2. Per-tactic premise recording during proof checking.** During interactive proof development or batch compilation, the kernel could record which constants each tactic invocation resolved to. This metadata — a list of `(tactic_text, [premise_names])` pairs — could be serialized alongside the `.vo` file (e.g., in a `.vo.trace` sidecar). This is precisely what LeanDojo captures from Lean's elaboration trace. Coq's tactic engine already has this information internally during proof construction; it is simply not persisted.
+
+**3. Elaboration trace export.** A more general version of capability 2: export the full elaboration trace (the sequence of kernel-level operations performed during tactic evaluation) in a machine-readable format. This would capture not only direct premise usage but also the intermediate goals, unification steps, and automation decisions that led to each proof step. This is the richest possible training signal, enabling extraction of implicit premises from tactics like `auto`, `omega`, and `ring` that currently produce no training data.
+
+### 5.3 Interim Mitigations
+
+Until framework-level changes are available, several strategies can partially close the gap:
+
+- **Cross-system transfer.** PROOFWALA (2025) demonstrated that models trained on Lean proof data can transfer to Coq, suggesting that the mathematical reasoning patterns are partially shared across proof assistants.
+- **Proof similarity training.** RocqStar's approach — training on tactic sequence similarity rather than explicit premise annotations — does not require per-step premise extraction and can leverage all proofs with tactic scripts, including those where premise resolution fails.
+- **Synthetic data augmentation.** Proof states can be augmented by applying type-preserving transformations (variable renaming, hypothesis reordering, goal specialization) to expand the effective training set from existing extractions.
+- **coq-dpdgraph dependency extraction.** The coq-dpdgraph tool extracts theorem-to-theorem dependencies from compiled `.vo` files via the kernel's internal dependency tracking. While it provides only proof-level (not step-level) premise annotations, it covers all opaque proofs and could supplement the per-step data with weaker but broader training signal.
 
 ## References
 
