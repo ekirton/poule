@@ -68,8 +68,16 @@ def _get_device():
     """Select compute device: CUDA > MPS > CPU.
 
     spec §4.9: Returns a torch.device in priority order.
+    Set POULE_DEVICE=cpu to override (useful when MPS sync overhead
+    exceeds compute savings on small models).
     """
+    import os
+
     import torch
+
+    override = os.environ.get("POULE_DEVICE")
+    if override:
+        return torch.device(override)
 
     if torch.cuda.is_available():
         return torch.device("cuda")
@@ -163,7 +171,7 @@ def _tokenize_batch(tokenizer, texts, max_seq_length):
         )
 
 
-def _encode_texts_batched(model, tokenizer, texts, max_seq_length, device, batch_size=64):
+def _encode_texts_batched(model, tokenizer, texts, max_seq_length, device, batch_size=256):
     """Encode texts through the model in batches. Returns a CPU tensor."""
     import torch
 
@@ -182,12 +190,15 @@ def _encode_texts_batched(model, tokenizer, texts, max_seq_length, device, batch
     return torch.cat(all_embs, dim=0)
 
 
+_VAL_PREMISE_CAP = 10_000
+
+
 def _compute_recall_at_k(model, tokenizer, pairs, premise_corpus, max_seq_length, device, k=32):
     """Compute Recall@k on (state, positive_names) pairs using current model.
 
-    Encodes premises in chunks to avoid materializing a full N×768 tensor
-    (118K premises → 363 MB). Instead, scores are computed per-chunk and
-    only the top-k indices are retained.
+    When the premise corpus exceeds ``_VAL_PREMISE_CAP``, a random
+    subset is used (always including every positive referenced by the
+    validation pairs).  This keeps validation time bounded on CPU.
     """
     import torch
 
@@ -195,50 +206,69 @@ def _compute_recall_at_k(model, tokenizer, pairs, premise_corpus, max_seq_length
         return 0.0
 
     model.eval()
-    premise_names = list(premise_corpus.keys())
+    all_premise_names = list(premise_corpus.keys())
 
-    # Build chunk list: resolve premise texts via get_batch when
-    # available (single DB round-trip per chunk), else fall back to
-    # individual lookups.
-    _CHUNK = 64
-    premise_chunks = []
+    # Subsample premises when the corpus is very large.
+    # Always keep every positive so recall measurement is exact.
+    if len(all_premise_names) > _VAL_PREMISE_CAP:
+        positives_needed: set[str] = set()
+        for _, pos in pairs:
+            positives_needed.update(pos)
+        positives_needed &= set(all_premise_names)
+
+        remaining = [n for n in all_premise_names if n not in positives_needed]
+        n_neg = max(0, _VAL_PREMISE_CAP - len(positives_needed))
+        sampled_neg = random.sample(remaining, min(n_neg, len(remaining)))
+        premise_names = sorted(positives_needed) + sampled_neg
+    else:
+        premise_names = all_premise_names
+
+    # Encode selected premises once into a single CPU matrix.
     get_batch = getattr(premise_corpus, "get_batch", None)
-    for start in range(0, len(premise_names), _CHUNK):
-        chunk_names = premise_names[start:start + _CHUNK]
-        if get_batch is not None:
-            chunk_texts = get_batch(chunk_names)
-        else:
-            chunk_texts = [premise_corpus[n] for n in chunk_names]
-        premise_chunks.append((start, chunk_texts))
-
+    _CHUNK = 256
+    premise_emb_parts = []
     with torch.no_grad():
-        hits = 0
-        for state_text, positive_names in pairs:
-            state_emb = _encode_texts_batched(
-                model, tokenizer, [state_text], max_seq_length, device
+        for start in range(0, len(premise_names), _CHUNK):
+            chunk_names = premise_names[start:start + _CHUNK]
+            if get_batch is not None:
+                chunk_texts = get_batch(chunk_names)
+            else:
+                chunk_texts = [premise_corpus[n] for n in chunk_names]
+            premise_emb_parts.append(
+                _encode_texts_batched(model, tokenizer, chunk_texts, max_seq_length, device)
             )
-            # Compute top-k across all chunks without holding full matrix
-            top_k_scores = torch.full((k,), -float("inf"))
-            top_k_indices = torch.zeros(k, dtype=torch.long)
+    all_premise_embs = torch.cat(premise_emb_parts, dim=0)
+    del premise_emb_parts
 
-            for chunk_start, chunk_texts in premise_chunks:
-                chunk_embs = _encode_texts_batched(
-                    model, tokenizer, chunk_texts, max_seq_length, device
-                )
-                chunk_scores = torch.mm(state_emb, chunk_embs.t()).squeeze(0)
-                # Merge this chunk's scores with running top-k
-                combined_scores = torch.cat([top_k_scores, chunk_scores])
-                combined_indices = torch.cat([
-                    top_k_indices,
-                    torch.arange(chunk_start, chunk_start + len(chunk_texts)),
-                ])
-                sel = torch.topk(combined_scores, min(k, len(combined_scores))).indices
-                top_k_scores = combined_scores[sel]
-                top_k_indices = combined_indices[sel]
+    # Encode all validation states in one batched pass.
+    state_texts = [s for s, _ in pairs]
+    all_state_embs = _encode_texts_batched(
+        model, tokenizer, state_texts, max_seq_length, device, batch_size=256
+    )
 
-            top_k_names = {premise_names[i] for i in top_k_indices.tolist()}
-            if set(positive_names) & top_k_names:
-                hits += 1
+    # Score each state against all premises via chunked matmul.
+    hits = 0
+    _SCORE_CHUNK = 8192
+    for i, (_, positive_names) in enumerate(pairs):
+        state_emb = all_state_embs[i : i + 1]
+        top_k_scores = torch.full((k,), -float("inf"))
+        top_k_indices = torch.zeros(k, dtype=torch.long)
+
+        for offset in range(0, all_premise_embs.size(0), _SCORE_CHUNK):
+            chunk = all_premise_embs[offset : offset + _SCORE_CHUNK]
+            chunk_scores = torch.mm(state_emb, chunk.t()).squeeze(0)
+            combined_scores = torch.cat([top_k_scores, chunk_scores])
+            combined_indices = torch.cat([
+                top_k_indices,
+                torch.arange(offset, offset + chunk.size(0)),
+            ])
+            sel = torch.topk(combined_scores, min(k, len(combined_scores))).indices
+            top_k_scores = combined_scores[sel]
+            top_k_indices = combined_indices[sel]
+
+        top_k_name_set = {premise_names[j] for j in top_k_indices.tolist()}
+        if set(positive_names) & top_k_name_set:
+            hits += 1
 
     return hits / len(pairs)
 
@@ -470,8 +500,12 @@ class BiEncoderTrainer:
             optimizer.zero_grad()
             accum_count = 0
 
+            total_micros = (len(indices) + micro_batch_size - 1) // micro_batch_size
             for batch_start in range(0, len(indices), micro_batch_size):
                 batch_indices = indices[batch_start : batch_start + micro_batch_size]
+                micro_idx = batch_start // micro_batch_size
+                if micro_idx % 50 == 0:
+                    logger.info("  micro-batch %d/%d", micro_idx, total_micros)
 
                 # Build micro-batch with hard negatives
                 # Cap positives per pair to bound memory.  The
@@ -555,9 +589,13 @@ class BiEncoderTrainer:
                     else:
                         loss.backward()
 
-                    epoch_loss += loss.item() * accumulation_steps
+                    epoch_loss += loss.detach() * accumulation_steps
                     n_micro += 1
                     accum_count += 1
+                    # Reclaim MPS memory to prevent leak accumulation
+                    if device.type == "mps":
+                        torch.mps.synchronize()
+                        torch.mps.empty_cache()
 
                     if accum_count >= accumulation_steps:
                         if scaler:
@@ -566,6 +604,9 @@ class BiEncoderTrainer:
                         else:
                             optimizer.step()
                         optimizer.zero_grad()
+                        # Reclaim MPS memory to prevent leak accumulation
+                        if device.type == "mps":
+                            torch.mps.empty_cache()
                         accum_count = 0
 
                 except RuntimeError as e:
@@ -586,7 +627,7 @@ class BiEncoderTrainer:
                 optimizer.zero_grad()
 
             # Validation
-            avg_loss = epoch_loss / max(n_micro, 1)
+            avg_loss = (epoch_loss / max(n_micro, 1)).item() if n_micro > 0 else 0.0
 
             val_recall = 0.0
             if dataset.val:
@@ -599,6 +640,11 @@ class BiEncoderTrainer:
                     device,
                     k=32,
                 )
+
+            # Reclaim MPS/GPU memory after validation
+            if device.type == "mps":
+                gc.collect()
+                torch.mps.empty_cache()
 
             print(f"Epoch {epoch}: loss={avg_loss:.4f}, val_R@32={val_recall:.4f}")
 

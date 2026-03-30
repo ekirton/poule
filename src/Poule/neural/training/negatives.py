@@ -17,7 +17,7 @@ def sample_hard_negatives(
     if not candidates and corpus is not None:
         candidates = corpus - positive_premises
 
-    candidates_list = sorted(candidates)  # sorted for determinism before sampling
+    candidates_list = list(candidates)
     if len(candidates_list) <= k:
         return candidates_list
 
