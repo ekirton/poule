@@ -1648,38 +1648,56 @@ def _make_mock_backend(
 
     async def _position_at_proof(proof_name):
         if crash_on and proof_name == crash_on:
-            raise ConnectionError("coqtop died")
+            raise ConnectionError("coq-lsp died")
         if proof_name in position_raises_for:
             raise ValueError(f"Proof not found: {proof_name}")
         tactics = proofs.get(proof_name, ["auto."])
         n = len(tactics)
-
-        # Build cached states with proof_state and proof_term
-        class _FakeCachedState:
-            def __init__(self, step, is_last=False):
-                self.proof_state = ProofState(
-                    schema_version=1, session_id="", step_index=step,
-                    is_complete=is_last, focused_goal_index=None if is_last else 0,
-                    goals=[] if is_last else [Goal(index=0, type="True", hypotheses=[])],
-                )
-                self.proof_term = f"?term_{step}"
-
-        states = [_FakeCachedState(i, is_last=(i == n)) for i in range(n + 1)]
+        # State tokens are just integers for testing
+        states = list(range(n + 1))
         _current_proof["name"] = proof_name
         _current_proof["states"] = states
         _current_proof["script"] = tactics
         backend.original_script = tactics
-        backend.original_states = states
-        return states[0].proof_state
+        backend._original_states = states
+        return ProofState(
+            schema_version=1,
+            session_id="",
+            step_index=0,
+            is_complete=False,
+            focused_goal_index=0,
+            goals=[Goal(index=0, type="True", hypotheses=[])],
+        )
 
     backend.position_at_proof = AsyncMock(side_effect=_position_at_proof)
 
-    async def _get_premises():
-        # Return one premise per tactic step
-        n = len(_current_proof["script"])
-        return [[{"name": "Coq.Init.Logic.I", "kind": "lemma"}] for _ in range(n)]
+    async def _petanque_goals(st):
+        # Return None (proof complete) for final state, goals otherwise
+        states = _current_proof["states"]
+        if st == states[-1]:
+            return None
+        return {"goals": [{"ty": "True", "hyps": []}]}
 
-    backend.get_premises = AsyncMock(side_effect=_get_premises)
+    backend._petanque_goals = AsyncMock(side_effect=_petanque_goals)
+
+    def _translate_goals(goals_result, step_index=0):
+        if goals_result is None:
+            return ProofState(
+                schema_version=1, session_id="", step_index=step_index,
+                is_complete=True, focused_goal_index=None, goals=[],
+            )
+        return ProofState(
+            schema_version=1, session_id="", step_index=step_index,
+            is_complete=False, focused_goal_index=0,
+            goals=[Goal(index=0, type="True", hypotheses=[])],
+        )
+
+    backend._translate_petanque_goals = MagicMock(side_effect=_translate_goals)
+
+    async def _get_premises_at_step(step):
+        return [{"name": "Coq.Init.Logic.I", "kind": "lemma"}]
+
+    backend.get_premises_at_step = AsyncMock(side_effect=_get_premises_at_step)
     backend.shutdown = AsyncMock()
 
     return backend
