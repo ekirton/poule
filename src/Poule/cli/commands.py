@@ -490,6 +490,10 @@ def cmd_extract(
     click.echo(f"  Failed:            {summary.total_failed}", err=True)
     click.echo(f"  No proof body:     {summary.total_no_proof_body}", err=True)
     click.echo(f"  Skipped:           {summary.total_skipped}", err=True)
+    max_t = getattr(summary, 'max_proof_time_s', 0.0)
+    max_name = getattr(summary, 'max_proof_time_name', '')
+    if max_t > 0:
+        click.echo(f"  Slowest proof:     {max_t:.1f}s  ({max_name})", err=True)
     click.echo(f"  Output: {output}", err=True)
 
     if summary.total_extracted == 0 and summary.total_theorems_found > 0:
