@@ -36,3 +36,20 @@ class InsufficientDataError(NeuralTrainingError):
 
 class TuningError(NeuralTrainingError):
     """Hyperparameter optimization study failed."""
+
+
+class BackendNotAvailableError(NeuralTrainingError):
+    """Requested training backend (e.g. MLX) is not available."""
+
+
+class WeightConversionError(NeuralTrainingError):
+    """MLX → PyTorch weight conversion quality check failed."""
+
+    def __init__(self, max_distance: float | None = None, message: str | None = None):
+        self.max_distance = max_distance
+        if message is None:
+            message = (
+                f"Weight conversion validation failed: max cosine distance "
+                f"{max_distance:.4f} >= 0.01 threshold"
+            )
+        super().__init__(message)

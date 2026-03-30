@@ -24,6 +24,10 @@ train = [
 tune = [
     "optuna>=3.0",
 ]
+mlx-train = [
+    "mlx>=0.18",
+    "transformers>=4.30",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["test/unit", "test/integration"]

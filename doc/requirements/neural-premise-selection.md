@@ -80,9 +80,11 @@ Cross-references:
 | R5-P0-10 | Provide a CLI command to train the retrieval model from extracted training data |
 | R5-P0-11 | Provide a CLI command to evaluate retrieval quality (recall@k, MRR) on a held-out test set |
 | R5-P0-12 | Ship a pre-trained model checkpoint covering the Coq standard library and MathComp so that users do not need to train a model themselves |
-| R5-P0-13 | Model training must complete on a single consumer GPU (≤ 24GB VRAM) or be offloadable to a cloud GPU within a $200 budget |
+| R5-P0-13 | Model training must complete on a single consumer GPU (≤ 24GB VRAM), Apple Silicon Mac (≥ 32GB unified memory) using MLX, or be offloadable to a cloud GPU within a $200 budget |
 | R5-P0-14 | Build a closed-vocabulary tokenizer from the indexed library declarations and extracted proof states, replacing the generic BPE tokenizer with one that assigns every Coq identifier its own token ID |
 | R5-P0-15 | Provide a CLI command to build the vocabulary from the search index and training data, producing a JSON file mapping tokens to integer IDs |
+| R5-P0-16 | Support training the bi-encoder model on Apple Silicon Macs using MLX as an alternative to PyTorch, producing checkpoints that can be converted to PyTorch format for inference in the Linux container |
+| R5-P0-17 | Provide a weight conversion step that transforms MLX-trained checkpoints into PyTorch format compatible with the existing ONNX quantization and inference pipeline |
 
 ### P1 — Should Have
 
@@ -114,6 +116,7 @@ Cross-references:
 
 **In scope:**
 - Training a bi-encoder retrieval model on Coq proof trace data
+- MLX training backend for Apple Silicon Macs with weight conversion to PyTorch
 - Integrating the neural channel into the existing Semantic Lemma Search MCP server and CLI
 - Pre-trained model checkpoint for standard library and MathComp
 - CLI tools for training, evaluation, and fine-tuning

@@ -12,7 +12,7 @@ Define the training pipeline that produces neural encoder model checkpoints from
 
 ## 2. Scope
 
-**In scope**: `VocabularyBuilder` (closed-vocabulary construction from search index and training data), `CoqTokenizer` (whitespace-split tokenization using closed vocabulary), `TrainingDataLoader` (JSONL parsing, pair extraction, train/val/test split, hard negative sampling), `BiEncoderTrainer` (training loop, masked contrastive loss, checkpointing), `RetrievalEvaluator` (recall@k, MRR, neural vs. symbolic comparison), `ModelQuantizer` (PyTorch → INT8 ONNX conversion, validation), `TrainingDataValidator` (pre-training data quality checks), `HyperparameterTuner` (automated hyperparameter optimization using Optuna).
+**In scope**: `VocabularyBuilder` (closed-vocabulary construction from search index and training data), `CoqTokenizer` (whitespace-split tokenization using closed vocabulary), `TrainingDataLoader` (JSONL parsing, pair extraction, train/val/test split, hard negative sampling), `BiEncoderTrainer` (training loop, masked contrastive loss, checkpointing), `RetrievalEvaluator` (recall@k, MRR, neural vs. symbolic comparison), `ModelQuantizer` (PyTorch → INT8 ONNX conversion, validation), `TrainingDataValidator` (pre-training data quality checks), `HyperparameterTuner` (automated hyperparameter optimization using Optuna), `MLXBiEncoder` (MLX port of the bi-encoder model), `MLXTrainer` (MLX training loop with functional gradients), `WeightConverter` (MLX safetensors → PyTorch checkpoint conversion).
 
 **Out of scope**: Neural encoder inference at query time (owned by neural-retrieval), embedding index construction (owned by neural-retrieval), retrieval pipeline integration (owned by pipeline), storage schema (owned by storage).
 
@@ -30,6 +30,9 @@ Define the training pipeline that produces neural encoder model checkpoints from
 | Epoch callback | An optional function `(epoch, val_recall) -> None` invoked after each epoch's validation, used by the tuner to report intermediate values and trigger pruning |
 | Trial | A single hyperparameter optimization run with a sampled configuration |
 | Pruning | Early termination of a trial whose intermediate validation metric falls below the median of previously completed trials at the same epoch |
+| MLX | Apple's array framework for Apple Silicon, using lazy evaluation and unified memory |
+| Safetensors | Serialization format for ML model weights used by MLX checkpoints |
+| Weight conversion | Process of transforming MLX model parameters to PyTorch format: parameter name mapping + array format conversion |
 
 ## 4. Behavioral Requirements
 
@@ -605,8 +608,170 @@ All other hyperparameters (`max_seq_length`, `embedding_dim`, `max_epochs`, `ear
 #### get_device()
 
 - REQUIRES: Nothing.
-- ENSURES: Returns a `torch.device` in priority order: CUDA (if `torch.cuda.is_available()`), MPS (if `torch.backends.mps.is_available()`), CPU (fallback).
+- ENSURES: Returns a `torch.device` in priority order: CUDA (if `torch.cuda.is_available()`), CPU (fallback). MPS is not used due to memory leak issues.
+- When the `POULE_DEVICE` environment variable is set: returns `torch.device(POULE_DEVICE)` regardless of detection.
 - This is a module-level utility function used by `BiEncoderTrainer._train_impl()`, `RetrievalEvaluator`, and `HyperparameterTuner`.
+
+### 4.10 MLXBiEncoder
+
+MLX port of the bi-encoder model, architecturally identical to the PyTorch `BiEncoder`.
+
+#### Construction
+
+`MLXBiEncoder(vocab_size, num_layers=12, hidden_size=768, num_heads=12)`
+
+- REQUIRES: `vocab_size` is a positive integer matching the closed vocabulary size.
+- ENSURES: Creates an `mlx.nn.Module` with:
+  - `mlx.nn.Embedding(vocab_size, hidden_size)` — token embedding layer
+  - Transformer encoder with `num_layers` `mlx.nn.TransformerEncoderLayer` blocks, each with `hidden_size` hidden dimension and `num_heads` attention heads
+  - No positional encoding module — position IDs are added as a learned embedding
+
+#### forward(input_ids, attention_mask)
+
+- REQUIRES: `input_ids` is an `mx.array` of shape `[B, seq_len]`. `attention_mask` is an `mx.array` of shape `[B, seq_len]` with values 0 or 1.
+- ENSURES: Returns L2-normalized embeddings of shape `[B, 768]`.
+  1. Token embeddings: `embedding(input_ids)` → `[B, seq_len, 768]`
+  2. Add positional embeddings
+  3. Transformer encoding (12 layers)
+  4. Mean pooling: `sum(output * mask) / sum(mask)` per sequence
+  5. L2 normalization: `output / norm(output)`
+- MAINTAINS: Output embeddings have unit L2 norm (within floating-point tolerance).
+
+#### load_codebert_weights(pytorch_model_name="microsoft/codebert-base")
+
+- REQUIRES: `transformers` and `torch` are installed. `pytorch_model_name` is a valid HuggingFace model name.
+- ENSURES: Loads CodeBERT weights from HuggingFace, converts each parameter `torch.Tensor` → `numpy` → `mx.array`, maps parameter names from HuggingFace convention to MLX convention, and loads into the model. The embedding layer is replaced with one sized to `vocab_size`: overlapping tokens get copied pretrained vectors, new tokens are initialized from `N(0, 0.02)`.
+- When `transformers` is not installed: raises `ImportError` with message `"transformers is required for CodeBERT weight initialization"`.
+
+**Parameter name mapping (HuggingFace → MLX):**
+
+| HuggingFace path | MLX path |
+|-----------------|----------|
+| `roberta.embeddings.word_embeddings.weight` | `embedding.weight` |
+| `roberta.embeddings.position_embeddings.weight` | `position_embedding.weight` |
+| `roberta.encoder.layer.{i}.attention.self.query.weight` | `layers.{i}.attention.query_proj.weight` |
+| `roberta.encoder.layer.{i}.attention.self.query.bias` | `layers.{i}.attention.query_proj.bias` |
+| `roberta.encoder.layer.{i}.attention.self.key.weight` | `layers.{i}.attention.key_proj.weight` |
+| `roberta.encoder.layer.{i}.attention.self.key.bias` | `layers.{i}.attention.key_proj.bias` |
+| `roberta.encoder.layer.{i}.attention.self.value.weight` | `layers.{i}.attention.value_proj.weight` |
+| `roberta.encoder.layer.{i}.attention.self.value.bias` | `layers.{i}.attention.value_proj.bias` |
+| `roberta.encoder.layer.{i}.attention.output.dense.weight` | `layers.{i}.attention.out_proj.weight` |
+| `roberta.encoder.layer.{i}.attention.output.dense.bias` | `layers.{i}.attention.out_proj.bias` |
+| `roberta.encoder.layer.{i}.attention.output.LayerNorm.weight` | `layers.{i}.ln1.weight` |
+| `roberta.encoder.layer.{i}.attention.output.LayerNorm.bias` | `layers.{i}.ln1.bias` |
+| `roberta.encoder.layer.{i}.intermediate.dense.weight` | `layers.{i}.linear1.weight` |
+| `roberta.encoder.layer.{i}.intermediate.dense.bias` | `layers.{i}.linear1.bias` |
+| `roberta.encoder.layer.{i}.output.dense.weight` | `layers.{i}.linear2.weight` |
+| `roberta.encoder.layer.{i}.output.dense.bias` | `layers.{i}.linear2.bias` |
+| `roberta.encoder.layer.{i}.output.LayerNorm.weight` | `layers.{i}.ln2.weight` |
+| `roberta.encoder.layer.{i}.output.LayerNorm.bias` | `layers.{i}.ln2.bias` |
+
+### 4.11 MLXTrainer
+
+Training loop using MLX's functional gradient computation.
+
+#### train(dataset, output_dir, vocabulary_path, hyperparams, epoch_callback)
+
+- REQUIRES: `dataset` is a `TrainingDataset` with at least 1,000 training pairs. `output_dir` is a writable directory path. `vocabulary_path` points to a valid vocabulary JSON file. `hyperparams` has defaults matching `BiEncoderTrainer`. `epoch_callback` is `None` or a callable `(epoch: int, val_recall: float) -> None`. Platform is macOS with Apple Silicon. `mlx` package is installed.
+- ENSURES: Creates an `MLXBiEncoder` with vocabulary-sized embeddings. Loads CodeBERT pretrained weights via `load_codebert_weights()`. Trains using functional gradient computation (`nn.value_and_grad`). Saves the best checkpoint (by validation Recall@32) as MLX safetensors to `output_dir`. Prints training metrics after each epoch. When `epoch_callback` is not `None`, invokes it after each epoch's validation.
+- When `mlx` is not installed: raises `BackendNotAvailableError("MLX is not installed. Install with: pip install mlx")`.
+- When platform is not macOS: raises `BackendNotAvailableError("MLX training requires macOS with Apple Silicon")`.
+
+**Training loop structure:**
+
+```python
+loss_and_grad_fn = nn.value_and_grad(model, loss_fn)
+
+for epoch in range(max_epochs):
+    for micro_batch in batches:
+        state_ids, state_mask = tokenize(micro_batch.states)
+        premise_ids, premise_mask = tokenize(micro_batch.premises)
+
+        loss, grads = loss_and_grad_fn(
+            model, state_ids, state_mask,
+            premise_ids, premise_mask,
+            positive_indices, temperature
+        )
+
+        optimizer.update(model, grads)
+        mx.eval(model.parameters(), optimizer.state)
+
+    val_recall = compute_recall_at_k(model, dataset.val, corpus, k=32)
+    # early stopping, checkpointing, callback
+```
+
+- MAINTAINS: `mx.eval()` is called once per optimizer step, not per operation. This allows MLX to build and optimize the computation graph before executing.
+- MAINTAINS: Gradient accumulation uses the same micro-batch/accumulation pattern as the PyTorch trainer.
+
+#### Masked contrastive loss (MLX)
+
+Same algorithm as section 4.3, reimplemented with MLX operations:
+
+```python
+def masked_contrastive_loss_mlx(model, state_ids, state_mask, premise_ids, premise_mask, positive_indices, temperature):
+    state_embs = model(state_ids, state_mask)       # [B, 768]
+    premise_embs = model(premise_ids, premise_mask)  # [P, 768]
+
+    sim = mx.matmul(state_embs, premise_embs.T)     # [B, P]
+    logits = sim / temperature
+
+    # Build mask: mask[i][j] = True if premise j is positive for state i
+    # Exclude masked premises from denominator
+    # Compute per-pair loss and mean
+```
+
+- MAINTAINS: Numerically identical to the PyTorch implementation (within floating-point tolerance). Same masking logic, same temperature application, same mean reduction.
+
+#### Checkpoint format (MLX)
+
+Checkpoints are saved as a directory:
+
+```
+<output_dir>/
+├── model.safetensors       # MLX model weights (mx.save_safetensors)
+├── config.json             # {"vocab_size": int, "num_layers": 12, "hidden_size": 768, "num_heads": 12}
+├── hyperparams.json        # Training hyperparameters used
+├── vocabulary_path.txt     # Path to vocabulary JSON (single line)
+├── best_recall_32.txt      # Best validation Recall@32 (single line, float)
+└── training_log.jsonl      # Per-epoch metrics: {"epoch": int, "loss": float, "val_recall_32": float}
+```
+
+- MAINTAINS: `model.safetensors` uses the safetensors format compatible with `mx.load()`.
+
+#### Validation recall computation
+
+During training, validation Recall@32 is computed identically to the PyTorch trainer:
+
+1. Encode all validation states through the model
+2. Encode a subsample of the premise corpus (capped at 10K, always including all positives)
+3. Compute cosine similarity and count hits at k=32
+4. All arrays are `mx.array`; `mx.eval()` is called before measuring recall
+
+### 4.12 WeightConverter
+
+Converts MLX-trained checkpoints to PyTorch format for the inference pipeline.
+
+#### convert(mlx_checkpoint_dir, output_path)
+
+- REQUIRES: `mlx_checkpoint_dir` is a directory containing `model.safetensors`, `config.json`, `hyperparams.json`, and `vocabulary_path.txt` (as produced by `MLXTrainer`). `output_path` is a writable path. Both `mlx` and `torch` are installed.
+- ENSURES: Loads MLX weights from safetensors. Maps parameter names from MLX convention to PyTorch/HuggingFace convention (reverse of the table in 4.10). Converts each parameter: `mx.array` → `numpy` → `torch.Tensor`. Creates a PyTorch `BiEncoder` with the same architecture and vocabulary size. Loads the converted state dict. Validates conversion quality. Saves as a PyTorch checkpoint (`.pt`) with `model_state_dict`, `hyperparams`, `vocabulary_path`, `epoch`, and `best_recall_32`.
+
+**Validation step:**
+
+1. Generate 100 random input tensors (input_ids in vocabulary range, attention_mask of 1s).
+2. Run the same inputs through both MLX and PyTorch models.
+3. Compute max cosine distance across all 100 pairs.
+4. If max cosine distance ≥ 0.01: raise `WeightConversionError` with the distance value.
+
+- MAINTAINS: The converted PyTorch checkpoint is indistinguishable from one produced by `BiEncoderTrainer.train()` — same keys, same format, compatible with `ModelQuantizer.quantize()` and `RetrievalEvaluator.evaluate()`.
+
+> **Given** an MLX checkpoint directory produced by `MLXTrainer.train()`
+> **When** `convert` runs
+> **Then** a PyTorch `.pt` checkpoint is produced that passes the 0.01 cosine distance validation
+
+> **Given** a converted PyTorch checkpoint
+> **When** passed to `ModelQuantizer.quantize()`
+> **Then** ONNX export and INT8 quantization succeed with max cosine distance < 0.02
 
 ## 5. Error Specification
 
@@ -624,6 +789,10 @@ All other hyperparameters (`max_seq_length`, `embedding_dim`, `max_epochs`, `ear
 | Vocabulary JSON not found | `FileNotFoundError` | Propagated to CLI |
 | Vocabulary JSON malformed | `DataFormatError` | Propagated with message: `"Invalid vocabulary file"` |
 | All HPO trials fail (zero complete) | `TuningError` | Propagated with message: `"Hyperparameter optimization failed: 0 of {n} trials completed successfully"` |
+| MLX not installed | `BackendNotAvailableError` | Propagated with message: `"MLX is not installed. Install with: pip install mlx"` |
+| MLX requested on non-macOS | `BackendNotAvailableError` | Propagated with message: `"MLX training requires macOS with Apple Silicon"` |
+| Weight conversion cosine distance ≥ 0.01 | `WeightConversionError` | Propagated with max distance value |
+| MLX checkpoint directory missing required files | `CheckpointNotFoundError` | Propagated with missing file list |
 
 Error hierarchy:
 - `NeuralTrainingError` — base class for all training pipeline errors
@@ -633,6 +802,8 @@ Error hierarchy:
   - `QuantizationError` — INT8 conversion quality check failed
   - `InsufficientDataError` — not enough training data
   - `TuningError` — hyperparameter optimization study failed (zero trials completed)
+  - `BackendNotAvailableError` — requested training backend (MLX) is not available
+  - `WeightConversionError` — MLX → PyTorch weight conversion quality check failed
 
 ## 6. Non-Functional Requirements
 
@@ -646,8 +817,10 @@ Error hierarchy:
 | Data validation (single pass, 100K steps) | < 30 seconds |
 | Quantization (export + validate) | < 5 minutes |
 | Peak GPU memory (batch_size=256, seq_len=512) | ≤ 24GB |
-| Training time (10K pairs, M2 Pro MPS) | < 7 hours |
-| HPO (20 trials, 10K pairs, M2 Pro MPS) | < 5 hours (with pruning) |
+| Training time (10K pairs, M2 Pro MLX) | < 1 hour |
+| Training time (50K pairs, M2 Pro MLX) | < 6 hours |
+| HPO (20 trials, 10K pairs, M2 Pro MLX) | < 5 hours (with pruning) |
+| Weight conversion (MLX → PyTorch) | < 2 minutes |
 | HPO (20 trials, 10K pairs, 24GB GPU) | < 2 hours (with pruning) |
 
 ## 7. Examples
@@ -715,6 +888,28 @@ result = tune(dataset, "hpo-output/", vocabulary_path="coq-vocabulary.json",
 # Continues from trial 20 (10 more trials)
 ```
 
+### MLX training workflow (Apple Silicon)
+
+```
+# 0–2. Build vocabulary, validate, load — same as PyTorch workflow
+
+# 3. Train with MLX backend (on Mac)
+mlx_train(dataset, "mlx-model/", vocabulary_path="coq-vocabulary.json",
+          hyperparams={batch_size: 128, lr: 2e-5, epochs: 20})
+# Epoch 1: loss=4.2, val_R@32=0.18
+# ...
+# Epoch 12: loss=1.4, val_R@32=0.54 (best)
+
+# 4. Convert MLX → PyTorch
+convert("mlx-model/", "model.pt")
+# Max cosine distance: 0.003 (< 0.01 threshold)
+
+# 5–7. Evaluate, compare, quantize — same as PyTorch workflow
+# These use the converted PyTorch checkpoint
+eval_report = evaluate("model.pt", dataset.test, "index.db")
+quantize("model.pt", "neural-premise-selector.onnx")
+```
+
 ### Fine-tuning workflow
 
 ```
@@ -728,11 +923,16 @@ fine_tune("model.pt", dataset, "fine-tuned.pt", hyperparams={lr: 5e-6, epochs: 1
 
 ## 8. Language-Specific Notes (Python)
 
-- Use `torch` for model definition, training loop, and checkpoint management.
+- Use `torch` for model definition, training loop, and checkpoint management (PyTorch backend).
 - Use `transformers` for the base encoder model (CodeBERT or equivalent) and tokenizer.
 - Use `torch.cuda.amp` for mixed-precision training (FP16 forward pass, FP32 gradients).
 - Use `torch.utils.data.DataLoader` with a custom `Dataset` for batching and shuffling.
 - Use `onnx` and `onnxruntime.quantization` for ONNX export and dynamic INT8 quantization.
 - Checkpoint format: `torch.save({"model_state_dict": ..., "optimizer_state_dict": ..., "epoch": ..., "best_recall_32": ..., "hyperparams": ...})`.
 - Use `optuna` for hyperparameter optimization. Import lazily — only required when `tune()` is called.
-- Package location: `src/poule/neural/training/`.
+- Use `mlx` for the MLX training backend. Import lazily — only required when `--backend mlx` is specified.
+- Use `mlx.nn` for model definition, `mlx.optimizers` for optimizer, `mlx.nn.value_and_grad` for functional gradients.
+- MLX checkpoint format: `mx.save_safetensors()` for weights, JSON files for config and hyperparameters.
+- Weight conversion uses `mx.load()` → `numpy` → `torch.Tensor` for parameter conversion.
+- PyTorch backend package: `src/Poule/neural/training/`.
+- MLX backend package: `src/Poule/neural/training/mlx_backend/`.

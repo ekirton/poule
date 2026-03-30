@@ -251,16 +251,140 @@ N_i = sample(hard_negative_pool, k=3)
 | Corpus size | Hardware | Estimated wall time | Estimated cost |
 |-------------|----------|---------------------|----------------|
 | 10K pairs (stdlib only) | Any 16GB+ GPU | ~2 hours | <$10 |
-| 10K pairs (stdlib only) | M2 Pro, 32GB (MPS) | ~7 hours | $0 (local) |
+| 10K pairs (stdlib only) | M2 Pro, 32GB (MLX) | ~30 min | $0 (local) |
 | 50K pairs (stdlib + MathComp) | 24GB GPU (A6000/4090) | ~8 hours | $50–100 |
-| 50K pairs (stdlib + MathComp) | M2 Pro, 32GB (MPS) | ~30 hours | $0 (local) |
+| 50K pairs (stdlib + MathComp) | M2 Pro, 32GB (MLX) | ~6 hours | $0 (local) |
 | 100K+ pairs (multi-project) | 24GB GPU (A6000/4090) | ~16 hours | $100–200 |
 
-Training uses mixed precision (FP16) with gradient accumulation to fit within 24GB VRAM at batch size 256. On Apple Silicon (MPS), training runs in FP32 without AMP — the unified memory architecture eliminates the CPU↔GPU transfer bottleneck, partially compensating for the lack of mixed-precision speedup.
+Training uses mixed precision (FP16) with gradient accumulation to fit within 24GB VRAM at batch size 256 on CUDA. On Apple Silicon with MLX, training runs in FP32 with lazy evaluation — unified memory eliminates CPU↔GPU transfers entirely.
 
 ### Device Detection
 
-The training pipeline selects compute devices in priority order: CUDA GPU → Apple MPS → CPU. Mixed precision (AMP with GradScaler) is used only on CUDA; MPS and CPU use FP32. This is a shared utility used by both training and evaluation.
+The PyTorch training pipeline selects compute devices in priority order: CUDA GPU → CPU (MPS is no longer used due to memory leak issues). The MLX backend is selected explicitly via `--backend mlx` and runs only on macOS with Apple Silicon.
+
+## MLX Training Backend
+
+```
+poule train --backend mlx --db <index.db> --vocab <coq-vocabulary.json> --output <model/> <traces.jsonl>
+```
+
+An alternative training backend using Apple's MLX framework, designed for Apple Silicon's unified memory architecture. Produces checkpoints in MLX safetensors format that are converted to PyTorch for the inference pipeline.
+
+### Why MLX Instead of PyTorch MPS
+
+PyTorch's MPS backend has known memory leak issues (open as of PyTorch 2.7+): memory grows monotonically during training loops, reaching 37GB physical footprint within one epoch on a 32GB Mac. Watermark tuning (`PYTORCH_MPS_HIGH_WATERMARK_RATIO`) causes OOM; aggressive `synchronize()` + `empty_cache()` calls negate GPU advantages. Training on MPS is no faster than CPU.
+
+MLX eliminates this entirely — it was designed for unified memory from scratch. No separate GPU memory pool, no watermark tuning, no copy overhead, no memory leaks.
+
+### MLX BiEncoder
+
+The MLX BiEncoder is architecturally identical to the PyTorch version:
+
+```
+Input: input_ids [B, seq_len], attention_mask [B, seq_len]  (mx.array)
+  │
+  ├── Transformer encoder (12 layers, 768 hidden, 12 heads)
+  │   └── mlx.nn.TransformerEncoder
+  ├── Mean pooling (attention-masked)
+  ├── L2 normalization
+  └── Output: [B, 768] L2-normalized embeddings (mx.array)
+```
+
+**Key differences from PyTorch version:**
+- `mlx.nn.Module` instead of `torch.nn.Module`
+- Parameters are `mx.array` instead of `torch.Tensor`
+- No `.to(device)` — MLX arrays live in unified memory
+- Lazy evaluation: computation only executes on `mx.eval()`
+
+### CodeBERT Weight Initialization
+
+MLX cannot load HuggingFace `from_pretrained()` directly. Initialization procedure:
+
+1. Build the MLX BiEncoder with the target architecture (12 layers, 768 hidden, 12 heads).
+2. Load CodeBERT PyTorch weights via `transformers.AutoModel.from_pretrained("microsoft/codebert-base")`.
+3. Convert each PyTorch parameter: `torch.Tensor` → `numpy` → `mx.array`.
+4. Map parameter names from HuggingFace conventions to MLX conventions.
+5. Load the converted weights into the MLX model.
+6. Replace the embedding layer with one sized to the closed vocabulary (same procedure as PyTorch: copy overlapping embeddings, random init for new tokens).
+
+This is a one-time setup cost at the start of training. The converted CodeBERT weights can be cached as an MLX safetensors file.
+
+### MLX Training Loop
+
+MLX uses functional gradient computation instead of PyTorch's imperative autograd:
+
+```python
+# PyTorch style (current):
+loss = masked_contrastive_loss(model(states), model(premises), ...)
+loss.backward()
+optimizer.step()
+
+# MLX style:
+loss_fn = nn.value_and_grad(model, masked_contrastive_loss_mlx)
+loss, grads = loss_fn(model, states, premises, ...)
+optimizer.update(model, grads)
+mx.eval(model.parameters(), optimizer.state)
+```
+
+**Evaluation strategy**: `mx.eval()` is called once per optimizer step, not after every operation. This allows MLX to fuse operations in the computation graph for maximum efficiency.
+
+### MLX Masked Contrastive Loss
+
+The same InfoNCE-with-masking algorithm, reimplemented using `mlx.core` operations:
+
+- `mx.matmul()` for similarity matrix computation
+- `mx.where()` for premise masking
+- `mx.logsumexp()` for numerically stable log-sum-exp
+- Temperature scaling and mean reduction identical to PyTorch version
+
+### Checkpoint Format and Conversion
+
+MLX checkpoints use safetensors format (`model.safetensors` + `config.json`):
+
+```
+<output_dir>/
+├── model.safetensors     # MLX model weights
+├── config.json           # Model architecture config
+├── hyperparams.json      # Training hyperparameters
+├── vocabulary_path.txt   # Path to vocabulary used during training
+└── training_log.json     # Loss curves, validation metrics
+```
+
+### Weight Conversion (MLX → PyTorch)
+
+```
+poule convert-weights --input <mlx-checkpoint/> --output <model.pt>
+```
+
+Converts an MLX-trained checkpoint to PyTorch format for the inference pipeline:
+
+1. Load MLX safetensors weights.
+2. Map parameter names from MLX conventions to PyTorch/HuggingFace conventions.
+3. Convert each parameter: `mx.array` → `numpy` → `torch.Tensor`.
+4. Construct a PyTorch `BiEncoder` with the same architecture and vocabulary size.
+5. Load the converted state dict into the PyTorch model.
+6. Validate: encode 100 random inputs through both MLX and PyTorch models, assert max cosine distance < 0.01.
+7. Save as a PyTorch checkpoint (`.pt`) with the same format as natively-trained checkpoints, including `model_state_dict`, `hyperparams`, and `vocabulary_path`.
+
+The converted checkpoint is then consumed by `poule quantize` (ONNX export + INT8) as usual.
+
+### What Does Not Change
+
+- **Data loading**: `TrainingDataLoader`, `SQLitePremiseCorpus`, `TrainingDataset` are framework-agnostic (they produce Python strings and lists). The MLX backend consumes the same `TrainingDataset` as PyTorch.
+- **Vocabulary building**: `VocabularyBuilder` and `CoqTokenizer` are NumPy/dict-based; no framework dependency.
+- **Hard negative sampling**: `sample_hard_negatives()` operates on Python sets; no framework dependency.
+- **Evaluation**: Runs on PyTorch using the converted checkpoint.
+- **Quantization**: Consumes PyTorch checkpoints; unchanged.
+- **Inference**: ONNX Runtime in the Linux container; unchanged.
+
+### MLX Hardware Estimates
+
+| Corpus size | Hardware | Estimated wall time |
+|-------------|----------|---------------------|
+| 10K pairs (stdlib) | M2 Pro, 32GB | ~30 minutes |
+| 50K pairs (stdlib + MathComp) | M2 Pro, 32GB | ~6 hours |
+| 10K pairs (stdlib) | M1 Max, 64GB | ~20 minutes |
+| 50K pairs (stdlib + MathComp) | M1 Max, 64GB | ~4 hours |
 
 ## Hyperparameter Optimization
 
@@ -464,3 +588,13 @@ Ray Tune (with ASHA or BOHB schedulers) is designed for distributed multi-GPU cl
 ### Why MedianPruner rather than SuccessiveHalving
 
 Optuna's `MedianPruner` compares each trial's intermediate value (epoch-level validation R@32) against the median of completed trials at the same step. `SuccessiveHalvingPruner` pre-allocates a fixed bracket structure and requires knowing the total trial count upfront. MedianPruner adapts dynamically as trials complete, which is better suited to sequential execution where the user may interrupt and resume the study. The warmup period (3 epochs) avoids premature pruning on noisy early-training metrics.
+
+### Why MLX rather than PyTorch MPS for Apple Silicon training
+
+PyTorch's MPS backend was the original plan for Apple Silicon training. In practice, MPS has known memory leak issues (open as of PyTorch 2.7+): memory grows monotonically during training loops, reaching 37GB on a 32GB Mac within one epoch. The workarounds — watermark tuning (OOM), aggressive `synchronize()`/`empty_cache()` (no speedup over CPU) — all fail. Training on a 32GB M2 Pro via MPS is no faster than CPU-only.
+
+MLX is Apple's array framework designed from scratch for unified memory. There is no separate GPU memory pool — arrays live in unified memory and are computed on by any processor. Memory management is predictable because it was designed this way, not retrofitted. The tradeoff is that MLX uses lazy evaluation and functional gradients, requiring a different training loop implementation. This is justified because the alternative (PyTorch CPU) is 3–5x slower and the other alternative (PyTorch MPS) does not work.
+
+### Why a separate convert-weights command rather than automatic conversion
+
+MLX checkpoints use safetensors format with MLX-convention parameter names. PyTorch checkpoints use `.pt` format with HuggingFace-convention parameter names. The conversion involves parameter name mapping, array format conversion, and validation — a non-trivial step that can fail (name mapping errors, precision issues). Making this explicit as a separate command rather than automatic post-training conversion gives the user a clear point to inspect and debug. It also allows rerunning conversion independently (e.g., after fixing a name mapping bug) without retraining.

@@ -47,9 +47,26 @@ The deployment threshold is ≥50% Recall@32 for neural-only and ≥15% relative
 
 ## Compute Constraints
 
-Training must complete on a single consumer GPU (≤24GB VRAM) or be offloadable to a cloud GPU within a $200 budget. This is achievable: RocqStar trained a 125M CodeBERT model in 14 hours on 1x H100 for ~$50–100. LeanHammer's 82M model took 6.5 A6000-days for ~$200–400.
+Training must complete on a single consumer GPU (≤24GB VRAM), Apple Silicon Mac (≥32GB unified memory) using MLX, or be offloadable to a cloud GPU within a $200 budget. This is achievable: RocqStar trained a 125M CodeBERT model in 14 hours on 1x H100 for ~$50–100. LeanHammer's 82M model took 6.5 A6000-days for ~$200–400. On M2 Pro with MLX, estimated epoch time is 15–25 minutes vs. 90 minutes on PyTorch CPU.
 
 Fine-tuning on a user's project data should complete in under 4 hours on the same hardware, given the smaller dataset size (typically 1K–10K proofs vs. 100K+ for full training).
+
+## MLX Training Backend
+
+Project maintainers training on Apple Silicon Macs use MLX instead of PyTorch. MLX is Apple's array framework designed for unified memory — it eliminates the memory leak issues that make PyTorch MPS impractical for training on 32GB Macs.
+
+The MLX backend provides the same training workflow (train, fine-tune, evaluate) but produces MLX-format checkpoints. A conversion command transforms MLX checkpoints into PyTorch format, which feeds into the existing ONNX quantization and inference pipeline unchanged. Users in the Linux container never interact with MLX — they consume PyTorch/ONNX checkpoints as before.
+
+**What the MLX backend provides:**
+- Train and fine-tune the bi-encoder model on Apple Silicon using MLX's native unified memory
+- Predictable memory usage within the Mac's unified memory budget (no swap thrashing)
+- 3–5x faster training than PyTorch CPU on the same hardware
+- Weight conversion from MLX to PyTorch format
+
+**What it does not provide:**
+- MLX-based inference (inference remains PyTorch/ONNX in the Linux container)
+- A different model architecture — the MLX bi-encoder is architecturally identical to the PyTorch version
+- Automatic backend selection — the user explicitly chooses the MLX backend via a `--backend mlx` flag
 
 ## Design Rationale
 
@@ -164,6 +181,27 @@ Fine-tuning from a pre-trained checkpoint on 1K–10K project-specific proofs is
 - GIVEN a tuning study WHEN a trial's intermediate validation Recall@32 falls below the median of previous trials at the same epoch THEN the trial is pruned early to save compute
 - GIVEN an interrupted tuning session WHEN the tune command is run again with the resume flag THEN the study continues from where it left off, preserving all previously completed trials
 - GIVEN a completed tuning study WHEN the best model is saved THEN the checkpoint is written to a predictable path within the output directory alongside the study database
+
+### Train with MLX on Apple Silicon
+
+**Priority:** P0
+**Stability:** Draft
+**Traces to:** R5-P0-16
+
+- GIVEN extracted proof trace data and a vocabulary WHEN the train command is run with `--backend mlx` on an Apple Silicon Mac THEN a bi-encoder model checkpoint is produced in MLX safetensors format
+- GIVEN the MLX backend WHEN training runs on a 32GB M2 Pro THEN memory usage remains within the unified memory budget without swap thrashing
+- GIVEN the MLX backend WHEN training completes THEN it reports the same metrics (loss curves, validation Recall@32) as the PyTorch backend
+- GIVEN the MLX backend is requested WHEN MLX is not installed or the platform is not macOS THEN training fails with a clear error message
+
+### Convert MLX Checkpoint to PyTorch
+
+**Priority:** P0
+**Stability:** Draft
+**Traces to:** R5-P0-17
+
+- GIVEN an MLX-trained checkpoint WHEN the convert command is run THEN a PyTorch checkpoint is produced that is compatible with the existing ONNX quantization pipeline
+- GIVEN a converted PyTorch checkpoint WHEN loaded by the existing evaluator THEN it produces embeddings and retrieval metrics equivalent to a natively PyTorch-trained model (cosine distance < 0.01 on test inputs)
+- GIVEN a converted checkpoint WHEN passed to `poule quantize` THEN INT8 ONNX quantization succeeds and passes the existing validation threshold (max cosine distance < 0.02)
 
 ### Initialize from Lean Pre-trained Weights
 
