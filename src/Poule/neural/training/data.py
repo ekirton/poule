@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import statistics
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -103,6 +105,164 @@ class TrainingDataset:
     test_files: list[str] = field(default_factory=list)
     file_deps: dict[str, set[str]] = field(default_factory=dict)
     file_premises: dict[str, set[str]] = field(default_factory=dict)
+
+
+@dataclass
+class SplitReport:
+    """Diagnostic report on train/val/test split distributions.
+
+    spec §4.1: Generated from a populated TrainingDataset to diagnose
+    distribution shift between splits.
+    """
+
+    train_files: int
+    val_files: int
+    test_files: int
+    train_pairs: int
+    val_pairs: int
+    test_pairs: int
+    train_mean_pairs_per_file: float
+    train_median_pairs_per_file: float
+    val_mean_pairs_per_file: float
+    val_median_pairs_per_file: float
+    test_mean_pairs_per_file: float
+    test_median_pairs_per_file: float
+    train_unique_premises: int
+    val_unique_premises: int
+    test_unique_premises: int
+    premises_in_all_splits: int
+    premises_train_only: int
+    premises_val_only: int
+    premises_test_only: int
+    test_premise_train_coverage: float
+    train_top_premises: list[tuple[str, int]]
+    val_top_premises: list[tuple[str, int]]
+    test_top_premises: list[tuple[str, int]]
+    test_premise_mean_train_freq: float
+    test_premise_median_train_freq: float
+    warnings: list[str] = field(default_factory=list)
+
+    @staticmethod
+    def generate(dataset: "TrainingDataset") -> "SplitReport":
+        """Generate a split diagnostic report from a populated dataset."""
+
+        def _premise_counter(pairs: list[tuple[str, list[str]]]) -> Counter:
+            c: Counter[str] = Counter()
+            for _, premises in pairs:
+                for p in premises:
+                    c[p] += 1
+            return c
+
+        def _pairs_per_file_stats(
+            file_list: list[str],
+        ) -> tuple[int, float, float]:
+            if not file_list:
+                return 0, 0.0, 0.0
+            counts = Counter(file_list)
+            values = list(counts.values())
+            n_files = len(counts)
+            mean = sum(values) / n_files
+            med = float(statistics.median(values))
+            return n_files, mean, med
+
+        train_counter = _premise_counter(dataset.train)
+        val_counter = _premise_counter(dataset.val)
+        test_counter = _premise_counter(dataset.test)
+
+        train_premises = set(train_counter)
+        val_premises = set(val_counter)
+        test_premises = set(test_counter)
+
+        all_splits = train_premises & val_premises & test_premises
+        train_only = train_premises - val_premises - test_premises
+        val_only = val_premises - train_premises - test_premises
+        test_only = test_premises - train_premises - val_premises
+
+        test_unique = len(test_premises)
+        coverage = (
+            len(test_premises & train_premises) / test_unique
+            if test_unique > 0
+            else 0.0
+        )
+
+        # Training-set frequency of test ground-truth premises
+        if test_premises:
+            freqs = [train_counter.get(p, 0) for p in test_premises]
+            mean_freq = sum(freqs) / len(freqs)
+            median_freq = float(statistics.median(freqs))
+        else:
+            mean_freq = 0.0
+            median_freq = 0.0
+
+        tr_nf, tr_mean, tr_med = _pairs_per_file_stats(dataset.train_files)
+        va_nf, va_mean, va_med = _pairs_per_file_stats(dataset.val_files)
+        te_nf, te_mean, te_med = _pairs_per_file_stats(dataset.test_files)
+
+        # Warnings
+        warnings: list[str] = []
+        if test_unique > 0 and coverage < 0.50:
+            warnings.append(
+                "Less than 50% of test ground-truth premises "
+                "appear in training data"
+            )
+        if test_unique > 0 and len(test_only) / test_unique > 0.30:
+            warnings.append(
+                "Over 30% of test premises are unseen in training"
+            )
+        if test_unique > 0 and median_freq < 5:
+            warnings.append(
+                "Test ground-truth premises have low training-set "
+                f"frequency (median {median_freq:.0f})"
+            )
+        if len(dataset.test) < 100:
+            warnings.append(
+                "Test split has fewer than 100 pairs -- "
+                "metrics will be noisy"
+            )
+        if len(dataset.val) < 100:
+            warnings.append(
+                "Validation split has fewer than 100 pairs -- "
+                "metrics will be noisy"
+            )
+
+        return SplitReport(
+            train_files=tr_nf,
+            val_files=va_nf,
+            test_files=te_nf,
+            train_pairs=len(dataset.train),
+            val_pairs=len(dataset.val),
+            test_pairs=len(dataset.test),
+            train_mean_pairs_per_file=tr_mean,
+            train_median_pairs_per_file=tr_med,
+            val_mean_pairs_per_file=va_mean,
+            val_median_pairs_per_file=va_med,
+            test_mean_pairs_per_file=te_mean,
+            test_median_pairs_per_file=te_med,
+            train_unique_premises=len(train_premises),
+            val_unique_premises=len(val_premises),
+            test_unique_premises=test_unique,
+            premises_in_all_splits=len(all_splits),
+            premises_train_only=len(train_only),
+            premises_val_only=len(val_only),
+            premises_test_only=len(test_only),
+            test_premise_train_coverage=coverage,
+            train_top_premises=train_counter.most_common(10),
+            val_top_premises=val_counter.most_common(10),
+            test_top_premises=test_counter.most_common(10),
+            test_premise_mean_train_freq=mean_freq,
+            test_premise_median_train_freq=median_freq,
+            warnings=warnings,
+        )
+
+    def to_dict(self) -> dict:
+        """Return a JSON-serializable dictionary."""
+        d = {}
+        for fld in self.__dataclass_fields__:
+            val = getattr(self, fld)
+            if isinstance(val, list) and val and isinstance(val[0], tuple):
+                val = [[name, count] for name, count in val]
+            d[fld] = val
+        return d
 
 
 def serialize_goals(goals: list[dict]) -> str:

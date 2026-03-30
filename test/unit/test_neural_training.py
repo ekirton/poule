@@ -26,6 +26,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 from Poule.neural.training.data import (
+    SplitReport,
     TrainingDataLoader,
     TrainingDataset,
     serialize_goals,
@@ -1971,3 +1972,166 @@ class TestVocabularyBuilderCompactFormat:
 
         vocab = json.loads(vocab_path.read_text())
         assert "supplementary_token_abc" in vocab
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SplitReport — Split Diagnostic Report
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestSplitReport:
+    """spec §4.1: Split diagnostic report on train/val/test distributions."""
+
+    def _make_dataset(self, file_premise_map):
+        """Build a TrainingDataset from {file: [(state, [premises])]} map.
+
+        Uses position % 10 split: 8 → val, 9 → test, else → train.
+        """
+        sorted_files = sorted(file_premise_map.keys())
+        train, val, test = [], [], []
+        train_f, val_f, test_f = [], [], []
+        for pos, f in enumerate(sorted_files):
+            pairs = file_premise_map[f]
+            mod = pos % 10
+            if mod == 8:
+                val.extend(pairs)
+                val_f.extend([f] * len(pairs))
+            elif mod == 9:
+                test.extend(pairs)
+                test_f.extend([f] * len(pairs))
+            else:
+                train.extend(pairs)
+                train_f.extend([f] * len(pairs))
+        return TrainingDataset(
+            train=train, val=val, test=test,
+            premise_corpus={},
+            train_files=train_f, val_files=val_f, test_files=test_f,
+        )
+
+    def test_per_split_counts(self):
+        """spec §4.1: 10 files → 8 train, 1 val, 1 test."""
+        fpm = {
+            f"file_{i:02d}": [(f"state_{i}", [f"premise_{i}"])]
+            for i in range(10)
+        }
+        dataset = self._make_dataset(fpm)
+        report = SplitReport.generate(dataset)
+
+        assert report.train_files == 8
+        assert report.val_files == 1
+        assert report.test_files == 1
+        assert report.train_pairs == 8
+        assert report.val_pairs == 1
+        assert report.test_pairs == 1
+
+    def test_premise_overlap(self):
+        """Verify cross-split premise overlap counts."""
+        # shared_premise in all files; file_08 (val) has val_only;
+        # file_09 (test) has test_only; train files have train_only
+        fpm = {}
+        for i in range(10):
+            premises = ["shared_premise"]
+            if i == 8:
+                premises.append("val_only_premise")
+            elif i == 9:
+                premises.append("test_only_premise")
+            else:
+                premises.append("train_only_premise")
+            fpm[f"file_{i:02d}"] = [(f"state_{i}", premises)]
+
+        dataset = self._make_dataset(fpm)
+        report = SplitReport.generate(dataset)
+
+        assert report.premises_in_all_splits == 1  # shared_premise
+        assert report.premises_train_only == 1  # train_only_premise
+        assert report.premises_val_only == 1  # val_only_premise
+        assert report.premises_test_only == 1  # test_only_premise
+
+    def test_coverage_fraction(self):
+        """test_premise_train_coverage = |test ∩ train| / |test|."""
+        # Test file has 2 premises: one in train, one not
+        fpm = {}
+        for i in range(8):
+            fpm[f"file_{i:02d}"] = [(f"s{i}", ["common"])]
+        fpm["file_08"] = [("s8", ["val_p"])]
+        fpm["file_09"] = [("s9", ["common", "test_exclusive"])]
+
+        dataset = self._make_dataset(fpm)
+        report = SplitReport.generate(dataset)
+
+        # test premises: {common, test_exclusive}, train has {common}
+        assert report.test_premise_train_coverage == pytest.approx(0.5)
+
+    def test_warning_low_coverage(self):
+        """Warning when <50% of test premises appear in training."""
+        fpm = {}
+        for i in range(8):
+            fpm[f"file_{i:02d}"] = [(f"s{i}", [f"train_p_{i}"])]
+        fpm["file_08"] = [("s8", ["val_p"])]
+        fpm["file_09"] = [("s9", ["unseen_a", "unseen_b", "unseen_c"])]
+
+        dataset = self._make_dataset(fpm)
+        report = SplitReport.generate(dataset)
+
+        assert report.test_premise_train_coverage == 0.0
+        assert any("Less than 50%" in w for w in report.warnings)
+
+    def test_warning_test_exclusive(self):
+        """Warning when >30% of test premises are unseen in training."""
+        fpm = {}
+        for i in range(8):
+            fpm[f"file_{i:02d}"] = [(f"s{i}", [f"train_p_{i}"])]
+        fpm["file_08"] = [("s8", ["val_p"])]
+        # 3 premises, all exclusive to test → 100% > 30%
+        fpm["file_09"] = [("s9", ["only_a", "only_b", "only_c"])]
+
+        dataset = self._make_dataset(fpm)
+        report = SplitReport.generate(dataset)
+
+        assert any("Over 30%" in w for w in report.warnings)
+
+    def test_no_warnings_healthy(self):
+        """No warnings when all premises are well-distributed."""
+        # All files share the same premise, lots of pairs
+        fpm = {}
+        for i in range(10):
+            pairs = [(f"s{i}_{j}", ["shared"]) for j in range(200)]
+            fpm[f"file_{i:02d}"] = pairs
+
+        dataset = self._make_dataset(fpm)
+        report = SplitReport.generate(dataset)
+
+        # coverage is 1.0, no test-only premises, high frequency, enough pairs
+        assert report.test_premise_train_coverage == 1.0
+        assert report.warnings == []
+
+    def test_to_dict_json_serializable(self):
+        """to_dict() produces JSON-serializable output."""
+        fpm = {
+            f"file_{i:02d}": [(f"state_{i}", [f"premise_{i}"])]
+            for i in range(10)
+        }
+        dataset = self._make_dataset(fpm)
+        report = SplitReport.generate(dataset)
+
+        d = report.to_dict()
+        serialized = json.dumps(d)
+        assert isinstance(serialized, str)
+        # Roundtrip
+        parsed = json.loads(serialized)
+        assert parsed["train_files"] == 8
+
+    def test_empty_split_no_crash(self):
+        """Report handles fewer than 10 files without division by zero."""
+        fpm = {
+            f"file_{i:02d}": [(f"state_{i}", [f"premise_{i}"])]
+            for i in range(5)
+        }
+        dataset = self._make_dataset(fpm)
+        report = SplitReport.generate(dataset)
+
+        # With 5 files (positions 0-4), no file hits mod==8 or mod==9
+        assert report.val_files == 0
+        assert report.test_files == 0
+        assert report.test_premise_train_coverage == 0.0
+        assert report.test_premise_mean_train_freq == 0.0

@@ -272,6 +272,64 @@ All pairs from the same file go into the same split.
 > **When** the split is computed
 > **Then** files at indices 8, 18, 28, ... → validation; indices 9, 19, 29, ... → test; all others → train
 
+#### Split diagnostic report
+
+`SplitReport.generate(dataset: TrainingDataset) -> SplitReport`
+
+- REQUIRES: `dataset` is a populated `TrainingDataset`.
+- ENSURES: Returns a `SplitReport` with per-split file/pair counts, premise distributions, cross-split premise overlap, and diagnostic warnings. All division-by-zero cases (empty splits) yield `0.0`.
+
+**SplitReport fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `train_files` | int | Unique source files in train split |
+| `val_files` | int | Unique source files in validation split |
+| `test_files` | int | Unique source files in test split |
+| `train_pairs` | int | Total pairs in train split |
+| `val_pairs` | int | Total pairs in validation split |
+| `test_pairs` | int | Total pairs in test split |
+| `train_mean_pairs_per_file` | float | Mean pairs per file in train |
+| `train_median_pairs_per_file` | float | Median pairs per file in train |
+| `val_mean_pairs_per_file` | float | Mean pairs per file in validation |
+| `val_median_pairs_per_file` | float | Median pairs per file in validation |
+| `test_mean_pairs_per_file` | float | Mean pairs per file in test |
+| `test_median_pairs_per_file` | float | Median pairs per file in test |
+| `train_unique_premises` | int | Distinct premise names in train |
+| `val_unique_premises` | int | Distinct premise names in validation |
+| `test_unique_premises` | int | Distinct premise names in test |
+| `premises_in_all_splits` | int | Premises appearing in all three splits |
+| `premises_train_only` | int | Premises exclusive to train |
+| `premises_val_only` | int | Premises exclusive to validation |
+| `premises_test_only` | int | Premises exclusive to test |
+| `test_premise_train_coverage` | float | Fraction of test premises seen in train: \|test ∩ train\| / \|test\| |
+| `train_top_premises` | list of (name, count) | 10 most frequent premises in train |
+| `val_top_premises` | list of (name, count) | 10 most frequent premises in validation |
+| `test_top_premises` | list of (name, count) | 10 most frequent premises in test |
+| `test_premise_mean_train_freq` | float | Mean training-set frequency of test ground-truth premises |
+| `test_premise_median_train_freq` | float | Median training-set frequency of test ground-truth premises |
+| `warnings` | list of string | Diagnostic warnings (see conditions below) |
+
+**Warning conditions:**
+
+| Condition | Warning message |
+|-----------|----------------|
+| `test_premise_train_coverage < 0.50` | `"Less than 50% of test ground-truth premises appear in training data"` |
+| `premises_test_only / test_unique_premises > 0.30` | `"Over 30% of test premises are unseen in training"` |
+| `test_premise_median_train_freq < 5` and `test_unique_premises > 0` | `"Test ground-truth premises have low training-set frequency (median {n})"` |
+| `test_pairs < 100` | `"Test split has fewer than 100 pairs -- metrics will be noisy"` |
+| `val_pairs < 100` | `"Validation split has fewer than 100 pairs -- metrics will be noisy"` |
+
+**JSON serialization**: `to_dict()` returns a JSON-serializable dictionary. Tuple lists are converted to lists of `[name, count]` pairs.
+
+> **Given** a dataset with 10 source files, each with one pair, premises `premise_0` through `premise_9`
+> **When** `SplitReport.generate` runs
+> **Then** `train_files` = 8, `val_files` = 1, `test_files` = 1, `train_pairs` = 8, `val_pairs` = 1, `test_pairs` = 1
+
+> **Given** a dataset where all test premises are absent from training
+> **When** `SplitReport.generate` runs
+> **Then** `test_premise_train_coverage` = 0.0, warnings includes "Less than 50% of test ground-truth premises appear in training data"
+
 ### 4.2 Hard Negative Sampling
 
 #### sample_hard_negatives(state, positive_premises, accessible_premises, k=3)
