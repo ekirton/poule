@@ -334,17 +334,36 @@ class CoqLspBackend:
             self._notification_buffer.clear()
 
     def _get_child_rss_bytes(self) -> int:
-        """Return the coq-lsp child process RSS in bytes, or 0 on failure."""
+        """Return total RSS in bytes for coq-lsp and all its descendants.
+
+        Walks ``/proc/<pid>/task/../children`` recursively to capture
+        rocqworker sub-processes that coq-lsp spawns internally.
+        """
         if self._proc is None or self._proc.pid is None:
             return 0
-        try:
-            with open(f"/proc/{self._proc.pid}/status") as f:
-                for line in f:
-                    if line.startswith("VmRSS:"):
-                        return int(line.split()[1]) * 1024  # kB → bytes
-        except (OSError, ValueError):
-            pass
-        return 0
+
+        def _descendant_pids(pid: int) -> list[int]:
+            """Return *pid* plus all descendant PIDs via /proc children files."""
+            pids = [pid]
+            try:
+                with open(f"/proc/{pid}/task/{pid}/children") as f:
+                    for child_pid in f.read().split():
+                        pids.extend(_descendant_pids(int(child_pid)))
+            except (OSError, ValueError):
+                pass
+            return pids
+
+        total = 0
+        for pid in _descendant_pids(self._proc.pid):
+            try:
+                with open(f"/proc/{pid}/status") as f:
+                    for line in f:
+                        if line.startswith("VmRSS:"):
+                            total += int(line.split()[1]) * 1024  # kB → bytes
+                            break
+            except (OSError, ValueError):
+                pass
+        return total
 
     def __enter__(self) -> CoqLspBackend:
         self.start()
