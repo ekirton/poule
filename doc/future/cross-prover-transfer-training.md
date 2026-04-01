@@ -2,7 +2,7 @@
 
 ## Status
 
-Future proposal — not scheduled for implementation.
+**Deprioritized.** With only ~3,500 Coq training pairs, the fine-tuning signal is too weak for any transfer strategy to be effective. The bottleneck is not the training algorithm — it is Coq's inability to report per-tactic premise usage. Until the Coq/Rocq kernel exposes premise tracking (similar to how Lean records lemma arguments in proof terms), no amount of transfer learning can compensate for the missing ground truth. The priority should be lobbying for LeanDojo-equivalent infrastructure in Rocq, or contributing premise-tracking instrumentation to the Rocq kernel.
 
 ## Problem
 
@@ -80,16 +80,17 @@ LeanDojo's extraction format differs from our JSONL format. A translation layer 
 - LeanDojo's premise annotations use Lean FQNs; ours use Coq FQNs
 - The `TrainingDataLoader` would need to accept both formats or a unified intermediate format
 
-## Why Deferred
+## Why Deprioritized
 
-1. **Orthogonal to extraction improvements**: Cross-prover transfer is a training-time optimization, not an extraction-time improvement. The extraction pipeline must be solid first.
-2. **Requires Lean infrastructure**: Obtaining and processing LeanDojo's dataset requires Lean 4 tooling that is outside our current dependency set.
-3. **Uncertain magnitude**: While PROOFWALA shows cross-system benefits for proof generation, it has not been evaluated specifically for premise retrieval. The transfer benefit for retrieval may be smaller than for generation.
-4. **Our model is small**: At 125M parameters (CodeBERT), the model may not have capacity to represent both Lean and Coq patterns effectively. Cross-prover transfer may benefit larger models (300M+) more.
-5. **Evaluation complexity**: Validating that cross-prover pre-training actually helps Coq retrieval requires careful experimental design to avoid confounding factors.
+1. **Insufficient fine-tuning data**: With ~3,500 Coq pairs, fine-tuning a model pre-trained on 5.8M Lean pairs would almost certainly overfit to the Coq data or catastrophically forget the Lean representations. The Coq fine-tuning set is too small to steer a pre-trained model toward Coq-specific retrieval patterns. This is not a hyperparameter tuning problem — it is a fundamental data scarcity problem.
+2. **The real bottleneck is extraction, not training**: Coq's kernel does not track which lemmas each tactic consults. Until the Rocq kernel exposes per-tactic premise usage (as Lean does via proof term annotations), no training strategy can produce more than ~3,500 pairs from six libraries. The correct investment is kernel-level instrumentation, not training-time workarounds.
+3. **Requires Lean infrastructure**: Obtaining and processing LeanDojo's dataset requires Lean 4 tooling that is outside our current dependency set.
+4. **Uncertain magnitude**: While PROOFWALA shows cross-system benefits for proof generation, it has not been evaluated specifically for premise retrieval. The transfer benefit for retrieval may be smaller than for generation.
+5. **Our model is small**: At 125M parameters (CodeBERT), the model may not have capacity to represent both Lean and Coq patterns effectively. Cross-prover transfer may benefit larger models (300M+) more.
 
 ## Prerequisites
 
+- **Per-tactic premise tracking in Rocq**: Without this, the Coq fine-tuning set remains at ~3,500 pairs — too small for effective transfer. This is the blocking prerequisite.
 - Solid Coq-only baseline: train and evaluate the model on Coq data alone first
 - LeanDojo dataset access and format documentation
 - Cross-library alignment data (even a small manually-curated set of Lean↔Coq theorem pairs for evaluation)
@@ -105,6 +106,7 @@ LeanDojo's extraction format differs from our JSONL format. A translation layer 
 
 ## Relationship to Other Work
 
+- **Blocked by**: per-tactic premise tracking in Rocq kernel (~3,500 pairs is insufficient for fine-tuning)
 - Depends on: working Coq-only training pipeline (model, evaluation, quantization)
 - Complements: extraction improvements (more Coq data reduces the relative importance of cross-prover transfer)
 - Alternative to: proof-similarity training (RocqStar's approach bootstraps from Coq data only, without Lean)
