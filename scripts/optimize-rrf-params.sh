@@ -61,8 +61,15 @@ if is_complete "$COMBINED_DIR" && [[ "$FORCE" != "true" ]]; then
     echo "Phase 2: $COMBINED_DIR exists and looks complete, skipping (use --force to overwrite)"
 else
     if [[ ! -f "$CHECKPOINT" ]]; then
-        echo "Phase 2: Skipping — no checkpoint at $CHECKPOINT" >&2
-        exit 0
+        # Fall back to safetensors if .pt not found
+        ALT="${CHECKPOINT%.pt}.safetensors"
+        if [[ "$CHECKPOINT" == *.pt ]] && [[ -f "$ALT" ]]; then
+            CHECKPOINT="$ALT"
+            echo "Phase 2: Using $CHECKPOINT (no .pt found)"
+        else
+            echo "Phase 2: Skipping — no checkpoint at $CHECKPOINT" >&2
+            exit 0
+        fi
     fi
     echo "Phase 2: Optimizing combined RRF parameters..."
     poule tune-rrf --db "$DB" --output-dir "$COMBINED_DIR" --n-trials "$N_TRIALS_COMBINED" \

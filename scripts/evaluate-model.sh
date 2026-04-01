@@ -34,8 +34,14 @@ fi
 TEST_DATA="${DATA_FILES[0]}"
 
 if [[ ! -f "$CHECKPOINT" ]]; then
-    echo "Error: checkpoint not found at $CHECKPOINT" >&2
-    exit 1
+    ALT="${CHECKPOINT%.pt}.safetensors"
+    if [[ "$CHECKPOINT" == *.pt ]] && [[ -f "$ALT" ]]; then
+        CHECKPOINT="$ALT"
+        echo "Using $CHECKPOINT (no .pt found)"
+    else
+        echo "Error: checkpoint not found at $CHECKPOINT" >&2
+        exit 1
+    fi
 fi
 
 echo "=== Step 1: Retrieval metrics (R@1, R@10, R@32, MRR) ==="
