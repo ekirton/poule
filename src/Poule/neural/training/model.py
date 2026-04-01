@@ -48,14 +48,28 @@ class BiEncoder(nn.Module):
     def from_checkpoint(cls, checkpoint: dict) -> "BiEncoder":
         """Instantiate a BiEncoder from a checkpoint dict.
 
-        Infers vocab_size from the embedding weight shape and uses
-        strict=False to tolerate missing keys (e.g. pooler weights
-        absent from MLX-converted checkpoints).
+        Builds the encoder from a RoBERTa config (no network access),
+        infers vocab_size from the embedding weight shape, and loads
+        weights with strict=False to tolerate missing keys (e.g. pooler
+        weights absent from MLX-converted checkpoints).
         """
+        from transformers import RobertaConfig, RobertaModel
+
         state_dict = checkpoint["model_state_dict"]
         emb_key = "encoder.embeddings.word_embeddings.weight"
         vocab_size = state_dict[emb_key].shape[0] if emb_key in state_dict else None
-        model = cls(vocab_size=vocab_size)
+
+        config = RobertaConfig(
+            vocab_size=vocab_size or 50265,
+            hidden_size=768,
+            num_hidden_layers=12,
+            num_attention_heads=12,
+            intermediate_size=3072,
+        )
+        model = cls.__new__(cls)
+        nn.Module.__init__(model)
+        model.encoder = RobertaModel(config)
+
         model.load_state_dict(state_dict, strict=False)
         return model
 

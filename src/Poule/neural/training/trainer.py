@@ -713,16 +713,30 @@ def load_checkpoint(path: Path) -> dict:
     """Load checkpoint dict.
 
     Accepts PyTorch .pt files or MLX safetensors checkpoint directories.
-    When *path* points to a ``.safetensors`` file, the sibling metadata
-    files (``config.json``, ``hyperparams.json``, etc.) are read and the
-    MLX parameter names are mapped to PyTorch BiEncoder names (spec §4.10).
+    When *path* points to a ``.safetensors`` file, the sibling ``.pt``
+    file is checked first.  If absent, the safetensors checkpoint is
+    converted, saved as ``.pt`` for future use, and returned.
     """
     path = Path(path)
 
-    if path.suffix == ".safetensors" or (
-        path.is_dir() and (path / "model.safetensors").exists()
-    ):
-        return _load_safetensors_checkpoint(path)
+    # Prefer .pt sibling when given a .safetensors path
+    if path.suffix == ".safetensors":
+        pt_path = path.with_suffix(".pt")
+        if pt_path.exists():
+            path = pt_path
+        else:
+            ckpt = _load_safetensors_checkpoint(path)
+            # Cache as .pt so subsequent loads skip conversion
+            try:
+                import torch
+                torch.save(ckpt, pt_path)
+                logger.info(f"Cached converted checkpoint: {pt_path}")
+            except Exception:
+                pass  # non-fatal — conversion still succeeded
+            return ckpt
+
+    if path.is_dir() and (path / "model.safetensors").exists():
+        return load_checkpoint(path / "model.safetensors")
 
     try:
         import torch
