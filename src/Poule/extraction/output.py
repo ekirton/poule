@@ -41,6 +41,31 @@ def _compact(obj: dict[str, Any]) -> str:
     return json.dumps(obj, separators=(",", ":")) + "\n"
 
 
+def serialize_goals(goals: list[dict]) -> str:
+    """Serialize a list of Goal dicts to a single text string.
+
+    For each goal, format hypotheses as 'name : type',
+    then the goal type, separated by newlines. Multiple goals are
+    separated by a blank line.
+    """
+    if not goals:
+        return ""
+
+    parts = []
+    for goal in goals:
+        lines = []
+        for hyp in goal.get("hypotheses", []):
+            name = hyp.get("name", "")
+            hyp_type = hyp.get("type", "")
+            lines.append(f"{name} : {hyp_type}")
+        goal_type = goal.get("type", "")
+        if goal_type:
+            lines.append(goal_type)
+        parts.append("\n".join(lines))
+
+    return "\n\n".join(parts)
+
+
 def _hypothesis_to_dict(h: Hypothesis) -> dict[str, Any]:
     return {
         "name": h.name,

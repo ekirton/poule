@@ -1,12 +1,12 @@
-# Proposal: Tactic Prediction from Proof States
+# Tactic Prediction from Proof States
 
 ## Status
 
-Future proposal — not yet scheduled. This is a higher-priority alternative to cross-prover transfer training because it uses data we already extract (~105K goal states) rather than requiring external datasets or kernel changes.
+**Active development.** Replaces the abandoned neural premise selection approach (see [neural-network-search.md](neural-network-search.md) for why that failed). The extraction pipeline already captures ~105K (proof_state, tactic) pairs — 30x more training data than was available for premise retrieval.
 
 ## Problem
 
-Our current neural training pipeline trains a bi-encoder to retrieve *premises* given a proof state. This requires (proof_state, premises_used) pairs, but Coq's kernel does not track which lemmas each tactic consults. The result: our extraction pipeline captures ~134,000 proof records containing ~105,000 unique goal states, but only ~3,500 produce non-empty premise lists usable as training pairs — a 97% attrition rate.
+The original neural training pipeline trained a bi-encoder to retrieve *premises* given a proof state. This required (proof_state, premises_used) pairs, but Coq's kernel does not track which lemmas each tactic consults. The result: the extraction pipeline captures ~134,000 proof records containing ~105,000 unique goal states, but only ~3,500 produce non-empty premise lists usable as training pairs — a 97% attrition rate.
 
 However, the extraction pipeline *does* capture the tactic text at each step (`ExtractionStep.tactic`). Every goal state has the tactic that was applied to it, regardless of whether that tactic's premises are known. This represents a 30× larger training signal that is currently discarded in the compact output format.
 

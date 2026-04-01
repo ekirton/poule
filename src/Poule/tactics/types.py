@@ -63,6 +63,7 @@ class TacticSuggestion:
     rationale: str
     confidence: str  # "high", "medium", "low"
     category: str
+    source: str = "rule"  # "neural" or "rule"
 
 
 @dataclass

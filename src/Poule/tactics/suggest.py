@@ -1,14 +1,44 @@
 """Contextual tactic suggestion.
 
-Spec: specification/tactic-documentation.md section 4.4.
+Spec: specification/tactic-documentation.md section 4.4,
+      specification/neural-training.md §8.2.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Optional
 
 from Poule.tactics.types import TacticSuggestion
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Neural predictor (lazy singleton)
+# ---------------------------------------------------------------------------
+
+_predictor = None  # type: ignore[assignment]
+_predictor_checked = False
+
+
+def _get_predictor():
+    """Return the TacticPredictor singleton, or None if unavailable."""
+    global _predictor, _predictor_checked
+    if _predictor_checked:
+        return _predictor
+    _predictor_checked = True
+    try:
+        from Poule.neural.predictor import TacticPredictor
+
+        if TacticPredictor.is_available():
+            _predictor = TacticPredictor.load_default()
+            logger.info("Neural tactic predictor loaded")
+        else:
+            logger.debug("Neural tactic predictor not available (model files missing)")
+    except Exception:
+        logger.debug("Neural tactic predictor not available", exc_info=True)
+    return _predictor
 
 
 class TacticDocError(Exception):
@@ -359,6 +389,42 @@ async def tactic_suggest(
     goal_type = goal.type
     hypotheses = goal.hypotheses
 
+    # ---------------------------------------------------------------------------
+    # Neural predictions (spec §8.2)
+    # ---------------------------------------------------------------------------
+    neural_suggestions: list[TacticSuggestion] = []
+    predictor = _get_predictor()
+    if predictor is not None:
+        try:
+            # Build proof state text: "hyp_name : hyp_type\n...\ngoal_type"
+            lines = [f"{h.name} : {h.type}" for h in hypotheses]
+            lines.append(goal_type)
+            proof_state_text = "\n".join(lines)
+
+            predictions = predictor.predict(proof_state_text, top_k=5)
+            for family_name, confidence in predictions:
+                conf_label = (
+                    "high" if confidence >= 0.3
+                    else "medium" if confidence >= 0.1
+                    else "low"
+                )
+                neural_suggestions.append(
+                    TacticSuggestion(
+                        tactic=family_name,
+                        rank=0,  # assigned below
+                        rationale=f"Neural prediction (confidence: {confidence:.0%})",
+                        confidence=conf_label,
+                        category="neural",
+                        source="neural",
+                    )
+                )
+        except Exception:
+            logger.debug("Neural prediction failed, falling back to rules", exc_info=True)
+
+    # ---------------------------------------------------------------------------
+    # Rule-based candidates (existing behavior)
+    # ---------------------------------------------------------------------------
+
     # Build candidates from goal classification
     goal_candidates = _suggestions_for_goal(goal_type)
 
@@ -369,15 +435,31 @@ async def tactic_suggest(
     all_candidates = hyp_candidates + goal_candidates
 
     ranked = _rank_candidates(all_candidates)
-    ranked = ranked[:limit]
 
-    return [
+    rule_suggestions = [
         TacticSuggestion(
             tactic=c["tactic"],
-            rank=i + 1,
+            rank=0,  # assigned below
             rationale=c["rationale"],
             confidence=c["confidence"],
             category=c["category"],
+            source="rule",
         )
-        for i, c in enumerate(ranked)
+        for c in ranked
     ]
+
+    # ---------------------------------------------------------------------------
+    # Merge: neural first, then rule-based (excluding duplicates)
+    # ---------------------------------------------------------------------------
+    neural_tactic_names = {s.tactic for s in neural_suggestions}
+    merged = list(neural_suggestions)
+    for s in rule_suggestions:
+        if s.tactic not in neural_tactic_names:
+            merged.append(s)
+
+    # Assign final ranks and apply limit
+    merged = merged[:limit]
+    for i, s in enumerate(merged):
+        s.rank = i + 1
+
+    return merged

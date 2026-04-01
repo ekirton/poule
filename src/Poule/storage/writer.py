@@ -180,14 +180,3 @@ class IndexWriter:
                 os.remove(self._db_path)
             raise StorageError(f"Integrity check failed: {result[0]}")
 
-        # Build FAISS sidecar if embeddings exist
-        try:
-            from Poule.neural.embeddings import build_faiss_index
-            build_faiss_index(self._db_path)
-        except ImportError:
-            pass  # faiss-cpu not installed
-        except Exception:
-            logger.warning(
-                "Failed to build FAISS sidecar for %s", self._db_path,
-                exc_info=True,
-            )

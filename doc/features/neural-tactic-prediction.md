@@ -1,111 +1,85 @@
-# Neural Retrieval Channel
+# Neural Tactic Prediction
 
-A learned semantic similarity channel added to the multi-channel retrieval pipeline, trained on Coq proof traces to capture mathematical relationships that structural and symbolic channels miss.
+A learned tactic family classifier that predicts which tactic to apply given a proof state, integrated into the existing `suggest_tactics` MCP tool as a neural enhancement over rule-based suggestions.
 
 ---
 
 ## Problem
 
-The existing retrieval channels (structural, symbol overlap, lexical, fine structural, constant name) all operate on surface-level properties of declarations. They find lemmas that share tree shape, reference the same constants, or contain matching name fragments. What they cannot find are lemmas whose relevance depends on mathematical relationships invisible to syntactic analysis.
+The existing `suggest_tactics` MCP tool uses rule-based goal classification: it inspects the goal type for structural patterns (conjunction, disjunction, equality, existential, etc.) and suggests tactics accordingly. This approach is limited to a fixed set of goal shapes and cannot learn from proof patterns across libraries. It misses tactic choices that depend on hypothesis context, mathematical domain conventions, or library-specific idioms.
 
-A user looking for a lemma about group commutativity will not find results about ring commutativity through structural search — the proof shapes and symbol sets are different. A user working with `Nat.add` will not discover relevant results about `Z.add` through symbol overlap, even though the mathematical relationship is direct. These "semantic gaps" are precisely where users get stuck: they know a relevant lemma should exist but cannot formulate a syntactic query that finds it.
-
-Research confirms this is a real, measurable problem. In Lean, the union of neural and symbolic selection improves recall by 21% over either alone (LeanHammer). The gains come almost entirely from cases where one channel finds results the other misses — the errors are complementary, not overlapping.
+Meanwhile, the extraction pipeline captures ~105,000 (proof_state, tactic) pairs from six Coq libraries — each goal state paired with the tactic that was actually applied. This data represents the collective proof strategies of library authors across diverse mathematical domains. A classifier trained on this data can learn which tactic families are appropriate for proof states that no rule-based system can enumerate.
 
 ## Solution
 
-A bi-encoder retrieval model maps proof states and premise declarations into a shared embedding space. At index time, every declaration in the library is encoded into a dense vector and stored alongside existing retrieval data in the SQLite index. At query time, the proof state (or search query) is encoded into the same space, and the nearest premises are retrieved by cosine similarity.
+An encoder-based classifier predicts the tactic family from a serialized proof state. The model uses a CodeBERT encoder with a closed-vocabulary tokenizer (the same tokenizer used elsewhere in the project) and a classification head mapping to ~30 tactic families. Training uses class-weighted cross-entropy to handle the long-tailed tactic distribution.
 
-The neural channel participates in the existing fusion mechanism. Items that appear in multiple channels (neural + structural, neural + symbolic, etc.) are ranked higher than items from a single channel. The neural channel does not replace any existing channel — it adds a complementary signal.
+Neural predictions are integrated into the existing `suggest_tactics` MCP tool:
+- When a trained model is available, neural predictions are returned alongside rule-based suggestions, ranked by model confidence
+- When no model is available, the tool operates with rule-based suggestions only — no errors, no degradation
+- The MCP interface is unchanged; Claude sees richer suggestions when a model is present
 
-## How It Fits in the Pipeline
+## What This Is Not
 
-The neural channel is one more input to the existing rank fusion. From the user's perspective, nothing changes about how search is invoked — the same MCP tools and CLI commands work identically. The only observable effect is better search quality: results that were previously missed by all channels now appear when the neural channel retrieves them.
+This is **not** a search channel. The tactic classifier is independent of the Semantic Lemma Search pipeline. It does not produce embeddings, does not participate in RRF fusion, and is not stored in the search index. It is a proof assistance capability exposed through the `suggest_tactics` tool.
 
-| Search Operation | Channels Used (with neural) |
-|------------------|---------------------------|
-| `search_by_type` | Structural + Symbol Overlap + Lexical + **Neural** |
-| `search_by_structure` | Structural + Fine Structural + Constant Name + **Neural** |
-| `search_by_symbols` | Symbol Overlap + Constant Name + **Neural** |
-| `search_by_name` | Lexical only (neural not useful for pure name search) |
-
-## Graceful Degradation
-
-The neural channel is optional. When no model checkpoint or premise embeddings are available, search operates using only the existing channels with no errors, no warnings, and no degraded behavior. This means:
-
-- A fresh installation works immediately with structural/symbolic search
-- The neural channel activates automatically when a model checkpoint and embeddings are present in the index
-- Removing or corrupting the model checkpoint reverts to symbolic-only search
-
-## Inference Constraints
-
-The model runs on CPU with INT8 quantization. No GPU is required at inference time. This is a hard constraint: the target user is a Coq developer on a laptop, not an ML engineer with GPU access. The 100M-class encoder models used in the research literature achieve <10ms per encoding on CPU with INT8 — well within the <100ms budget per neural channel query.
-
-The end-to-end search latency (all channels including neural, plus fusion) remains under 1 second. Adding the neural channel should be imperceptible to the user in terms of response time.
+This is **not** full tactic generation. The classifier predicts tactic *families* (e.g., `rewrite`, `apply`, `induction`), not complete tactic text with arguments. Argument selection (e.g., which lemma to `apply`) is a separate concern addressed by the rule-based system and future work combining tactic prediction with premise retrieval.
 
 ## Design Rationale
 
-### Why a new channel, not a replacement
+### Why tactic prediction instead of premise retrieval
 
-BM25 beats dense embeddings by 46% for in-project Coq retrieval (Rango, ICSE 2025). Structural methods are competitive with neural methods without training data (tree-based premise selection, NeurIPS 2025). The neural channel fills the semantic gap — it does not dominate the other signals. Replacing existing channels would lose the lexical and structural strengths that the neural channel cannot replicate.
+The original plan was to train a neural premise retrieval model. This failed: only ~3,500 of ~134,000 extracted proof records produce non-empty premise lists (97% attrition), because Coq's kernel does not track which lemmas each tactic consults. With ~3,500 training pairs — 1,600x smaller than LeanHammer's dataset — the premise retrieval model cannot achieve competitive quality.
 
-### Why bi-encoder, not cross-encoder
+Tactic prediction reuses the same extraction infrastructure with 30x more data. Every proof step has a tactic, regardless of whether premises are known. Research (Tactician, Proverbot9001, CoqHammer) confirms that tactic prediction works well for Coq without per-step premise annotations.
 
-A cross-encoder (jointly encoding query + each candidate) produces higher-quality scores but requires O(K) forward passes — one per candidate. For a 50K-declaration library, this is infeasible at interactive latency. The bi-encoder precomputes all premise embeddings at index time; only the query encoding happens at search time. This gives O(1) retrieval via FAISS or brute-force cosine similarity, which at 50K scale is <5ms even on CPU.
+### Why ~30 tactic families
 
-A future two-stage pipeline (bi-encoder → cross-encoder reranking of top-k) is a P2 enhancement that could improve precision on the top-ranked results without affecting the overall latency budget.
-
-### Why parameter-free fusion
-
-The existing fusion mechanism combines channels without learned weights. Adding the neural channel to the same parameter-free fusion avoids the need for a tuning dataset or manual weight selection. If evaluation data becomes available (from retrieval telemetry or curated benchmarks), learned fusion weights can be introduced later as a refinement.
+Coq has 60-80 distinct built-in tactics, but the distribution is heavily long-tailed. A small number of families (`intros`, `apply`, `rewrite`, `simpl`, `auto`, `destruct`, `induction`, `exact`, `unfold`) account for the majority of proof steps. Grouping into ~30 families balances granularity (specific enough to be useful) against learnability (enough training examples per class). Rare tactics are grouped into an "other" class.
 
 ### Why CPU-only inference
 
-The research evidence is clear: 100M-class models with INT8 quantization achieve <10ms per encoding on any modern CPU. At 50K declarations, brute-force FAISS search adds <5ms. Total neural channel latency: ~15ms. Requiring a GPU would exclude most Coq developers and violate the project's zero-config deployment principle. The quality gap between 100M CPU models and 7B GPU models is small when compensated by hybrid ranking (LeanExplore's 109M off-the-shelf model matched or beat 7B fine-tuned models with hybrid ranking).
+The same argument as for premise retrieval: 100M-class models with INT8 quantization achieve <10ms per encoding on any modern CPU. Requiring a GPU would exclude most Coq developers. The tactic classifier's inference is even cheaper than retrieval because it produces a single classification vector, not an embedding that must be compared against a large index.
 
 ---
 
 ## Acceptance Criteria
 
-### Embed Premises into the Search Index
+### Predict Tactic Families from Proof States
 
 **Priority:** P0
 **Stability:** Stable
+**Traces to:** R6-P0-1, R6-P0-2, R6-P0-7, R6-P0-8
 
-- GIVEN a pre-trained model checkpoint and a Semantic Lemma Search index WHEN the index rebuild is triggered THEN premise embeddings are computed for all declarations and stored in the SQLite database
-- GIVEN a library of 50,000 declarations WHEN premise embeddings are computed on CPU with INT8 quantization THEN the embedding step completes in under 10 minutes
-- GIVEN the embeddings are stored WHEN the database is inspected THEN each declaration has a corresponding embedding vector alongside its existing retrieval data
+- GIVEN a trained tactic classifier and a proof state WHEN tactic prediction is invoked THEN the model returns a ranked list of tactic families with confidence scores
+- GIVEN a held-out test set of Coq proof steps WHEN the classifier is evaluated THEN top-1 accuracy is >= 40% and top-5 accuracy is >= 80%
+- GIVEN the tactic family vocabulary WHEN inspected THEN it contains ~30 families covering >95% of extracted proof steps, with rare tactics grouped into an "other" class
 
-### Neural Channel Participates in Hybrid Ranking
+### Integrate with suggest_tactics MCP Tool
 
 **Priority:** P0
 **Stability:** Stable
+**Traces to:** R6-P0-4, R6-P0-11
 
-- GIVEN a search query submitted via the MCP server or CLI WHEN the neural channel is available THEN the neural channel's ranked results are included in the fusion step alongside existing channels
-- GIVEN a search query WHEN the neural channel returns results THEN the fused ranking promotes items that appear in multiple channels (neural + symbolic + structural)
-- GIVEN a search query WHEN the neural channel is not available (no model checkpoint or embeddings) THEN search operates using only existing channels with no errors or degradation
-
-### Configurable Retrieval Budget
-
-**Priority:** P1
-**Stability:** Stable
-
-- GIVEN a search query with a retrieval budget parameter WHEN the neural channel executes THEN it returns at most the specified number of candidates (default: 32)
-- GIVEN a retrieval budget of 128 on a 50,000-declaration index WHEN the query executes on CPU THEN the neural channel completes in under 100ms
+- GIVEN a `suggest_tactics` call with a trained model available WHEN the tool executes THEN neural predictions are included in the response alongside rule-based suggestions
+- GIVEN a `suggest_tactics` call without a trained model WHEN the tool executes THEN only rule-based suggestions are returned, with no errors or degradation
+- GIVEN neural and rule-based suggestions WHEN they are combined THEN neural predictions with high confidence rank above rule-based suggestions
 
 ### CPU Inference with INT8 Quantization
 
 **Priority:** P0
 **Stability:** Stable
+**Traces to:** R6-P0-5, R6-P0-6
 
-- GIVEN a pre-trained model checkpoint WHEN the quantize command is run THEN an INT8 quantized model is produced that can be loaded without a GPU
-- GIVEN an INT8 quantized model and a 50,000-declaration index WHEN a single proof state is encoded and the top-32 premises are retrieved THEN the total latency is under 100ms on a modern laptop CPU
-- GIVEN the INT8 quantized model WHEN Recall@32 is compared to the full-precision model on the same test set THEN the quantized model achieves at least 95% of the full-precision Recall@32
+- GIVEN a trained model checkpoint WHEN the quantize command is run THEN an INT8 quantized ONNX model is produced
+- GIVEN the quantized model WHEN a single proof state is classified THEN inference completes in under 50ms on a modern laptop CPU
+- GIVEN the quantized model WHEN evaluated on the test set THEN accuracy is within 2 percentage points of the full-precision model
 
-### End-to-End Search Latency
+### Handle Class Imbalance
 
 **Priority:** P0
 **Stability:** Stable
+**Traces to:** R6-P0-3
 
-- GIVEN a 50,000-declaration index with all channels active (neural, structural, symbolic) WHEN a search query is submitted THEN the end-to-end response time is under 1 second on a modern laptop CPU
-- GIVEN multiple concurrent search queries WHEN they are submitted within 1 second THEN each query completes within 1 second (no serialization bottleneck)
+- GIVEN a training dataset with imbalanced tactic family distribution WHEN training is configured THEN class weights are computed from inverse frequency and applied to the cross-entropy loss
+- GIVEN class-weighted training WHEN evaluated on minority tactic families THEN per-family recall is significantly higher than without weighting

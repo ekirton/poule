@@ -1,11 +1,13 @@
-"""ONNX export and INT8 quantization for the neural encoder.
+"""ONNX export and INT8 quantization for the tactic classifier.
 
 Implements spec §4.6: Export to ONNX (opset 17+), apply dynamic INT8
-quantization, validate max cosine distance < 0.02 across 100 samples.
+quantization, validate label agreement >= 98% across 100 samples.
+Also writes tactic-labels.json alongside the ONNX model.
 """
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -20,11 +22,12 @@ class ModelQuantizer:
         """Convert a trained checkpoint to INT8-quantized ONNX.
 
         Steps:
-        1. Load checkpoint and reconstruct model
-        2. Export to ONNX (opset 17+)
+        1. Load checkpoint and reconstruct TacticClassifier
+        2. Export to ONNX (opset 17+), output shape [B, num_classes]
         3. Apply dynamic INT8 quantization via ONNX Runtime
-        4. Validate: 100 random encodings, assert max cosine distance < 0.02
+        4. Validate: 100 random inputs, assert label agreement >= 98%
         5. Write quantized ONNX to output_path
+        6. Write tactic-labels.json alongside the ONNX model
 
         Args:
             checkpoint_path: Path to a trained PyTorch checkpoint.
@@ -32,7 +35,7 @@ class ModelQuantizer:
 
         Raises:
             CheckpointNotFoundError: If checkpoint_path does not exist.
-            QuantizationError: If max cosine distance >= 0.02.
+            QuantizationError: If label agreement < 98%.
         """
         checkpoint_path = Path(checkpoint_path)
         output_path = Path(output_path)
@@ -44,16 +47,19 @@ class ModelQuantizer:
         import torch
         from onnxruntime.quantization import QuantType, quantize_dynamic
 
-        from Poule.neural.training.model import BiEncoder
-        from Poule.neural.training.trainer import load_checkpoint
+        from Poule.neural.training.model import TacticClassifier
 
-        # Load model
-        checkpoint = load_checkpoint(checkpoint_path)
+        # Load checkpoint
+        checkpoint = torch.load(
+            checkpoint_path, map_location="cpu", weights_only=False,
+        )
         hp = checkpoint.get("hyperparams", {})
         max_seq_length = hp.get("max_seq_length", 512)
         vocab_path_str = checkpoint.get("vocabulary_path")
+        label_map = checkpoint.get("label_map", {})
+        num_classes = len(label_map) if label_map else hp.get("num_classes", 30)
 
-        # Reconstruct model with correct vocab size
+        # Reconstruct tokenizer
         if vocab_path_str and Path(vocab_path_str).exists():
             from Poule.neural.training.vocabulary import CoqTokenizer
 
@@ -63,14 +69,20 @@ class ModelQuantizer:
 
             tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
 
-        model = BiEncoder.from_checkpoint(checkpoint)
+        # Reconstruct model
+        vocab_size = tokenizer.vocab_size if hasattr(tokenizer, "vocab_size") else None
+        model = TacticClassifier(
+            num_classes=num_classes,
+            vocab_size=vocab_size,
+        )
+        model.load_state_dict(checkpoint["model_state_dict"])
         model.eval()
 
         # Step 1: Export to ONNX
         with tempfile.TemporaryDirectory() as tmpdir:
             fp32_onnx_path = Path(tmpdir) / "model_fp32.onnx"
 
-            # Create dummy inputs for tracing
+            # Create dummy inputs
             from Poule.neural.training.vocabulary import CoqTokenizer
 
             if isinstance(tokenizer, CoqTokenizer):
@@ -96,11 +108,11 @@ class ModelQuantizer:
                 str(fp32_onnx_path),
                 opset_version=17,
                 input_names=["input_ids", "attention_mask"],
-                output_names=["embeddings"],
+                output_names=["logits"],
                 dynamic_axes={
                     "input_ids": {0: "batch_size", 1: "seq_length"},
                     "attention_mask": {0: "batch_size", 1: "seq_length"},
-                    "embeddings": {0: "batch_size"},
+                    "logits": {0: "batch_size"},
                 },
             )
 
@@ -111,8 +123,7 @@ class ModelQuantizer:
                 weight_type=QuantType.QInt8,
             )
 
-            # Step 3: Validate quantization quality
-            # Load both models for comparison
+            # Step 3: Validate quantization quality via label agreement
             fp32_session = ort.InferenceSession(
                 str(fp32_onnx_path),
                 providers=["CPUExecutionProvider"],
@@ -122,38 +133,39 @@ class ModelQuantizer:
                 providers=["CPUExecutionProvider"],
             )
 
-            # Generate 100 random test inputs
-            max_cosine_dist = 0.0
+            agreements = 0
+            total = 100
 
-            for _ in range(100):
-                # Random token sequences (valid token IDs)
+            for _ in range(total):
                 seq_len = min(32, max_seq_length)
                 input_ids = np.random.randint(
                     0, tokenizer.vocab_size, size=(1, seq_len), dtype=np.int64
                 )
                 attention_mask = np.ones((1, seq_len), dtype=np.int64)
 
-                fp32_out = fp32_session.run(
+                fp32_logits = fp32_session.run(
                     None,
                     {"input_ids": input_ids, "attention_mask": attention_mask},
                 )[0]
-                int8_out = int8_session.run(
+                int8_logits = int8_session.run(
                     None,
                     {"input_ids": input_ids, "attention_mask": attention_mask},
                 )[0]
 
-                # Cosine distance = 1 - cosine_similarity
-                fp32_norm = fp32_out / (
-                    np.linalg.norm(fp32_out, axis=1, keepdims=True) + 1e-9
-                )
-                int8_norm = int8_out / (
-                    np.linalg.norm(int8_out, axis=1, keepdims=True) + 1e-9
-                )
-                cosine_sim = np.sum(fp32_norm * int8_norm, axis=1)
-                cosine_dist = 1.0 - cosine_sim[0]
-                max_cosine_dist = max(max_cosine_dist, float(cosine_dist))
+                fp32_label = int(np.argmax(fp32_logits, axis=1)[0])
+                int8_label = int(np.argmax(int8_logits, axis=1)[0])
+                if fp32_label == int8_label:
+                    agreements += 1
 
-            if max_cosine_dist >= 0.02:
-                # Clean up the invalid output
+            agreement_rate = agreements / total
+            if agreement_rate < 0.98:
                 output_path.unlink(missing_ok=True)
-                raise QuantizationError(max_distance=max_cosine_dist)
+                raise QuantizationError(
+                    f"Label agreement {agreement_rate:.0%} < 98% threshold"
+                )
+
+        # Step 4: Write tactic-labels.json
+        label_names = sorted(label_map.keys(), key=lambda k: label_map[k])
+        labels_path = output_path.parent / "tactic-labels.json"
+        with open(labels_path, "w") as f:
+            json.dump(label_names, f, indent=2)

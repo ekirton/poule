@@ -2,7 +2,7 @@
 set -euo pipefail
 
 CHECKPOINT="/data/model.pt"
-OUTPUT="/data/neural-premise-selector.onnx"
+OUTPUT="/data/tactic-predictor.onnx"
 
 usage() {
     echo "Usage: $(basename "$0") [--checkpoint PATH] [--output PATH]" >&2

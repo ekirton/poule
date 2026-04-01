@@ -46,7 +46,7 @@ System-level view of all components, their boundaries, and the dependency graph.
 | Extraction Checkpointing | Incremental re-extraction, campaign resumption, checkpoint file management (P1) | [extraction-checkpointing.md](extraction-checkpointing.md) |
 | Extraction Reporting | Quality reports, scope filtering, benchmark generation, ML export (P1/P2) | [extraction-reporting.md](extraction-reporting.md) |
 | Extraction Dependency Graph | Theorem-level dependency graph extraction from premise annotations (P1) | [extraction-dependency-graph.md](extraction-dependency-graph.md) |
-| Neural Retrieval Channel | Neural embedding computation, vector search, integration into retrieval pipeline | [neural-retrieval.md](neural-retrieval.md) |
+| Neural Tactic Prediction | Tactic family classification from proof states, integration into suggest_tactics MCP tool | [neural-tactic-prediction.md](neural-tactic-prediction.md) |
 
 Proof Serialization is used by the MCP Server (for formatting responses) and the Proof Session Manager (for trace export). It is not a standalone runtime component — it is a shared serialization contract.
 
@@ -370,7 +370,7 @@ The Neural Training Pipeline is a batch-mode component invoked via CLI. It reads
 | [data-models/extraction-types.md](data-models/extraction-types.md) | [specification/data-structures.md](../../specification/data-structures.md) §4.8 |
 | [proof-search-engine.md](proof-search-engine.md) | specification/proof-search-engine.md (pending) |
 | [fill-admits-orchestrator.md](fill-admits-orchestrator.md) | specification/fill-admits-orchestrator.md (pending) |
-| [neural-retrieval.md](neural-retrieval.md) | [specification/neural-retrieval.md](../../specification/neural-retrieval.md) |
+| [neural-tactic-prediction.md](neural-tactic-prediction.md) | specification/neural-tactic-prediction.md (pending) |
 | [neural-training.md](neural-training.md) | [specification/neural-training.md](../../specification/neural-training.md) |
 | [hammer-automation.md](hammer-automation.md) | [specification/hammer-automation.md](../../specification/hammer-automation.md) |
 | [vernacular-introspection.md](vernacular-introspection.md) | [specification/vernacular-introspection.md](../../specification/vernacular-introspection.md) |

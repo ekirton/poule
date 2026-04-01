@@ -1,7 +1,7 @@
-"""Optuna-based hyperparameter optimization for bi-encoder training.
+"""Optuna-based hyperparameter optimization for tactic classifier training.
 
 spec §4.8: Automated search over training hyperparameters to maximize
-validation Recall@32 using TPE sampling and MedianPruner.
+validation accuracy@5 using TPE sampling and MedianPruner.
 """
 
 from __future__ import annotations
@@ -18,17 +18,16 @@ from Poule.neural.training.errors import (
     TuningError,
     TrainingResourceError,
 )
-from Poule.neural.training.trainer import BiEncoderTrainer, load_checkpoint
+from Poule.neural.training.trainer import TacticClassifierTrainer, load_checkpoint
 
 logger = logging.getLogger(__name__)
 
 # spec §4.8: tunable hyperparameters with sampling ranges
 TUNABLE_HYPERPARAMS: dict[str, dict[str, Any]] = {
     "learning_rate": {"low": 1e-6, "high": 1e-4, "log": True},
-    "temperature": {"low": 0.01, "high": 0.2, "log": True},
-    "batch_size": {"choices": [64, 128, 256]},
+    "batch_size": {"choices": [32, 64, 128]},
     "weight_decay": {"low": 1e-4, "high": 1e-1, "log": True},
-    "hard_negatives_per_state": {"low": 1, "high": 5},
+    "class_weight_alpha": {"low": 0.0, "high": 1.0},
 }
 
 
@@ -36,7 +35,7 @@ TUNABLE_HYPERPARAMS: dict[str, dict[str, Any]] = {
 class TuningResult:
     """Result of a hyperparameter optimization study.
 
-    spec §4.8: contains best hyperparams, best R@32, trial counts,
+    spec §4.8: contains best hyperparams, best accuracy@5, trial counts,
     study path, and per-trial summaries.
     """
 
@@ -49,7 +48,7 @@ class TuningResult:
 
 
 class HyperparameterTuner:
-    """Optuna-based hyperparameter optimization for BiEncoderTrainer.
+    """Optuna-based hyperparameter optimization for TacticClassifierTrainer.
 
     spec §4.8: runs sequential trials with TPE sampling and median pruning,
     persisting results in SQLite for crash recovery.
@@ -67,7 +66,7 @@ class HyperparameterTuner:
         """Run hyperparameter optimization.
 
         Args:
-            dataset: TrainingDataset (same as BiEncoderTrainer.train).
+            dataset: TacticDataset (same as TacticClassifierTrainer.train).
             output_dir: Directory for study DB, trial checkpoints, and best model.
             vocabulary_path: Optional closed vocabulary JSON path.
             n_trials: Number of trials to run (default: 20).
@@ -78,14 +77,14 @@ class HyperparameterTuner:
             TuningResult with best hyperparameters and study statistics.
 
         Raises:
-            InsufficientDataError: If dataset has < 1,000 training pairs.
+            InsufficientDataError: If dataset has < 1,000 training steps.
             TuningError: If zero trials complete successfully.
         """
         import optuna
 
-        if len(dataset.train) < 1000:
+        if len(dataset.train_pairs) < 1000:
             raise InsufficientDataError(
-                f"Tuning requires at least 1,000 training pairs, got {len(dataset.train)}"
+                f"Tuning requires at least 1,000 training steps, got {len(dataset.train_pairs)}"
             )
 
         output_dir = Path(output_dir)
@@ -116,12 +115,6 @@ class HyperparameterTuner:
                     TUNABLE_HYPERPARAMS["learning_rate"]["high"],
                     log=TUNABLE_HYPERPARAMS["learning_rate"]["log"],
                 ),
-                "temperature": trial.suggest_float(
-                    "temperature",
-                    TUNABLE_HYPERPARAMS["temperature"]["low"],
-                    TUNABLE_HYPERPARAMS["temperature"]["high"],
-                    log=TUNABLE_HYPERPARAMS["temperature"]["log"],
-                ),
                 "batch_size": trial.suggest_categorical(
                     "batch_size",
                     TUNABLE_HYPERPARAMS["batch_size"]["choices"],
@@ -132,20 +125,20 @@ class HyperparameterTuner:
                     TUNABLE_HYPERPARAMS["weight_decay"]["high"],
                     log=TUNABLE_HYPERPARAMS["weight_decay"]["log"],
                 ),
-                "hard_negatives_per_state": trial.suggest_int(
-                    "hard_negatives_per_state",
-                    TUNABLE_HYPERPARAMS["hard_negatives_per_state"]["low"],
-                    TUNABLE_HYPERPARAMS["hard_negatives_per_state"]["high"],
+                "class_weight_alpha": trial.suggest_float(
+                    "class_weight_alpha",
+                    TUNABLE_HYPERPARAMS["class_weight_alpha"]["low"],
+                    TUNABLE_HYPERPARAMS["class_weight_alpha"]["high"],
                 ),
             }
 
-            def epoch_callback(epoch, val_recall):
-                trial.report(val_recall, epoch)
+            def epoch_callback(epoch, val_accuracy):
+                trial.report(val_accuracy, epoch)
                 if trial.should_prune():
                     raise optuna.TrialPruned()
 
             trial_output = output_dir / f"trial-{trial.number}.pt"
-            trainer = BiEncoderTrainer(hyperparams=hp)
+            trainer = TacticClassifierTrainer(hyperparams=hp)
 
             try:
                 trainer.train(
@@ -160,16 +153,16 @@ class HyperparameterTuner:
                 logger.warning("Trial %d OOM: %s", trial.number, e)
                 raise optuna.TrialPruned()  # Treat OOM as pruned
 
-            # Load checkpoint to get best R@32
+            # Load checkpoint to get best accuracy@5
             checkpoint = load_checkpoint(trial_output)
-            return checkpoint["best_recall_32"]
+            return checkpoint.get("best_accuracy_5", 0.0)
 
         def _cleanup_memory():
             gc.collect()
             try:
                 import torch
-                if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                    torch.mps.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             except ImportError:
                 pass
 

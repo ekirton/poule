@@ -810,30 +810,32 @@ def _record_to_dict(record) -> dict:
 def _write_result_compact(outfile, result) -> None:
     """Write an extraction result in compact training data format.
 
-    ExtractionRecord/PartialExtractionRecord → compact "p" and "g" records.
+    ExtractionRecord/PartialExtractionRecord → compact "s" and "g" records.
     ExtractionError → passed through unchanged.
     """
-    from Poule.neural.training.data import serialize_goals
+    from Poule.extraction.output import serialize_goals
 
     if isinstance(result, (ExtractionRecord, PartialExtractionRecord)):
         source_file = result.source_file
         steps = result.steps
 
-        # Extract pairs and track covered state texts
+        # Emit step records: (proof_state, tactic_text) for tactic prediction
         covered_states: set[str] = set()
         for k in range(1, len(steps)):
+            if not steps[k].tactic or not steps[k - 1].goals:
+                continue
             prev_goals = [
                 {"type": g.type, "hypotheses": [
                     {"name": h.name, "type": h.type} for h in g.hypotheses
                 ]} for g in steps[k - 1].goals
             ]
-            premises = [p.name for p in steps[k].premises]
-            if not premises:
-                continue
             state_text = serialize_goals(prev_goals)
+            if not state_text:
+                continue
             covered_states.add(state_text)
             outfile.write(json.dumps(
-                {"t": "p", "f": source_file, "s": state_text, "p": premises},
+                {"t": "s", "f": source_file, "s": state_text,
+                 "c": steps[k].tactic},
                 separators=(",", ":"), ensure_ascii=False,
             ) + "\n")
 

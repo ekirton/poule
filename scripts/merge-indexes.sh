@@ -117,22 +117,6 @@ else
     echo "index.db is up to date."
 fi
 
-# --- Build FAISS sidecar from merged index ---
-
-echo "Building FAISS sidecar..."
-python -c "
-from pathlib import Path
-from Poule.neural.embeddings import build_faiss_index
-p = build_faiss_index(Path('${INDEX_DB}'))
-if p:
-    print(f'  FAISS sidecar written: {p}')
-else:
-    print('  No embeddings in merged index — skipping FAISS sidecar.')
-"
-
 echo
 echo "Done. Output:"
 echo "  ${INDEX_DB}"
-if [[ -f "${INDEX_DB%.db}.faiss" ]]; then
-    echo "  ${INDEX_DB%.db}.faiss"
-fi

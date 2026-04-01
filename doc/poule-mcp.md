@@ -10,7 +10,7 @@ All proof interaction tools accept `session_id` (string, required) — returned 
 | Tool | Required params | Notes |
 |------|----------------|-------|
 | `search_by_name` | `pattern` (string) | Glob `*` and substring matching |
-| `search_by_type` | `type_expr` (string) | Multi-channel: structural + symbol + lexical + neural via RRF |
+| `search_by_type` | `type_expr` (string) | Multi-channel: structural + symbol + lexical via RRF |
 | `search_by_structure` | `expression` (string) | WL graph kernels + tree edit distance |
 | `search_by_symbols` | `symbols` (string[]) | Fully qualified names; MePo-style relevance filtering |
 | `get_lemma` | `name` (string) | Full declaration detail: statement, type, module, deps |
@@ -35,6 +35,7 @@ No search index required — communicates with a live Coq process via coq-lsp or
 | `submit_tactic_batch` | `tactics` (string[]) | Stops on first failure; returns error + last good state |
 | `get_proof_premises` | — | Premise annotations for all steps |
 | `get_step_premises` | `step` (integer, 1-based) | Premise annotations for one step |
+| `suggest_tactics` | `session_id` (string) | Suggests tactics for the current proof state. Returns ranked list combining neural predictions (when a trained model is available) with rule-based suggestions. |
 
 ## Profiling Tools
 

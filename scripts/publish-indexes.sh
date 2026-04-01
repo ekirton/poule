@@ -2,12 +2,12 @@
 #
 # Publish index databases as two GitHub Releases:
 #   index-libraries  — 6 per-library index-*.db files + manifest.json
-#   index-merged     — single merged index.db + manifest.json (+ optional ONNX model)
+#   index-merged     — single merged index.db + manifest.json
 #
 # There are always exactly two releases; existing ones are replaced.
 #
 # Usage:
-#   ./scripts/publish-indexes.sh [--input-dir DIR] [--model MODEL_PATH]
+#   ./scripts/publish-indexes.sh
 #
 # Prerequisites: gh (authenticated), sqlite3, shasum
 # Run ./scripts/build-indexes.sh first to build the indexes.
@@ -16,48 +16,20 @@ set -euo pipefail
 
 LIBRARIES="stdlib mathcomp stdpp flocq coquelicot coqinterval"
 INPUT_DIR="/data"
-MODEL_PATH="/data/neural-premise-selector.onnx"
-VOCAB_PATH="/data/coq-vocabulary.json"
 TAG_LIBRARIES="index-libraries"
 TAG_MERGED="index-merged"
 
 usage() {
-    echo "Usage: $0 [--model MODEL_PATH] [--vocab VOCAB_PATH] [--no-model]"
+    echo "Usage: $0"
     echo
     echo "Publish index databases as two GitHub Releases:"
     echo "  ${TAG_LIBRARIES}  — per-library index-*.db files + manifest"
-    echo "  ${TAG_MERGED}     — merged index.db + manifest + ONNX model + vocabulary"
-    echo
-    echo "Options:"
-    echo "  --model MODEL_PATH   ONNX model file (default: $MODEL_PATH)"
-    echo "  --vocab VOCAB_PATH   Vocabulary JSON file (default: $VOCAB_PATH)"
-    echo "  --no-model           Skip uploading model and vocabulary"
+    echo "  ${TAG_MERGED}     — merged index.db + manifest"
     exit 1
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --model)
-            if [[ $# -lt 2 ]]; then
-                echo "Error: --model requires a path argument." >&2
-                usage
-            fi
-            MODEL_PATH="$2"
-            shift 2
-            ;;
-        --vocab)
-            if [[ $# -lt 2 ]]; then
-                echo "Error: --vocab requires a path argument." >&2
-                usage
-            fi
-            VOCAB_PATH="$2"
-            shift 2
-            ;;
-        --no-model)
-            MODEL_PATH=""
-            VOCAB_PATH=""
-            shift
-            ;;
         --help|-h)
             usage
             ;;
@@ -146,29 +118,6 @@ else
     echo "index.db is up to date."
 fi
 
-# --- Build FAISS sidecar from merged index ---
-FAISS_PATH="${INDEX_DB%.db}.faiss"
-echo "Building FAISS sidecar..."
-python -c "
-from pathlib import Path
-from Poule.neural.embeddings import build_faiss_index
-p = build_faiss_index(Path('${INDEX_DB}'))
-if p:
-    print(f'  FAISS sidecar written: {p}')
-else:
-    print('  No embeddings in merged index — skipping FAISS sidecar.')
-"
-
-if [[ -n "$MODEL_PATH" && ! -f "$MODEL_PATH" ]]; then
-    echo "Error: ${MODEL_PATH} does not exist." >&2
-    exit 1
-fi
-
-if [[ -n "$VOCAB_PATH" && ! -f "$VOCAB_PATH" ]]; then
-    echo "Error: ${VOCAB_PATH} does not exist." >&2
-    exit 1
-fi
-
 # --- Read version metadata from per-library DBs ---
 
 declare -a LIB_NAMES=()
@@ -230,12 +179,6 @@ index_decls=$(sqlite3 "$INDEX_DB" "SELECT value FROM index_meta WHERE key='decla
     || sqlite3 "$INDEX_DB" "SELECT COUNT(*) FROM declarations" 2>/dev/null || echo "?")
 printf "  %-16s          (%s declarations, SHA-256: %s)\n" "index.db:" "$index_decls" "$index_sha"
 
-onnx_sha256="null"
-if [[ -n "$MODEL_PATH" ]]; then
-    onnx_sha256=$(shasum -a 256 "$MODEL_PATH" | awk '{print $1}')
-    printf "  %-16s          (SHA-256: %s)\n" "ONNX model:" "$onnx_sha256"
-fi
-
 # --- Build library list string ---
 
 lib_list=""
@@ -281,12 +224,6 @@ EOF
 
 merged_manifest_tmp=$(mktemp /tmp/manifest-merged.XXXXXX.json)
 
-if [[ "$onnx_sha256" == "null" ]]; then
-    onnx_json="null"
-else
-    onnx_json="\"$onnx_sha256\""
-fi
-
 cat > "$merged_manifest_tmp" <<EOF
 {
   "schema_version": "$REF_SCHEMA_VERSION",
@@ -296,8 +233,7 @@ cat > "$merged_manifest_tmp" <<EOF
     "sha256": "$index_sha",
     "asset_name": "index.db"
   },
-  "libraries": $libraries_json,
-  "onnx_model_sha256": $onnx_json
+  "libraries": $libraries_json
 }
 EOF
 
@@ -347,24 +283,6 @@ merged_upload_dir=$(mktemp -d /tmp/poule-publish-merged.XXXXXX)
 cp "${INDEX_DB}" "$merged_upload_dir/index.db"
 cp "$merged_manifest_tmp" "$merged_upload_dir/manifest.json"
 merged_assets=("$merged_upload_dir/index.db" "$merged_upload_dir/manifest.json")
-
-# Include FAISS sidecar if it exists alongside index.db
-FAISS_PATH="${INDEX_DB%.db}.faiss"
-if [[ -f "$FAISS_PATH" ]]; then
-    cp "$FAISS_PATH" "$merged_upload_dir/index.faiss"
-    merged_assets+=("$merged_upload_dir/index.faiss")
-    echo "Including FAISS sidecar: index.faiss"
-fi
-
-if [[ -n "$MODEL_PATH" ]]; then
-    cp "$MODEL_PATH" "$merged_upload_dir/neural-premise-selector.onnx"
-    merged_assets+=("$merged_upload_dir/neural-premise-selector.onnx")
-fi
-
-if [[ -n "$VOCAB_PATH" ]]; then
-    cp "$VOCAB_PATH" "$merged_upload_dir/coq-vocabulary.json"
-    merged_assets+=("$merged_upload_dir/coq-vocabulary.json")
-fi
 
 gh release create "$TAG_MERGED" \
     "${merged_assets[@]}" \

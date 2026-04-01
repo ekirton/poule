@@ -1,7 +1,7 @@
-"""MLX masked contrastive loss for bi-encoder training.
+"""MLX cross-entropy loss for tactic classifier training.
 
-spec §4.11: Same InfoNCE-with-masking algorithm as the PyTorch version,
-reimplemented using mlx.core operations.
+Weighted cross-entropy loss reimplemented using mlx.core operations,
+matching the PyTorch trainer's weighted CrossEntropyLoss.
 
 Requires: mlx (macOS with Apple Silicon only).
 """
@@ -11,78 +11,37 @@ from __future__ import annotations
 import mlx.core as mx
 
 
-def masked_contrastive_loss_mlx(
-    state_embs: mx.array,
-    premise_embs: mx.array,
-    positive_indices: list[list[int]],
-    temperature: float,
+def cross_entropy_loss(
+    logits: mx.array,
+    labels: mx.array,
+    class_weights: mx.array | None = None,
 ) -> mx.array:
-    """Compute masked contrastive loss (InfoNCE with premise masking).
-
-    Vectorized: builds mask matrices and computes logsumexp in bulk
-    rather than iterating per positive pair in Python.
+    """Compute weighted cross-entropy loss.
 
     Args:
-        state_embs: [B, dim] L2-normalized state embeddings.
-        premise_embs: [P, dim] L2-normalized premise embeddings.
-        positive_indices: positive_indices[i] gives the premise indices
-            that are positive for state i.
-        temperature: τ scalar.
+        logits: [B, num_classes] unnormalized logits.
+        labels: [B] integer class labels.
+        class_weights: [num_classes] per-class inverse-frequency weights.
+            If None, all classes are weighted equally.
 
     Returns:
-        Scalar loss averaged over all positive pairs.
+        Scalar loss averaged over the batch (weighted mean).
     """
-    B = state_embs.shape[0]
-    P = premise_embs.shape[0]
+    B = logits.shape[0]
+    num_classes = logits.shape[1]
 
-    # Cosine similarity scaled by temperature
-    sim = mx.matmul(state_embs, premise_embs.T) / temperature  # [B, P]
+    # Numerically stable log-softmax: logits - logsumexp(logits, axis=-1)
+    log_probs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)  # [B, C]
 
-    # Flatten all (state_idx, positive_idx) pairs and build masks.
-    # For each positive pair (i, j), candidates = {j} ∪ {all non-positives for i}.
-    # We use additive masking: 0 for candidates, -inf for excluded.
-    rows = []      # state index for each pair
-    pos_cols = []  # positive premise index for each pair
-    # mask_matrix[pair_k, p] = 0 if p is a candidate, -inf otherwise
-    import numpy as np
-    mask_rows = []
+    # Gather log-probabilities for the true class
+    # One-hot encode labels and dot with log_probs
+    one_hot = mx.zeros((B, num_classes))
+    one_hot = one_hot.at[mx.arange(B), labels].add(mx.ones((B,)))
+    nll = -(one_hot * log_probs).sum(axis=-1)  # [B]
 
-    for i in range(B):
-        pos_set = set(positive_indices[i])
-        if not pos_set:
-            continue
-        for j in positive_indices[i]:
-            rows.append(i)
-            pos_cols.append(j)
-            # Candidate mask: j itself + all non-positives
-            mask = np.full(P, -1e9, dtype=np.float32)
-            mask[j] = 0.0
-            for p in range(P):
-                if p not in pos_set:
-                    mask[p] = 0.0
-            mask_rows.append(mask)
-
-    if not rows:
-        return mx.array(0.0)
-
-    K = len(rows)
-    rows_arr = mx.array(np.array(rows, dtype=np.int32))
-    pos_cols_arr = mx.array(np.array(pos_cols, dtype=np.int32))
-    mask_matrix = mx.array(np.stack(mask_rows))  # [K, P]
-
-    # Gather similarity rows for each pair: [K, P]
-    pair_sims = sim[rows_arr]  # [K, P]
-
-    # Apply mask (additive: -inf removes non-candidates from logsumexp)
-    masked_sims = pair_sims + mask_matrix  # [K, P]
-
-    # logsumexp over candidates for each pair
-    lse = mx.logsumexp(masked_sims, axis=1)  # [K]
-
-    # Positive logits: sim[rows[k], pos_cols[k]]
-    pos_logits = sim[rows_arr, pos_cols_arr]  # [K]
-
-    # Loss per pair: -pos_logit + logsumexp(candidates)
-    losses = -pos_logits + lse  # [K]
-
-    return mx.mean(losses)
+    if class_weights is not None:
+        # Per-sample weight from its true class
+        sample_weights = class_weights[labels]  # [B]
+        return (nll * sample_weights).sum() / sample_weights.sum()
+    else:
+        return mx.mean(nll)

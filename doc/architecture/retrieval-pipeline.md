@@ -21,12 +21,6 @@ The feature document defines five retrieval channels by user-facing name. The ta
 
 `collapse_match` is an additional structural sub-metric used in the fine-ranking weighted sum; it does not correspond to a standalone feature channel. When comparing `Prod` nodes, collapse match treats a bare `Sort(Type)` leaf (no children) as a binder-type wildcard: if either side's binder type is such a leaf, the binder types are scored as a perfect match (contributing the larger side's node count to the score sum). This prevents auto-generated `Sort(Type)` binder types from penalizing candidates with concrete binder types.
 
-## Neural Channel Integration
-
-When a neural model checkpoint and precomputed embeddings are available, a neural retrieval channel participates in query processing. See [neural-retrieval.md](neural-retrieval.md) for the full technical design of the neural channel (encoder, embedding storage, similarity search, model management).
-
-The neural channel is optional. When unavailable (no model checkpoint, no embeddings, or model hash mismatch), all query pipelines below operate identically to their non-neural versions — the neural step is simply skipped.
-
 ## Query Processing
 
 ### search_by_structure
@@ -62,9 +56,7 @@ The neural channel is optional. When unavailable (no model checkpoint, no embedd
 4. Run WL screening with relaxed size ratio (2.0)    → structural ranked list
 5. Extract symbols from normalized tree, run MePo     → symbol ranked list
 6. Run FTS5 query (`fts_query`) on the original user-provided type_expr string → lexical ranked list
-7. If neural channel available:
-     encode type_expr text via neural encoder         → neural ranked list
-8. rrf_fuse([structural, symbol, lexical, neural?], k=60) → final ranked list
+7. rrf_fuse([structural, symbol, lexical], k=60) → final ranked list
 9. Return top-N results
 ```
 
@@ -209,4 +201,4 @@ k=60 (standard). Each channel contributes independently. No learned weights.
 | `search_by_structure` | WL + TED + collapse-match + Const Jaccard, combined via weighted sum (no RRF — uses only the fine-ranking weighted sum) |
 | `search_by_symbols` | MePo only in Phase 1. Const Jaccard refinement is deferred to Phase 2. |
 | `search_by_name` | FTS5 only |
-| `search_by_type` | WL + MePo + FTS5 + Neural (when available), fused with RRF |
+| `search_by_type` | WL + MePo + FTS5, fused with RRF |

@@ -1,57 +1,50 @@
-"""Bi-encoder trainer with masked contrastive loss and early stopping."""
+"""Tactic classifier trainer with weighted cross-entropy loss and early stopping."""
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 import pickle
 import random
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
-from Poule.neural.training.data import TrainingDataset
+from Poule.neural.training.data import TacticDataset
 from Poule.neural.training.errors import (
     CheckpointNotFoundError,
     InsufficientDataError,
     TrainingResourceError,
 )
-from Poule.neural.training.negatives import sample_hard_negatives
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_HYPERPARAMS = {
-    "batch_size": 128,
-    "learning_rate": 5e-5,
+    "batch_size": 64,
+    "learning_rate": 2e-5,
     "weight_decay": 1e-2,
-    "temperature": 0.05,
-    "hard_negatives_per_state": 3,
     "max_seq_length": 256,
     "max_epochs": 20,
     "early_stopping_patience": 3,
-    "embedding_dim": 768,
-}
-
-FINE_TUNE_OVERRIDES = {
-    "learning_rate": 5e-6,
-    "max_epochs": 10,
+    "class_weight_alpha": 0.5,
 }
 
 
 class EarlyStoppingTracker:
-    """Tracks validation Recall@32 and signals when to stop training."""
+    """Tracks validation Accuracy@5 and signals when to stop training."""
 
     def __init__(self, patience: int):
         self.patience = patience
-        self.best_recall = -1.0
+        self.best_accuracy = -1.0
         self.best_epoch = 0
         self._epochs_without_improvement = 0
         self._epoch = 0
 
-    def should_stop(self, recall_at_32: float) -> bool:
+    def should_stop(self, accuracy_at_5: float) -> bool:
         self._epoch += 1
-        if recall_at_32 > self.best_recall:
-            self.best_recall = recall_at_32
+        if accuracy_at_5 > self.best_accuracy:
+            self.best_accuracy = accuracy_at_5
             self.best_epoch = self._epoch
             self._epochs_without_improvement = 0
         else:
@@ -66,11 +59,10 @@ class EarlyStoppingTracker:
 
 
 def _get_device():
-    """Select compute device: CUDA > MPS > CPU.
+    """Select compute device: CUDA > CPU.
 
-    spec §4.9: Returns a torch.device in priority order.
-    Set POULE_DEVICE=cpu to override (useful when MPS sync overhead
-    exceeds compute savings on small models).
+    MPS is excluded — sync overhead exceeds compute savings on
+    classification workloads.  Set POULE_DEVICE=cpu to override.
     """
     import os
 
@@ -82,66 +74,12 @@ def _get_device():
 
     if torch.cuda.is_available():
         return torch.device("cuda")
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return torch.device("mps")
     return torch.device("cpu")
 
 
 # ---------------------------------------------------------------------------
-# Loss and encoding helpers (require torch — imported lazily)
+# Tokenization helper (require torch — imported lazily)
 # ---------------------------------------------------------------------------
-
-
-def masked_contrastive_loss(state_embs, premise_embs, positive_indices, temperature):
-    """Compute masked contrastive loss (InfoNCE with premise masking).
-
-    spec §4.3: For each positive pair (s_i, p_ij), the candidate set is
-    {p_ij} ∪ N_i ∪ {all p_kl for k ≠ i where p_kl ∉ P_i}. Temperature τ
-    is applied as a divisor inside the exponential.
-
-    Args:
-        state_embs: [B, dim] L2-normalized state embeddings.
-        premise_embs: [P, dim] L2-normalized premise embeddings.
-        positive_indices: list[list[int]] — positive_indices[i] gives the
-            premise indices that are positive for state i.
-        temperature: τ scalar.
-
-    Returns:
-        Scalar loss averaged over all positive pairs.
-    """
-    import torch
-
-    B = state_embs.size(0)
-    P = premise_embs.size(0)
-
-    # Cosine similarity (both are L2-normalized) scaled by temperature
-    sim = torch.mm(state_embs, premise_embs.t()) / temperature  # [B, P]
-
-    total_loss = torch.tensor(0.0, device=state_embs.device)
-    count = 0
-
-    for i in range(B):
-        pos_set = set(positive_indices[i])
-        if not pos_set:
-            continue
-
-        for j in positive_indices[i]:
-            # Mask: exclude other positives for this state
-            mask = torch.ones(P, dtype=torch.bool, device=state_embs.device)
-            for p in pos_set:
-                if p != j:
-                    mask[p] = False
-
-            pos_logit = sim[i, j]
-            candidate_logits = sim[i][mask]
-            loss_ij = -pos_logit + torch.logsumexp(candidate_logits, dim=0)
-            total_loss = total_loss + loss_ij
-            count += 1
-
-    if count == 0:
-        return torch.tensor(0.0, device=state_embs.device, requires_grad=True)
-
-    return total_loss / count
 
 
 def _tokenize_batch(tokenizer, texts, max_seq_length):
@@ -172,34 +110,48 @@ def _tokenize_batch(tokenizer, texts, max_seq_length):
         )
 
 
-def _encode_texts_batched(model, tokenizer, texts, max_seq_length, device, batch_size=256):
-    """Encode texts through the model in batches. Returns a CPU tensor."""
+# ---------------------------------------------------------------------------
+# Class weight computation
+# ---------------------------------------------------------------------------
+
+
+def compute_class_weights(family_counts: dict[str, int], label_map: dict[str, int],
+                          num_classes: int, alpha: float = 0.5):
+    """Compute inverse-frequency class weights.
+
+    weight[c] = (total / (num_classes * count[c])) ^ alpha
+
+    Args:
+        family_counts: mapping from label name to occurrence count.
+        label_map: mapping from label name to class index.
+        num_classes: total number of classes.
+        alpha: smoothing exponent (0 = uniform, 1 = full inverse frequency).
+
+    Returns:
+        A torch float tensor of shape [num_classes].
+    """
     import torch
 
-    if not texts:
-        return torch.zeros(0, model.embedding_dim)
+    total = sum(family_counts.values())
+    weights = torch.ones(num_classes, dtype=torch.float32)
 
-    all_embs = []
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i : i + batch_size]
-        tokens = _tokenize_batch(tokenizer, batch, max_seq_length)
-        embs = model(
-            tokens["input_ids"].to(device),
-            tokens["attention_mask"].to(device),
-        )
-        all_embs.append(embs.detach().cpu())
-    return torch.cat(all_embs, dim=0)
+    for name, idx in label_map.items():
+        count = family_counts.get(name, 1)
+        weights[idx] = (total / (num_classes * count)) ** alpha
+
+    return weights
 
 
-_VAL_PREMISE_CAP = 10_000
+# ---------------------------------------------------------------------------
+# Validation accuracy@k
+# ---------------------------------------------------------------------------
 
 
-def _compute_recall_at_k(model, tokenizer, pairs, premise_corpus, max_seq_length, device, k=32):
-    """Compute Recall@k on (state, positive_names) pairs using current model.
+def _compute_accuracy_at_k(model, tokenizer, pairs, max_seq_length, device, k=5):
+    """Compute Accuracy@k on (state_text, label_index) pairs.
 
-    When the premise corpus exceeds ``_VAL_PREMISE_CAP``, a random
-    subset is used (always including every positive referenced by the
-    validation pairs).  This keeps validation time bounded on CPU.
+    A prediction is correct if the true label appears in the top-k
+    predicted classes.
     """
     import torch
 
@@ -207,121 +159,26 @@ def _compute_recall_at_k(model, tokenizer, pairs, premise_corpus, max_seq_length
         return 0.0
 
     model.eval()
-    all_premise_names = list(premise_corpus.keys())
-
-    # Subsample premises when the corpus is very large.
-    # Always keep every positive so recall measurement is exact.
-    if len(all_premise_names) > _VAL_PREMISE_CAP:
-        positives_needed: set[str] = set()
-        for _, pos in pairs:
-            positives_needed.update(pos)
-        positives_needed &= set(all_premise_names)
-
-        remaining = [n for n in all_premise_names if n not in positives_needed]
-        n_neg = max(0, _VAL_PREMISE_CAP - len(positives_needed))
-        sampled_neg = random.sample(remaining, min(n_neg, len(remaining)))
-        premise_names = sorted(positives_needed) + sampled_neg
-    else:
-        premise_names = all_premise_names
-
-    # Encode selected premises once into a single CPU matrix.
-    get_batch = getattr(premise_corpus, "get_batch", None)
-    _CHUNK = 256
-    premise_emb_parts = []
-    with torch.no_grad():
-        for start in range(0, len(premise_names), _CHUNK):
-            chunk_names = premise_names[start:start + _CHUNK]
-            if get_batch is not None:
-                chunk_texts = get_batch(chunk_names)
-            else:
-                chunk_texts = [premise_corpus[n] for n in chunk_names]
-            premise_emb_parts.append(
-                _encode_texts_batched(model, tokenizer, chunk_texts, max_seq_length, device)
-            )
-    all_premise_embs = torch.cat(premise_emb_parts, dim=0)
-    del premise_emb_parts
-
-    # Encode all validation states in one batched pass.
-    state_texts = [s for s, _ in pairs]
-    all_state_embs = _encode_texts_batched(
-        model, tokenizer, state_texts, max_seq_length, device, batch_size=256
-    )
-
-    # Score each state against all premises via chunked matmul.
     hits = 0
-    _SCORE_CHUNK = 8192
-    for i, (_, positive_names) in enumerate(pairs):
-        state_emb = all_state_embs[i : i + 1]
-        top_k_scores = torch.full((k,), -float("inf"))
-        top_k_indices = torch.zeros(k, dtype=torch.long)
+    _CHUNK = 256
 
-        for offset in range(0, all_premise_embs.size(0), _SCORE_CHUNK):
-            chunk = all_premise_embs[offset : offset + _SCORE_CHUNK]
-            chunk_scores = torch.mm(state_emb, chunk.t()).squeeze(0)
-            combined_scores = torch.cat([top_k_scores, chunk_scores])
-            combined_indices = torch.cat([
-                top_k_indices,
-                torch.arange(offset, offset + chunk.size(0)),
-            ])
-            sel = torch.topk(combined_scores, min(k, len(combined_scores))).indices
-            top_k_scores = combined_scores[sel]
-            top_k_indices = combined_indices[sel]
+    with torch.no_grad():
+        for start in range(0, len(pairs), _CHUNK):
+            chunk = pairs[start : start + _CHUNK]
+            texts = [s for s, _ in chunk]
+            labels = [lbl for _, lbl in chunk]
 
-        top_k_name_set = {premise_names[j] for j in top_k_indices.tolist()}
-        if set(positive_names) & top_k_name_set:
-            hits += 1
+            tokens = _tokenize_batch(tokenizer, texts, max_seq_length)
+            logits = model(
+                tokens["input_ids"].to(device),
+                tokens["attention_mask"].to(device),
+            )
+            topk = torch.topk(logits, min(k, logits.size(1)), dim=1).indices
+            for i, true_label in enumerate(labels):
+                if true_label in topk[i].tolist():
+                    hits += 1
 
     return hits / len(pairs)
-
-
-def _prepare_batch(items, tokenizer, premise_corpus, max_seq_length):
-    """Tokenize a micro-batch and build positive-index maps.
-
-    Args:
-        items: list of (state_text, positive_names, hard_neg_names) tuples.
-        tokenizer: HuggingFace tokenizer.
-        premise_corpus: name -> statement text mapping.
-        max_seq_length: maximum token sequence length.
-
-    Returns:
-        dict with tokenized tensors and positive_indices, or None if empty.
-    """
-    state_texts = []
-    unique_premises: dict[str, int] = {}  # name -> index
-    positive_indices: list[list[int]] = []
-
-    for state_text, pos_names, neg_names in items:
-        state_texts.append(state_text)
-
-        # Add all premises to the unique set
-        for name in list(pos_names) + list(neg_names):
-            if name in premise_corpus and name not in unique_premises:
-                unique_premises[name] = len(unique_premises)
-
-        # Map positive names to indices
-        pos_idx = [unique_premises[n] for n in pos_names if n in unique_premises]
-        positive_indices.append(pos_idx)
-
-    if not unique_premises:
-        return None
-
-    premise_names = list(unique_premises.keys())
-    get_batch = getattr(premise_corpus, "get_batch", None)
-    if get_batch is not None:
-        premise_texts = get_batch(premise_names)
-    else:
-        premise_texts = [premise_corpus[n] for n in premise_names]
-
-    state_tokens = _tokenize_batch(tokenizer, state_texts, max_seq_length)
-    premise_tokens = _tokenize_batch(tokenizer, premise_texts, max_seq_length)
-
-    return {
-        "state_input_ids": state_tokens["input_ids"],
-        "state_attention_mask": state_tokens["attention_mask"],
-        "premise_input_ids": premise_tokens["input_ids"],
-        "premise_attention_mask": premise_tokens["attention_mask"],
-        "positive_indices": positive_indices,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -329,8 +186,8 @@ def _prepare_batch(items, tokenizer, premise_corpus, max_seq_length):
 # ---------------------------------------------------------------------------
 
 
-class BiEncoderTrainer:
-    """Trains a bi-encoder model using masked contrastive loss."""
+class TacticClassifierTrainer:
+    """Trains a tactic classifier using weighted cross-entropy loss."""
 
     def __init__(self, hyperparams: dict[str, Any] | None = None):
         self.hyperparams = dict(DEFAULT_HYPERPARAMS)
@@ -339,79 +196,55 @@ class BiEncoderTrainer:
 
     def train(
         self,
-        dataset,
+        dataset: TacticDataset,
+        tokenizer,
         output_path: Path,
         vocabulary_path: Path | None = None,
         hyperparams: dict | None = None,
         sample: float | None = None,
         epoch_callback=None,
-    ):
-        """Train a bi-encoder from scratch.
+    ) -> Path:
+        """Train a tactic classifier from scratch.
 
-        spec §4.3: Requires at least 1,000 training pairs (after sampling).
-        When vocabulary_path is provided, uses the closed vocabulary
-        tokenizer and reinitializes the embedding layer.
-        sample: optional float in (0.0, 1.0] — sub-samples the training
-        split to ceil(len * sample) pairs. Validation and test are not affected.
-        epoch_callback: optional (epoch, val_recall) -> None, invoked
-        after each epoch's validation. If it raises, training terminates.
+        Args:
+            dataset: TacticDataset with train/val/test splits and label metadata.
+            tokenizer: CoqTokenizer or HuggingFace tokenizer instance.
+            output_path: path to save the best checkpoint.
+            vocabulary_path: path to vocabulary file (saved in checkpoint).
+            hyperparams: optional overrides for default hyperparameters.
+            sample: optional float in (0.0, 1.0] — sub-samples the training
+                split to ceil(len * sample) pairs.
+            epoch_callback: optional (epoch, val_accuracy) -> None, invoked
+                after each epoch's validation. If it raises, training terminates.
+
+        Returns:
+            Path to the saved checkpoint.
         """
-        if sample is not None and sample < 1.0:
-            import math
-            n = math.ceil(len(dataset.train) * sample)
-            sampled_train = random.sample(dataset.train, n)
-            dataset = TrainingDataset(
-                train=sampled_train,
-                val=dataset.val,
-                test=dataset.test,
-                premise_corpus=dataset.premise_corpus,
-            )
+        train_pairs = dataset.train_pairs
 
-        if len(dataset.train) < 1000:
+        if sample is not None and sample < 1.0:
+            n = math.ceil(len(train_pairs) * sample)
+            train_pairs = random.sample(train_pairs, n)
+
+        if len(train_pairs) < 1000:
             raise InsufficientDataError(
-                f"Training requires at least 1,000 pairs, got {len(dataset.train)}"
+                f"Training requires at least 1,000 pairs, got {len(train_pairs)}"
             )
 
         hp = dict(self.hyperparams)
         if hyperparams:
             hp.update(hyperparams)
 
-        self._train_impl(
-            dataset, Path(output_path), hp, vocabulary_path=vocabulary_path,
-            epoch_callback=epoch_callback,
-        )
-
-    def fine_tune(
-        self,
-        checkpoint_path: Path,
-        dataset,
-        output_path: Path,
-        hyperparams: dict | None = None,
-        epoch_callback=None,
-    ):
-        """Fine-tune from a pre-trained checkpoint.
-
-        spec §4.4: Uses lower learning rate (5e-6) and fewer epochs (10).
-        Inherits the vocabulary_path from the checkpoint.
-        epoch_callback: optional (epoch, val_recall) -> None, invoked
-        after each epoch's validation. If it raises, training terminates.
-        """
-        checkpoint_path = Path(checkpoint_path)
-        if not checkpoint_path.exists():
-            raise CheckpointNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-
-        hp = get_fine_tune_hyperparams(hyperparams)
-        checkpoint = load_checkpoint(checkpoint_path)
-
-        vocab_path_str = checkpoint.get("vocabulary_path")
-        vocab_path = Path(vocab_path_str) if vocab_path_str else None
-
-        self._train_impl(
-            dataset,
-            Path(output_path),
-            hp,
-            initial_state_dict=checkpoint.get("model_state_dict"),
-            vocabulary_path=vocab_path,
+        return self._train_impl(
+            train_pairs=train_pairs,
+            val_pairs=dataset.val_pairs,
+            label_map=dataset.label_map,
+            label_names=dataset.label_names,
+            family_counts=dataset.family_counts,
+            tokenizer=tokenizer,
+            output_path=Path(output_path),
+            hp=hp,
+            vocabulary_path=vocabulary_path,
             epoch_callback=epoch_callback,
         )
 
@@ -420,29 +253,40 @@ class BiEncoderTrainer:
     # -----------------------------------------------------------------------
 
     def _train_impl(
-        self, dataset, output_path, hp, initial_state_dict=None,
-        vocabulary_path=None, epoch_callback=None,
-    ):
-        """Shared training loop for train() and fine_tune()."""
+        self,
+        train_pairs,
+        val_pairs,
+        label_map,
+        label_names,
+        family_counts,
+        tokenizer,
+        output_path,
+        hp,
+        vocabulary_path=None,
+        epoch_callback=None,
+    ) -> Path:
+        """Core training loop."""
         import gc
-        import torch
 
-        from Poule.neural.training.model import BiEncoder
+        import torch
+        import torch.nn as nn
+
+        from Poule.neural.training.model import TacticClassifier
 
         output_path = Path(output_path)
         device = _get_device()
+        num_classes = len(label_names)
 
-        # Tokenizer: closed vocabulary or CodeBERT default
-        if vocabulary_path is not None:
-            from Poule.neural.training.vocabulary import CoqTokenizer
+        # Build model
+        from Poule.neural.training.vocabulary import CoqTokenizer
 
-            tokenizer = CoqTokenizer(Path(vocabulary_path))
-            model = BiEncoder(vocab_size=tokenizer.vocab_size)
+        if isinstance(tokenizer, CoqTokenizer):
+            model = TacticClassifier(
+                num_classes=num_classes,
+                vocab_size=tokenizer.vocab_size,
+            )
         else:
-            from transformers import AutoTokenizer
-
-            tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
-            model = BiEncoder()
+            model = TacticClassifier(num_classes=num_classes)
 
         # Free transient allocations from model loading before
         # the optimizer doubles the memory footprint.
@@ -453,9 +297,14 @@ class BiEncoderTrainer:
         except Exception:
             pass
 
-        if initial_state_dict is not None:
-            model.load_state_dict(initial_state_dict)
         model = model.to(device)
+
+        # Class-weighted cross-entropy loss
+        alpha = hp.get("class_weight_alpha", 0.5)
+        class_weights = compute_class_weights(
+            family_counts, label_map, num_classes, alpha=alpha,
+        ).to(device)
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
 
         # Optimizer
         optimizer = torch.optim.AdamW(
@@ -464,7 +313,7 @@ class BiEncoderTrainer:
             weight_decay=hp["weight_decay"],
         )
 
-        # Mixed precision (GPU only)
+        # Mixed precision (CUDA only)
         use_amp = device.type == "cuda"
         scaler = None
         autocast_ctx = nullcontext
@@ -480,197 +329,103 @@ class BiEncoderTrainer:
                 scaler = GradScaler()
                 autocast_ctx = _autocast
 
-        # Gradient accumulation
-        micro_batch_size = min(32, hp["batch_size"])
-        accumulation_steps = max(1, hp["batch_size"] // micro_batch_size)
-        all_premise_names = set(dataset.premise_corpus.keys())
-
+        batch_size = hp["batch_size"]
         tracker = EarlyStoppingTracker(hp["early_stopping_patience"])
-        best_recall = -1.0
+        best_accuracy = -1.0
         final_epoch = 0
 
         for epoch in range(1, hp["max_epochs"] + 1):
             final_epoch = epoch
             model.train()
             epoch_loss = 0.0
-            n_micro = 0
+            n_batches = 0
 
-            indices = list(range(len(dataset.train)))
+            indices = list(range(len(train_pairs)))
             random.shuffle(indices)
 
-            optimizer.zero_grad()
-            accum_count = 0
+            total_batches = (len(indices) + batch_size - 1) // batch_size
+            for batch_start in range(0, len(indices), batch_size):
+                batch_indices = indices[batch_start : batch_start + batch_size]
+                batch_idx = batch_start // batch_size
+                if batch_idx % 50 == 0:
+                    logger.info("  batch %d/%d", batch_idx, total_batches)
 
-            total_micros = (len(indices) + micro_batch_size - 1) // micro_batch_size
-            for batch_start in range(0, len(indices), micro_batch_size):
-                batch_indices = indices[batch_start : batch_start + micro_batch_size]
-                micro_idx = batch_start // micro_batch_size
-                if micro_idx % 50 == 0:
-                    logger.info("  micro-batch %d/%d", micro_idx, total_micros)
-
-                # Build micro-batch with hard negatives
-                # Cap positives per pair to bound memory.  The
-                # extraction can record thousands of transitive
-                # premises per tactic step; encoding them all in
-                # one backward pass would OOM.
-                _MAX_POS = 16
-                items = []
-                for idx in batch_indices:
-                    state_text, raw_pos = dataset.train[idx]
-                    pos_names = (
-                        random.sample(raw_pos, _MAX_POS)
-                        if len(raw_pos) > _MAX_POS
-                        else raw_pos
-                    )
-
-                    # Accessible premises (spec §4.2)
-                    source = (
-                        dataset.train_files[idx]
-                        if idx < len(dataset.train_files)
-                        else ""
-                    )
-                    accessible: set[str] = set()
-                    if source and source in dataset.file_deps:
-                        for dep_file in dataset.file_deps[source]:
-                            accessible.update(
-                                dataset.file_premises.get(dep_file, set())
-                            )
-
-                    neg_names = sample_hard_negatives(
-                        state_text,
-                        set(pos_names),
-                        accessible,
-                        k=hp["hard_negatives_per_state"],
-                        corpus=all_premise_names,
-                    )
-                    items.append((state_text, pos_names, neg_names))
-
-                batch = _prepare_batch(
-                    items, tokenizer, dataset.premise_corpus, hp["max_seq_length"]
+                texts = [train_pairs[i][0] for i in batch_indices]
+                labels = torch.tensor(
+                    [train_pairs[i][1] for i in batch_indices],
+                    dtype=torch.long,
+                    device=device,
                 )
-                if batch is None:
-                    continue
+
+                tokens = _tokenize_batch(tokenizer, texts, hp["max_seq_length"])
 
                 try:
-                    s_ids = batch["state_input_ids"].to(device)
-                    s_mask = batch["state_attention_mask"].to(device)
-                    p_ids = batch["premise_input_ids"].to(device)
-                    p_mask = batch["premise_attention_mask"].to(device)
+                    input_ids = tokens["input_ids"].to(device)
+                    attention_mask = tokens["attention_mask"].to(device)
 
                     with autocast_ctx():
-                        state_embs = model(s_ids, s_mask)
+                        logits = model(input_ids, attention_mask)
+                        loss = criterion(logits, labels)
 
-                        # Encode premises without gradient tracking.
-                        # A single training pair can reference thousands
-                        # of premises; storing backward activations for
-                        # all of them would OOM.  The shared-weight
-                        # encoder learns from state-side gradients.
-                        _P_CHUNK = 64
-                        with torch.no_grad():
-                            if p_ids.size(0) <= _P_CHUNK:
-                                premise_embs = model(p_ids, p_mask)
-                            else:
-                                chunks = []
-                                for ps in range(0, p_ids.size(0), _P_CHUNK):
-                                    pe = min(ps + _P_CHUNK, p_ids.size(0))
-                                    chunks.append(model(p_ids[ps:pe], p_mask[ps:pe]))
-                                premise_embs = torch.cat(chunks, dim=0)
-                        loss = (
-                            masked_contrastive_loss(
-                                state_embs,
-                                premise_embs,
-                                batch["positive_indices"],
-                                hp["temperature"],
-                            )
-                            / accumulation_steps
-                        )
-
+                    optimizer.zero_grad()
                     if scaler:
                         scaler.scale(loss).backward()
+                        scaler.step(optimizer)
+                        scaler.update()
                     else:
                         loss.backward()
+                        optimizer.step()
 
-                    epoch_loss += loss.detach() * accumulation_steps
-                    n_micro += 1
-                    accum_count += 1
-                    # Reclaim MPS memory to prevent leak accumulation
-                    if device.type == "mps":
-                        torch.mps.synchronize()
-                        torch.mps.empty_cache()
-
-                    if accum_count >= accumulation_steps:
-                        if scaler:
-                            scaler.step(optimizer)
-                            scaler.update()
-                        else:
-                            optimizer.step()
-                        optimizer.zero_grad()
-                        # Reclaim MPS memory to prevent leak accumulation
-                        if device.type == "mps":
-                            torch.mps.empty_cache()
-                        accum_count = 0
+                    epoch_loss += loss.detach().item()
+                    n_batches += 1
 
                 except RuntimeError as e:
                     if "out of memory" in str(e).lower():
                         raise TrainingResourceError(
-                            f"GPU out of memory with batch_size={hp['batch_size']}. "
+                            f"GPU out of memory with batch_size={batch_size}. "
                             f"Try reducing batch_size."
                         ) from e
                     raise
 
-            # Flush remaining accumulated gradients
-            if accum_count > 0:
-                if scaler:
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
-                optimizer.zero_grad()
-
             # Validation
-            avg_loss = (epoch_loss / max(n_micro, 1)).item() if n_micro > 0 else 0.0
+            avg_loss = epoch_loss / max(n_batches, 1)
 
-            val_recall = 0.0
-            if dataset.val:
-                val_recall = _compute_recall_at_k(
+            val_accuracy = 0.0
+            if val_pairs:
+                val_accuracy = _compute_accuracy_at_k(
                     model,
                     tokenizer,
-                    dataset.val,
-                    dataset.premise_corpus,
+                    val_pairs,
                     hp["max_seq_length"],
                     device,
-                    k=32,
+                    k=5,
                 )
 
-            # Reclaim MPS/GPU memory after validation
-            if device.type == "mps":
-                gc.collect()
-                torch.mps.empty_cache()
-
-            print(f"Epoch {epoch}: loss={avg_loss:.4f}, val_R@32={val_recall:.4f}")
+            print(f"Epoch {epoch}: loss={avg_loss:.4f}, val_acc@5={val_accuracy:.4f}")
 
             # Epoch callback (used by HPO tuner for pruning)
             if epoch_callback is not None:
-                epoch_callback(epoch, val_recall)
+                epoch_callback(epoch, val_accuracy)
 
             # Save best checkpoint
-            if val_recall > best_recall:
-                best_recall = val_recall
+            if val_accuracy > best_accuracy:
+                best_accuracy = val_accuracy
                 save_checkpoint(
                     {
                         "model_state_dict": {
                             k: v.cpu() for k, v in model.state_dict().items()
                         },
-                        "optimizer_state_dict": optimizer.state_dict(),
-                        "epoch": epoch,
-                        "best_recall_32": val_recall,
                         "hyperparams": hp,
+                        "label_map": label_map,
                         "vocabulary_path": str(vocabulary_path) if vocabulary_path else None,
+                        "class_weights": class_weights.cpu(),
+                        "epoch": epoch,
+                        "best_accuracy_5": val_accuracy,
                     },
                     output_path,
                 )
 
-            if tracker.should_stop(val_recall):
+            if tracker.should_stop(val_accuracy):
                 break
 
         # Save final checkpoint alongside best
@@ -682,14 +437,17 @@ class BiEncoderTrainer:
                 "model_state_dict": {
                     k: v.cpu() for k, v in model.state_dict().items()
                 },
-                "optimizer_state_dict": optimizer.state_dict(),
-                "epoch": final_epoch,
-                "best_recall_32": best_recall,
                 "hyperparams": hp,
+                "label_map": label_map,
                 "vocabulary_path": str(vocabulary_path) if vocabulary_path else None,
+                "class_weights": class_weights.cpu(),
+                "epoch": final_epoch,
+                "best_accuracy_5": best_accuracy,
             },
             final_path,
         )
+
+        return output_path
 
 
 # ---------------------------------------------------------------------------
@@ -817,10 +575,7 @@ def _load_safetensors_checkpoint(path: Path) -> dict:
     vocab_path = ckpt_dir / "vocabulary_path.txt"
     vocabulary_path = vocab_path.read_text().strip() if vocab_path.exists() else None
 
-    recall_path = ckpt_dir / "best_recall_32.txt"
-    best_recall = float(recall_path.read_text().strip()) if recall_path.exists() else 0.0
-
-    # Map MLX parameter names to PyTorch BiEncoder names
+    # Map MLX parameter names to PyTorch names
     num_layers = config.get("num_layers", 12)
     _, mlx_to_hf = _build_mappings(num_layers)
 
@@ -840,16 +595,6 @@ def _load_safetensors_checkpoint(path: Path) -> dict:
         "model_state_dict": pt_state_dict,
         "optimizer_state_dict": {},
         "epoch": 0,
-        "best_recall_32": best_recall,
         "hyperparams": hyperparams,
         "vocabulary_path": vocabulary_path,
     }
-
-
-def get_fine_tune_hyperparams(overrides: dict | None = None) -> dict:
-    """Return hyperparameters for fine-tuning (lower LR, fewer epochs)."""
-    params = dict(DEFAULT_HYPERPARAMS)
-    params.update(FINE_TUNE_OVERRIDES)
-    if overrides:
-        params.update(overrides)
-    return params

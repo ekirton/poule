@@ -1985,11 +1985,11 @@ class TestRunCampaignFileGrouped:
 
         lines = output.read_text().strip().split("\n")
         records = [json.loads(l) for l in lines]
-        # Compact format: verify ordering by source file in "p" records
-        pair_files = [r["f"] for r in records if r.get("t") == "p"]
-        # All A.v pairs should appear before all B.v pairs
-        a_indices = [i for i, f in enumerate(pair_files) if "A" in f]
-        b_indices = [i for i, f in enumerate(pair_files) if "B" in f]
+        # Compact format: verify ordering by source file in "s" (step) records
+        step_files = [r["f"] for r in records if r.get("t") == "s"]
+        # All A.v steps should appear before all B.v steps
+        a_indices = [i for i, f in enumerate(step_files) if "A" in f]
+        b_indices = [i for i, f in enumerate(step_files) if "B" in f]
         if a_indices and b_indices:
             assert max(a_indices) < min(b_indices)
 

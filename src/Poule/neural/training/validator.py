@@ -1,8 +1,10 @@
 """Pre-training data quality validation.
 
-Validates ExtractionRecord JSONL files for training data quality.
-Uses the goals field from ExtractionStep (not state_before) and
-structured premises with name+kind fields.
+Validates compact JSONL extraction output for tactic prediction training.
+Checks "s" (step) records for completeness, tactic family distribution,
+and class imbalance.
+
+Spec: specification/neural-training.md §4.7
 """
 
 from __future__ import annotations
@@ -12,19 +14,19 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from Poule.neural.training.data import serialize_goals
+from Poule.neural.training.data import extract_tactic_family
 
 
 @dataclass
 class ValidationReport:
     """Results from scanning training data for quality issues."""
 
-    total_pairs: int
-    empty_premise_pairs: int
-    malformed_pairs: int
-    unique_premises: int
+    total_steps: int
+    missing_tactic: int
+    malformed_records: int
     unique_states: int
-    top_premises: list[tuple[str, int]]
+    num_families: int
+    family_distribution: list[tuple[str, int]]
     warnings: list[str] = field(default_factory=list)
 
 
@@ -33,10 +35,10 @@ class TrainingDataValidator:
 
     @staticmethod
     def validate(jsonl_paths: list[Path]) -> ValidationReport:
-        total_pairs = 0
-        empty_premise_pairs = 0
-        malformed_pairs = 0
-        all_premises: Counter[str] = Counter()
+        total_steps = 0
+        missing_tactic = 0
+        malformed_records = 0
+        family_counts: Counter[str] = Counter()
         all_states: set[str] = set()
 
         for path in jsonl_paths:
@@ -48,73 +50,74 @@ class TrainingDataValidator:
                     try:
                         record = json.loads(line)
                     except json.JSONDecodeError:
-                        malformed_pairs += 1
+                        malformed_records += 1
                         continue
 
-                    # Compact format: "p" records are pre-extracted pairs
-                    if record.get("t") == "p":
+                    # Only validate "s" (step) records
+                    if record.get("t") == "s":
                         state_text = record.get("s", "")
-                        premise_names = record.get("p", [])
-                        if not premise_names:
-                            empty_premise_pairs += 1
+                        tactic_text = record.get("c", "")
+                        if not tactic_text:
+                            missing_tactic += 1
                             continue
-                        total_pairs += 1
+                        total_steps += 1
                         all_states.add(state_text)
-                        for p in premise_names:
-                            all_premises[p] += 1
+                        family = extract_tactic_family(tactic_text)
+                        family_counts[family] += 1
                         continue
 
-                    # Skip non-pair compact records ("g", metadata, etc.)
+                    # Skip non-step records ("g", metadata, errors, etc.)
                     if record.get("t") == "g" or "record_type" in record:
                         continue
 
         # Compute warnings
         warnings: list[str] = []
 
-        total_steps = total_pairs + empty_premise_pairs
-        if total_steps > 0 and empty_premise_pairs / total_steps > 0.10:
+        if malformed_records > 0:
             warnings.append(
-                "Over 10% of steps have empty premise lists — "
-                "check extraction quality"
-            )
-
-        if malformed_pairs > 0:
-            warnings.append(
-                f"Found {malformed_pairs} malformed pairs — "
+                f"Found {malformed_records} malformed records -- "
                 f"check extraction output format"
             )
 
-        if total_pairs < 5000:
+        if missing_tactic > 0:
             warnings.append(
-                f"Only {total_pairs} training pairs — model quality may be limited"
+                f"Found {missing_tactic} step records with missing tactic text"
             )
 
-        unique_premises = len(all_premises)
-        if unique_premises < 1000:
+        if total_steps < 10000:
             warnings.append(
-                f"Only {unique_premises} unique premises — "
-                f"embedding space may be under-constrained"
+                f"Only {total_steps} training steps -- model quality may be limited"
             )
 
-        # Check for dominant premises (> 5% of all occurrences)
-        total_occurrences = sum(all_premises.values())
-        if total_occurrences > 0:
-            for name, count in all_premises.most_common():
-                pct = count / total_occurrences * 100
-                if pct > 5.0:
+        # Check for dominant families (> 30% of all steps)
+        if total_steps > 0:
+            for name, count in family_counts.most_common():
+                pct = count / total_steps
+                if pct > 0.30:
                     warnings.append(
-                        f"Premise {name} accounts for {pct:.1f}% of all occurrences — "
-                        f"may dominate training"
+                        f"Tactic family '{name}' accounts for {pct:.0%} of all "
+                        f"steps -- class weighting recommended"
                     )
 
-        top_premises = all_premises.most_common(10)
+        # Warn about families with very few examples
+        small_families = [
+            name for name, count in family_counts.items() if count < 50
+        ]
+        if small_families:
+            warnings.append(
+                f"{len(small_families)} tactic families have < 50 examples: "
+                f"{', '.join(sorted(small_families)[:5])}"
+                + (" ..." if len(small_families) > 5 else "")
+            )
+
+        family_distribution = family_counts.most_common()
 
         return ValidationReport(
-            total_pairs=total_pairs,
-            empty_premise_pairs=empty_premise_pairs,
-            malformed_pairs=malformed_pairs,
-            unique_premises=unique_premises,
+            total_steps=total_steps,
+            missing_tactic=missing_tactic,
+            malformed_records=malformed_records,
             unique_states=len(all_states),
-            top_premises=top_premises,
+            num_families=len(family_counts),
+            family_distribution=family_distribution,
             warnings=warnings,
         )

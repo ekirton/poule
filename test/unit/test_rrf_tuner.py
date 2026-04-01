@@ -77,22 +77,10 @@ class TestPrecomputedQuery:
             structural=[("a", 0.9), ("b", 0.8)],
             mepo=[("b", 0.7), ("c", 0.6)],
             fts=[("c", 0.5)],
-            neural=None,
             ground_truth={"a", "c"},
         )
         assert pq.structural == [("a", 0.9), ("b", 0.8)]
-        assert pq.neural is None
         assert pq.ground_truth == {"a", "c"}
-
-    def test_with_neural(self):
-        pq = PrecomputedQuery(
-            structural=[],
-            mepo=[],
-            fts=[],
-            neural=[("x", 0.95)],
-            ground_truth={"x"},
-        )
-        assert pq.neural == [("x", 0.95)]
 
 
 # ===========================================================================
@@ -111,7 +99,6 @@ class TestEvaluateCached:
                 structural=[("a", 0.9), ("b", 0.8)],
                 mepo=[("a", 0.7)],
                 fts=[("b", 0.6)],
-                neural=None,
                 ground_truth={"a"},
             ),
         ]
@@ -126,7 +113,6 @@ class TestEvaluateCached:
                 structural=[("x", 0.9)],
                 mepo=[("y", 0.7)],
                 fts=[("z", 0.6)],
-                neural=None,
                 ground_truth={"missing"},
             ),
         ]
@@ -141,14 +127,12 @@ class TestEvaluateCached:
                 structural=[("a", 0.9)],
                 mepo=[],
                 fts=[],
-                neural=None,
                 ground_truth={"a"},
             ),
             PrecomputedQuery(
                 structural=[("b", 0.9)],
                 mepo=[],
                 fts=[],
-                neural=None,
                 ground_truth={"missing"},
             ),
         ]
@@ -165,28 +149,12 @@ class TestEvaluateCached:
                 structural=[("a", 0.9), ("b", 0.8)],
                 mepo=[("b", 0.7)],
                 fts=[],
-                neural=None,
                 ground_truth={"a"},  # "a" is at rank 2 after RRF
             ),
         ]
         weights = {"structural": 1.0, "mepo": 1.0, "fts": 1.0}
         result = evaluate_cached(cached, k=60, weights=weights, limit=1)
         assert result == pytest.approx(0.0)
-
-    def test_neural_channel_included_when_present(self):
-        """Neural channel contributes when PrecomputedQuery.neural is set."""
-        cached = [
-            PrecomputedQuery(
-                structural=[],
-                mepo=[],
-                fts=[],
-                neural=[("neural_hit", 0.95)],
-                ground_truth={"neural_hit"},
-            ),
-        ]
-        weights = {"structural": 1.0, "mepo": 1.0, "fts": 1.0, "neural": 1.0}
-        result = evaluate_cached(cached, k=60, weights=weights, limit=32)
-        assert result == pytest.approx(1.0)
 
     def test_empty_cached_returns_zero(self):
         weights = {"structural": 1.0, "mepo": 1.0, "fts": 1.0}
@@ -202,7 +170,6 @@ class TestEvaluateCached:
                 structural=[("a", 0.9)],
                 mepo=[("b", 0.7)],
                 fts=[],
-                neural=None,
                 ground_truth={"b"},
             ),
         ]
@@ -227,7 +194,6 @@ class TestRRFTuner:
                 structural=[("a", 0.9), ("b", 0.8)],
                 mepo=[("a", 0.7), ("c", 0.6)],
                 fts=[("b", 0.5)],
-                neural=None,
                 ground_truth={"a"},
             ),
         ] * 10  # 10 identical queries for stability
@@ -247,28 +213,6 @@ class TestRRFTuner:
         assert isinstance(result.best_weights, dict)
         assert set(result.best_weights.keys()) == {"structural", "mepo", "fts"}
 
-    def test_four_channels_with_neural(self, tmp_path):
-        """Phase 3: 4 channels including neural."""
-        cached = [
-            PrecomputedQuery(
-                structural=[("a", 0.9)],
-                mepo=[("a", 0.7)],
-                fts=[("a", 0.5)],
-                neural=[("a", 0.95)],
-                ground_truth={"a"},
-            ),
-        ] * 10
-
-        result = RRFTuner.tune(
-            cached_results=cached,
-            output_dir=tmp_path,
-            n_trials=3,
-            channel_names=["structural", "mepo", "fts", "neural"],
-        )
-
-        assert "neural" in result.best_weights
-        assert len(result.best_weights) == 4
-
     def test_resume_continues_study(self, tmp_path):
         """Resume=True continues an existing study."""
         cached = [
@@ -276,7 +220,6 @@ class TestRRFTuner:
                 structural=[("a", 0.9)],
                 mepo=[],
                 fts=[],
-                neural=None,
                 ground_truth={"a"},
             ),
         ] * 10

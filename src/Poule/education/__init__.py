@@ -12,7 +12,7 @@ import numpy as np
 from Poule.education.fts import education_fts_query
 from Poule.education.models import EducationSearchResult
 from Poule.education.storage import EducationStorage
-from Poule.neural.index import EmbeddingIndex
+from Poule.education.embedding_index import EmbeddingIndex
 
 logger = logging.getLogger(__name__)
 

@@ -1,32 +1,34 @@
-"""Bi-encoder model for neural premise selection training.
+"""Tactic family classifier for neural tactic prediction.
 
-Shared-weight encoder wrapping CodeBERT with mean pooling and
-L2 normalization, producing 768-dim embeddings. The same encoder
-is used for both proof states and premises.
+CodeBERT encoder with mean pooling and a linear classification head,
+producing logits over a fixed set of tactic families.
 
 Requires: torch, transformers (training-only dependencies).
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from transformers import AutoModel
 
 
-class BiEncoder(nn.Module):
-    """Shared-weight bi-encoder with mean pooling and L2 normalization.
+class TacticClassifier(nn.Module):
+    """CodeBERT encoder with mean pooling and classification head.
 
-    Architecture: CodeBERT -> mean pooling -> L2 normalize -> 768-dim.
+    Architecture: CodeBERT -> mean pooling -> Linear -> [B, num_classes] logits.
     """
 
     def __init__(
         self,
         model_name: str = "microsoft/codebert-base",
+        num_classes: int = 1,
         vocab_size: int | None = None,
     ):
         super().__init__()
+        self.num_classes = num_classes
         self.encoder = AutoModel.from_pretrained(model_name)
 
         # Replace embedding layer if a custom vocab size is provided
@@ -44,9 +46,12 @@ class BiEncoder(nn.Module):
             del old_embeddings
             import gc; gc.collect()
 
+        hidden_size = self.encoder.config.hidden_size
+        self.classifier = nn.Linear(hidden_size, num_classes)
+
     @classmethod
-    def from_checkpoint(cls, checkpoint: dict) -> "BiEncoder":
-        """Instantiate a BiEncoder from a checkpoint dict.
+    def from_checkpoint(cls, checkpoint: dict) -> "TacticClassifier":
+        """Instantiate a TacticClassifier from a checkpoint dict.
 
         Builds the encoder from a RoBERTa config (no network access),
         infers vocab_size from the embedding weight shape, and loads
@@ -56,6 +61,8 @@ class BiEncoder(nn.Module):
         from transformers import RobertaConfig, RobertaModel
 
         state_dict = checkpoint["model_state_dict"]
+        num_classes = checkpoint["num_classes"]
+
         emb_key = "encoder.embeddings.word_embeddings.weight"
         vocab_size = state_dict[emb_key].shape[0] if emb_key in state_dict else None
 
@@ -73,26 +80,33 @@ class BiEncoder(nn.Module):
         )
         model = cls.__new__(cls)
         nn.Module.__init__(model)
+        model.num_classes = num_classes
         model.encoder = RobertaModel(config)
+        model.classifier = nn.Linear(768, num_classes)
 
         model.load_state_dict(state_dict, strict=False)
         return model
 
     @property
-    def embedding_dim(self) -> int:
-        return self.encoder.config.hidden_size
+    def label_map(self) -> dict[str, int] | None:
+        """Return the label map if one was saved, else None."""
+        return getattr(self, "_label_map", None)
+
+    @label_map.setter
+    def label_map(self, mapping: dict[str, int]) -> None:
+        self._label_map = mapping
 
     def forward(
         self, input_ids: torch.Tensor, attention_mask: torch.Tensor
     ) -> torch.Tensor:
-        """Encode text to L2-normalized embedding vectors.
+        """Classify proof states into tactic families.
 
         Args:
             input_ids: [B, seq_len] token IDs.
             attention_mask: [B, seq_len] attention mask.
 
         Returns:
-            [B, 768] L2-normalized embeddings.
+            [B, num_classes] unnormalized logits.
         """
         outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         token_embs = outputs.last_hidden_state  # [B, seq_len, dim]
@@ -103,4 +117,26 @@ class BiEncoder(nn.Module):
         counts = mask.sum(dim=1).clamp(min=1e-9)
         pooled = summed / counts  # [B, dim]
 
-        return F.normalize(pooled, p=2, dim=1)
+        return self.classifier(pooled)
+
+    def save_checkpoint(
+        self,
+        path: str,
+        label_map: dict[str, int],
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """Save model weights, num_classes, and label_map to a checkpoint file.
+
+        Args:
+            path: Destination file path.
+            label_map: Mapping from tactic family name to class index.
+            extra: Optional additional metadata to include in the checkpoint.
+        """
+        checkpoint: dict[str, Any] = {
+            "model_state_dict": self.state_dict(),
+            "num_classes": self.num_classes,
+            "label_map": label_map,
+        }
+        if extra:
+            checkpoint.update(extra)
+        torch.save(checkpoint, path)

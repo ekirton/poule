@@ -2000,14 +2000,12 @@ class TestTEDBoundaryExact:
 
 
 # ---------------------------------------------------------------------------
-# 19. RRF fusion with missing neural channel (spec §4.4 step 5-6)
+# 19. RRF fusion with 3 symbolic channels (spec §4.4 step 5-6)
 # ---------------------------------------------------------------------------
 
 
-class TestRRFFusionMissingNeuralChannel:
-    """When the neural channel is unavailable, search_by_type fuses only 3
-    channels (structural, symbol, lexical).  The neural channel is omitted when
-    ctx.neural_encoder is None OR ctx.embedding_index is None (spec §4.4)."""
+class TestRRFFusionSymbolicChannels:
+    """search_by_type fuses 3 channels (structural, symbol, lexical)."""
 
     @patch("Poule.pipeline.search.rrf_fuse")
     @patch("Poule.pipeline.search.fts_search")
@@ -2019,7 +2017,7 @@ class TestRRFFusionMissingNeuralChannel:
     @patch("Poule.pipeline.search.wl_histogram")
     @patch("Poule.pipeline.search.cse_normalize")
     @patch("Poule.pipeline.search.coq_normalize")
-    def test_neural_encoder_none_fuses_only_3_channels(
+    def test_fuses_exactly_3_channels(
         self,
         mock_coq_norm,
         mock_cse_norm,
@@ -2032,12 +2030,9 @@ class TestRRFFusionMissingNeuralChannel:
         mock_fts_search,
         mock_rrf,
     ):
-        """When ctx.neural_encoder is None, RRF is called with exactly 3 ranked
-        lists (structural, symbol, lexical) — not 4."""
+        """RRF is called with exactly 3 ranked lists (structural, symbol, lexical)."""
         parser = _mock_parser()
         ctx = _mock_context(parser=parser)
-        ctx.neural_encoder = None
-        ctx.embedding_index = None
 
         cse_tree = MagicMock()
         cse_tree.node_count = 10
@@ -2063,7 +2058,6 @@ class TestRRFFusionMissingNeuralChannel:
         mock_rrf.assert_called_once()
         rrf_args = mock_rrf.call_args
         ranked_lists = rrf_args[0][0] if rrf_args[0] else rrf_args[1]["ranked_lists"]
-        # Must be exactly 3 channels — neural was not appended
         assert len(ranked_lists) == 3
 
     @patch("Poule.pipeline.search.rrf_fuse")
@@ -2075,7 +2069,7 @@ class TestRRFFusionMissingNeuralChannel:
     @patch("Poule.pipeline.search.wl_histogram")
     @patch("Poule.pipeline.search.cse_normalize")
     @patch("Poule.pipeline.search.coq_normalize")
-    def test_encoder_present_but_embedding_index_none_fuses_only_3_channels(
+    def test_results_valid_with_3_channels(
         self,
         mock_coq_norm,
         mock_cse_norm,
@@ -2087,66 +2081,9 @@ class TestRRFFusionMissingNeuralChannel:
         mock_fts_query,
         mock_rrf,
     ):
-        """When ctx.neural_encoder is present but ctx.embedding_index is None,
-        the neural channel is excluded from RRF fusion (spec §4.4 step 5)."""
+        """The 3-channel fusion produces valid results."""
         parser = _mock_parser()
         ctx = _mock_context(parser=parser)
-        ctx.neural_encoder = MagicMock()  # encoder exists
-        ctx.embedding_index = None         # but index does not
-        ctx.reader.search_fts.return_value = [
-            {"id": 2, "name": "D.2", "module": "M", "kind": "lemma",
-             "statement": "", "type_expr": "", "score": 0.6},
-        ]
-
-        cse_tree = MagicMock()
-        cse_tree.node_count = 10
-        mock_coq_norm.return_value = MagicMock()
-        mock_cse_norm.return_value = cse_tree
-        mock_wl_hist.return_value = {}
-        mock_wl_screen.return_value = []
-        mock_score.return_value = []
-        mock_extract.return_value = set()
-        mock_mepo.return_value = [(1, 0.7)]
-        mock_fts_query.return_value = "nat"
-        mock_rrf.return_value = [(1, 0.8)]
-        ctx.reader.get_declarations_by_ids.return_value = [
-            {"id": 1, "name": "D.1", "module": "M", "kind": "lemma", "statement": "", "type_expr": ""},
-        ]
-
-        search_by_type(ctx, "nat -> nat", limit=10)
-
-        rrf_args = mock_rrf.call_args
-        ranked_lists = rrf_args[0][0] if rrf_args[0] else rrf_args[1]["ranked_lists"]
-        # Neural excluded because embedding_index is None
-        assert len(ranked_lists) == 3
-
-    @patch("Poule.pipeline.search.rrf_fuse")
-    @patch("Poule.pipeline.search.fts_query")
-    @patch("Poule.pipeline.search.mepo_select")
-    @patch("Poule.pipeline.search.extract_consts")
-    @patch("Poule.pipeline.search.score_candidates")
-    @patch("Poule.pipeline.search.wl_screen")
-    @patch("Poule.pipeline.search.wl_histogram")
-    @patch("Poule.pipeline.search.cse_normalize")
-    @patch("Poule.pipeline.search.coq_normalize")
-    def test_results_valid_when_neural_channel_absent(
-        self,
-        mock_coq_norm,
-        mock_cse_norm,
-        mock_wl_hist,
-        mock_wl_screen,
-        mock_score,
-        mock_extract,
-        mock_mepo,
-        mock_fts_query,
-        mock_rrf,
-    ):
-        """Results are still valid (non-empty if data exists) when the neural
-        channel is absent.  The 3-channel fusion still produces results."""
-        parser = _mock_parser()
-        ctx = _mock_context(parser=parser)
-        ctx.neural_encoder = None
-        ctx.embedding_index = None
         ctx.reader.search_fts.return_value = []
 
         cse_tree = MagicMock()
@@ -2167,7 +2104,6 @@ class TestRRFFusionMissingNeuralChannel:
 
         results = search_by_type(ctx, "nat -> nat", limit=10)
 
-        # Results come from the fused output even without neural channel
         assert isinstance(results, list)
         assert len(results) == 2
 

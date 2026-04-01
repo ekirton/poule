@@ -1,4 +1,4 @@
-"""CLI subcommands for searching, proof replay, batch extraction, and neural training."""
+"""CLI subcommands for searching, proof replay, batch extraction, and tactic prediction."""
 
 from __future__ import annotations
 
@@ -801,11 +801,11 @@ def cmd_build_vocabulary(db: str, data: tuple[str, ...], output: str):
 @click.argument("data", nargs=-1, required=True)
 @click.option("--output", required=True, type=click.Path(), help="Path for model checkpoint output.")
 @click.option("--vocabulary", default=None, type=click.Path(exists=True), help="Path to closed vocabulary JSON.")
-@click.option("--batch-size", default=None, type=int, help="Training batch size (default: 256).")
+@click.option("--batch-size", default=None, type=int, help="Training batch size (default: 64).")
 @click.option("--learning-rate", default=None, type=float, help="Learning rate (default: 2e-5).")
 @click.option("--epochs", default=None, type=int, help="Max training epochs (default: 20).")
 @click.option("--patience", default=None, type=int, help="Early stopping patience (default: 3).")
-@click.option("--sample", default=None, type=float, help="Fraction of training data to use (0.0–1.0]. For test runs only.")
+@click.option("--sample", default=None, type=float, help="Fraction of training data to use (0.0-1.0]. For test runs only.")
 def cmd_train(
     db: str,
     data: tuple[str, ...],
@@ -817,17 +817,17 @@ def cmd_train(
     patience: int | None,
     sample: float | None,
 ):
-    """Train a bi-encoder retrieval model from extracted proof trace data."""
+    """Train a tactic family classifier from extracted proof trace data."""
     from Poule.neural.training.data import TrainingDataLoader
-    from Poule.neural.training.trainer import BiEncoderTrainer
+    from Poule.neural.training.trainer import TacticClassifierTrainer
 
     jsonl_paths = _validate_input_files(data)
 
     click.echo("Loading training data...", err=True)
-    dataset = TrainingDataLoader.load(jsonl_paths, Path(db))
+    dataset = TrainingDataLoader.load(jsonl_paths)
     click.echo(
-        f"  train={len(dataset.train)}, val={len(dataset.val)}, "
-        f"test={len(dataset.test)}, premises={len(dataset.premise_corpus)}",
+        f"  train={len(dataset.train_pairs)}, val={len(dataset.val_pairs)}, "
+        f"test={len(dataset.test_pairs)}, classes={dataset.num_classes}",
         err=True,
     )
 
@@ -844,26 +844,29 @@ def cmd_train(
     try:
         vocab_path = Path(vocabulary) if vocabulary else None
 
-        # Use MLX backend on macOS with Apple Silicon when vocabulary is provided
-        use_mlx = False
-        if sys.platform == "darwin" and vocab_path is not None:
-            try:
-                import mlx.core  # noqa: F401
-                use_mlx = True
-            except (ImportError, ModuleNotFoundError):
-                pass
+        # Build tokenizer: custom vocabulary or default CodeBERT
+        if vocab_path is not None:
+            from Poule.neural.training.vocabulary import CoqTokenizer
 
-        if use_mlx:
-            from Poule.neural.training.mlx_backend.trainer import MLXTrainer
-
-            click.echo("Using MLX backend (Apple Silicon Metal acceleration)", err=True)
-            output_dir = Path(output).parent if Path(output).suffix else Path(output)
-            output_dir.mkdir(parents=True, exist_ok=True)
-            trainer = MLXTrainer()
-            trainer.train(dataset, output_dir, vocabulary_path=vocab_path, hyperparams=hp or None)
+            tokenizer = CoqTokenizer(vocab_path)
+            click.echo(
+                f"  Using closed vocabulary ({tokenizer.vocab_size} tokens)",
+                err=True,
+            )
         else:
-            trainer = BiEncoderTrainer()
-            trainer.train(dataset, Path(output), vocabulary_path=vocab_path, hyperparams=hp or None, sample=sample)
+            from transformers import AutoTokenizer
+
+            tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
+            click.echo("  Using default CodeBERT tokenizer", err=True)
+
+        trainer = TacticClassifierTrainer(hyperparams=hp or None)
+        trainer.train(
+            dataset,
+            tokenizer,
+            output_path=Path(output),
+            vocabulary_path=vocab_path,
+            sample=sample,
+        )
     except InsufficientDataError as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)
@@ -872,58 +875,6 @@ def cmd_train(
         sys.exit(1)
 
     click.echo(f"Training complete. Checkpoint saved to: {output}", err=True)
-
-
-# ---------------------------------------------------------------------------
-# fine-tune
-# ---------------------------------------------------------------------------
-
-
-@cli.command("fine-tune")
-@_db_option
-@click.option("--checkpoint", required=True, type=click.Path(exists=True), help="Pre-trained model checkpoint.")
-@click.argument("data", nargs=-1, required=True)
-@click.option("--output", required=True, type=click.Path(), help="Path for fine-tuned checkpoint output.")
-@click.option("--learning-rate", default=None, type=float, help="Learning rate (default: 5e-6).")
-@click.option("--epochs", default=None, type=int, help="Max training epochs (default: 10).")
-def cmd_fine_tune(
-    db: str,
-    checkpoint: str,
-    data: tuple[str, ...],
-    output: str,
-    learning_rate: float | None,
-    epochs: int | None,
-):
-    """Fine-tune a pre-trained model on project-specific proof trace data."""
-    from Poule.neural.training.data import TrainingDataLoader
-    from Poule.neural.training.trainer import BiEncoderTrainer
-
-    jsonl_paths = _validate_input_files(data)
-
-    click.echo("Loading training data...", err=True)
-    dataset = TrainingDataLoader.load(jsonl_paths, Path(db))
-    click.echo(
-        f"  train={len(dataset.train)}, val={len(dataset.val)}, "
-        f"premises={len(dataset.premise_corpus)}",
-        err=True,
-    )
-
-    hp = {}
-    if learning_rate is not None:
-        hp["learning_rate"] = learning_rate
-    if epochs is not None:
-        hp["max_epochs"] = epochs
-
-    try:
-        trainer = BiEncoderTrainer()
-        trainer.fine_tune(
-            Path(checkpoint), dataset, Path(output), hyperparams=hp or None,
-        )
-    except NeuralTrainingError as exc:
-        click.echo(str(exc), err=True)
-        sys.exit(1)
-
-    click.echo(f"Fine-tuning complete. Checkpoint saved to: {output}", err=True)
 
 
 # ---------------------------------------------------------------------------
@@ -937,62 +888,80 @@ def cmd_fine_tune(
 @click.option("--checkpoint", required=True, type=click.Path(exists=True), help="Model checkpoint to evaluate.")
 @click.option("--test-data", required=True, type=click.Path(exists=True), help="JSON Lines test data file.")
 def cmd_evaluate(db: str, json_mode: bool, checkpoint: str, test_data: str):
-    """Evaluate a trained model's retrieval quality on a held-out test set."""
+    """Evaluate a tactic classifier on a held-out test set."""
     from Poule.neural.training.data import TrainingDataLoader
-    from Poule.neural.training.evaluator import RetrievalEvaluator
+    from Poule.neural.training.evaluator import TacticEvaluator
+    from Poule.neural.training.model import TacticClassifier
+    from Poule.neural.training.trainer import load_checkpoint as _load_checkpoint
 
-    click.echo("Loading test data...", err=True)
-    dataset = TrainingDataLoader.load([Path(test_data)], Path(db))
-    test_pairs = dataset.test
-    if not test_pairs:
-        # If no pairs land in test split, use all pairs
-        test_pairs = dataset.train + dataset.val + dataset.test
-    click.echo(f"  {len(test_pairs)} test pairs", err=True)
-
+    click.echo("Loading checkpoint...", err=True)
     try:
-        report = RetrievalEvaluator.evaluate(Path(checkpoint), test_pairs, Path(db))
-    except NeuralTrainingError as exc:
+        ckpt = _load_checkpoint(Path(checkpoint))
+    except CheckpointNotFoundError as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)
+
+    label_map = ckpt.get("label_map", {})
+    label_names = sorted(label_map.keys(), key=lambda k: label_map[k])
+    num_classes = len(label_names)
+
+    if num_classes == 0:
+        click.echo("Checkpoint missing label_map metadata.", err=True)
+        sys.exit(1)
+
+    # Reconstruct tokenizer
+    vocab_path_str = ckpt.get("vocabulary_path")
+    if vocab_path_str and Path(vocab_path_str).exists():
+        from Poule.neural.training.vocabulary import CoqTokenizer
+
+        tokenizer = CoqTokenizer(Path(vocab_path_str))
+    else:
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
+
+    # Reconstruct model
+    import torch
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if "num_classes" in ckpt:
+        model = TacticClassifier.from_checkpoint(ckpt)
+    else:
+        vocab_size = tokenizer.vocab_size if hasattr(tokenizer, "vocab_size") else None
+        model = TacticClassifier(num_classes=num_classes, vocab_size=vocab_size)
+        model.load_state_dict(ckpt["model_state_dict"])
+
+    model = model.to(device)
+    model.eval()
+
+    # Load test data
+    click.echo("Loading test data...", err=True)
+    dataset = TrainingDataLoader.load([Path(test_data)])
+
+    # Re-map test pairs to the checkpoint's label map
+    test_pairs = []
+    for state_text, label_idx in dataset.test_pairs:
+        family = dataset.label_names[label_idx]
+        if family in label_map:
+            test_pairs.append((state_text, label_map[family]))
+        elif "other" in label_map:
+            test_pairs.append((state_text, label_map["other"]))
+
+    if not test_pairs:
+        click.echo("No test pairs available after label remapping.", err=True)
+        sys.exit(1)
+
+    click.echo(f"  test_pairs={len(test_pairs)}", err=True)
+
+    # Evaluate
+    evaluator = TacticEvaluator(model, tokenizer, label_names, device)
+    report = evaluator.evaluate(test_pairs)
 
     if json_mode:
         click.echo(_format_evaluation_report_json(report))
     else:
         click.echo(_format_evaluation_report_human(report))
-
-
-# ---------------------------------------------------------------------------
-# compare
-# ---------------------------------------------------------------------------
-
-
-@cli.command("compare")
-@_db_option
-@_json_option
-@click.option("--checkpoint", required=True, type=click.Path(exists=True), help="Model checkpoint to compare.")
-@click.option("--test-data", required=True, type=click.Path(exists=True), help="JSON Lines test data file.")
-def cmd_compare(db: str, json_mode: bool, checkpoint: str, test_data: str):
-    """Compare neural, symbolic, and union retrieval on a test set."""
-    from Poule.neural.training.data import TrainingDataLoader
-    from Poule.neural.training.evaluator import RetrievalEvaluator
-
-    click.echo("Loading test data...", err=True)
-    dataset = TrainingDataLoader.load([Path(test_data)], Path(db))
-    test_pairs = dataset.test
-    if not test_pairs:
-        test_pairs = dataset.train + dataset.val + dataset.test
-    click.echo(f"  {len(test_pairs)} test pairs", err=True)
-
-    try:
-        report = RetrievalEvaluator.compare(Path(checkpoint), test_pairs, Path(db))
-    except NeuralTrainingError as exc:
-        click.echo(str(exc), err=True)
-        sys.exit(1)
-
-    if json_mode:
-        click.echo(_format_comparison_report_json(report))
-    else:
-        click.echo(_format_comparison_report_human(report))
 
 
 # ---------------------------------------------------------------------------
@@ -1068,10 +1037,10 @@ def cmd_tune(
     jsonl_paths = _validate_input_files(data)
 
     click.echo("Loading training data...", err=True)
-    dataset = TrainingDataLoader.load(jsonl_paths, Path(db))
+    dataset = TrainingDataLoader.load(jsonl_paths)
     click.echo(
-        f"  train={len(dataset.train)}, val={len(dataset.val)}, "
-        f"premises={len(dataset.premise_corpus)}",
+        f"  train={len(dataset.train_pairs)}, val={len(dataset.val_pairs)}, "
+        f"classes={dataset.num_classes}",
         err=True,
     )
 
@@ -1117,151 +1086,6 @@ def cmd_tune(
     click.echo(f"Study database:  {result.study_path}", err=True)
 
 
-@cli.command("tune-rrf")
-@_db_option
-@click.argument("data", nargs=-1, required=True)
-@click.option("--output-dir", required=True, type=click.Path(), help="Directory for RRF study output.")
-@click.option("--n-trials", default=30, type=int, help="Number of Optuna trials (default: 30).")
-@click.option("--study-name", default="poule-rrf-hpo", help="Optuna study name.")
-@click.option("--resume", is_flag=True, default=False, help="Resume an existing study.")
-@click.option("--checkpoint", default=None, type=click.Path(exists=True), help="Neural model checkpoint for phase 3 (combined).")
-def cmd_tune_rrf(
-    db: str,
-    data: tuple[str, ...],
-    output_dir: str,
-    n_trials: int,
-    study_name: str,
-    resume: bool,
-    checkpoint: str | None,
-):
-    """Optimize RRF k and per-channel weights for premise retrieval.
-
-    Without --checkpoint: Phase 1 (symbol-only, 3 channels).
-    With --checkpoint: Phase 3 (combined symbol + neural, 4 channels).
-    """
-    from Poule.fusion.rrf_tuner import (
-        RRFTuner,
-        precompute_channel_results,
-    )
-    from Poule.neural.training.data import TrainingDataLoader
-    from Poule.pipeline.context import create_context
-
-    jsonl_paths = _validate_input_files(data)
-
-    click.echo("Loading training data...", err=True)
-    dataset = TrainingDataLoader.load(jsonl_paths, Path(db))
-    val_data = dataset.val
-    if not val_data:
-        click.echo("No validation data found (need files at position % 10 == 8).", err=True)
-        sys.exit(1)
-    click.echo(f"  val queries: {len(val_data)}", err=True)
-
-    click.echo("Loading pipeline context...", err=True)
-    ctx = create_context(db)
-
-    click.echo("Pre-computing channel results...", err=True)
-    cached = precompute_channel_results(val_data, ctx)
-    click.echo(f"  cached {len(cached)} queries", err=True)
-
-    channel_names = ["structural", "mepo", "fts"]
-
-    if checkpoint is not None:
-        channel_names.append("neural")
-        click.echo("Loading neural model for phase 3...", err=True)
-        try:
-            from Poule.neural.training.trainer import load_checkpoint
-            from Poule.neural.training.evaluator import RetrievalEvaluator
-
-            ckpt = load_checkpoint(checkpoint)
-            evaluator = RetrievalEvaluator()
-            # Encode neural rankings for each cached query
-            click.echo("Computing neural rankings...", err=True)
-            _add_neural_rankings(cached, val_data, checkpoint, dataset, db)
-        except Exception as exc:
-            click.echo(f"Failed to load neural model: {exc}", err=True)
-            sys.exit(1)
-
-    click.echo(
-        f"Starting RRF optimization ({n_trials} trials, "
-        f"{len(channel_names)} channels: {', '.join(channel_names)})...",
-        err=True,
-    )
-    result = RRFTuner.tune(
-        cached_results=cached,
-        output_dir=Path(output_dir),
-        n_trials=n_trials,
-        channel_names=channel_names,
-        study_name=study_name,
-        resume=resume,
-    )
-
-    # Human-readable summary
-    click.echo("\nRRF Optimization Results", err=True)
-    click.echo("=" * 24, err=True)
-    click.echo(f"Trials:       {result.n_trials}", err=True)
-    click.echo(f"Best k:       {result.best_k}", err=True)
-    click.echo(f"Best R@32:    {result.best_recall_32:.4f}", err=True)
-    click.echo("", err=True)
-    click.echo("Best channel weights:", err=True)
-    for name, weight in sorted(result.best_weights.items()):
-        click.echo(f"  {name:20s} {weight:.4f}", err=True)
-    click.echo("", err=True)
-    click.echo(f"Study database:  {result.study_path}", err=True)
-
-
-def _add_neural_rankings(cached, val_data, checkpoint_path, dataset, db_path):
-    """Add neural channel rankings to pre-computed queries."""
-    import torch
-    from Poule.neural.training.trainer import load_checkpoint
-    from Poule.neural.training.model import BiEncoder
-    from transformers import AutoTokenizer
-
-    ckpt = load_checkpoint(checkpoint_path)
-    hp = ckpt.get("hyperparams", {})
-    model = BiEncoder.from_checkpoint(ckpt)
-    model.eval()
-
-    tokenizer = AutoTokenizer.from_pretrained(
-        hp.get("model_name", "microsoft/codebert-base")
-    )
-    max_seq = hp.get("max_seq_length", 256)
-
-    # Encode all premises
-    premise_names = list(dataset.premise_corpus.keys())
-    premise_texts = [dataset.premise_corpus[n] for n in premise_names]
-
-    with torch.no_grad():
-        premise_embs = _batch_encode(model, tokenizer, premise_texts, max_seq)
-
-        for i, (proof_state, _) in enumerate(val_data):
-            state_emb = _batch_encode(model, tokenizer, [proof_state], max_seq)
-            similarities = torch.nn.functional.cosine_similarity(
-                state_emb, premise_embs, dim=1,
-            )
-            top_k = torch.topk(similarities, min(500, len(premise_names)))
-            neural_ranked = [
-                (premise_names[idx], similarities[idx].item())
-                for idx in top_k.indices
-            ]
-            cached[i].neural = neural_ranked
-
-
-def _batch_encode(model, tokenizer, texts, max_seq, batch_size=64):
-    """Encode texts through model in batches."""
-    import torch
-
-    all_embs = []
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i:i + batch_size]
-        tokens = tokenizer(
-            batch, padding=True, truncation=True,
-            max_length=max_seq, return_tensors="pt",
-        )
-        embs = model(tokens["input_ids"], tokens["attention_mask"])
-        all_embs.append(embs.detach().cpu())
-    return torch.cat(all_embs, dim=0)
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1279,68 +1103,19 @@ def _validate_input_files(data: tuple[str, ...]) -> list[Path]:
     return paths
 
 
-def _format_evaluation_report_json(report) -> str:
-    """Format EvaluationReport as JSON."""
-    from dataclasses import asdict
-
-    return json.dumps(asdict(report), separators=(",", ":"))
-
-
-def _format_evaluation_report_human(report) -> str:
-    """Format EvaluationReport as human-readable text."""
-    lines = [
-        "Evaluation Report",
-        "=================",
-        f"Test examples:            {report.test_count}",
-        f"Mean premises per state:  {report.mean_premises_per_state:.2f}",
-        f"Mean query latency:       {report.mean_query_latency_ms:.1f} ms",
-        "",
-        f"Recall@1:   {report.recall_at_1:.4f}",
-        f"Recall@10:  {report.recall_at_10:.4f}",
-        f"Recall@32:  {report.recall_at_32:.4f}",
-        f"MRR:        {report.mrr:.4f}",
-    ]
-    for w in report.warnings:
-        lines.append(f"\nWARNING: {w}")
-    return "\n".join(lines)
-
-
-def _format_comparison_report_json(report) -> str:
-    """Format ComparisonReport as JSON."""
-    from dataclasses import asdict
-
-    return json.dumps(asdict(report), separators=(",", ":"))
-
-
-def _format_comparison_report_human(report) -> str:
-    """Format ComparisonReport as human-readable text."""
-    lines = [
-        "Comparison Report",
-        "=================",
-        f"Neural R@32:     {report.neural_recall_32:.4f}",
-        f"Symbolic R@32:   {report.symbolic_recall_32:.4f}",
-        f"Union R@32:      {report.union_recall_32:.4f}",
-        "",
-        f"Relative improvement:  {report.relative_improvement:.1%}",
-        f"Overlap:               {report.overlap_pct:.1%}",
-        f"Neural exclusive:      {report.neural_exclusive_pct:.1%}",
-        f"Symbolic exclusive:    {report.symbolic_exclusive_pct:.1%}",
-    ]
-    for w in report.warnings:
-        lines.append(f"\nWARNING: {w}")
-    return "\n".join(lines)
 
 
 def _format_validation_report_json(report) -> str:
     """Format ValidationReport as JSON."""
     obj = {
-        "total_pairs": report.total_pairs,
-        "empty_premise_pairs": report.empty_premise_pairs,
-        "malformed_pairs": report.malformed_pairs,
-        "unique_premises": report.unique_premises,
+        "total_steps": report.total_steps,
+        "missing_tactic": report.missing_tactic,
+        "malformed_records": report.malformed_records,
         "unique_states": report.unique_states,
-        "top_premises": [
-            {"name": name, "count": count} for name, count in report.top_premises
+        "num_families": report.num_families,
+        "family_distribution": [
+            {"family": name, "count": count}
+            for name, count in report.family_distribution
         ],
         "warnings": report.warnings,
     }
@@ -1352,17 +1127,58 @@ def _format_validation_report_human(report) -> str:
     lines = [
         "Data Validation Report",
         "======================",
-        f"Total pairs:          {report.total_pairs}",
-        f"Empty premise pairs:  {report.empty_premise_pairs}",
-        f"Malformed pairs:      {report.malformed_pairs}",
-        f"Unique premises:      {report.unique_premises}",
-        f"Unique states:        {report.unique_states}",
+        f"Total steps:          {report.total_steps:,}",
+        f"Missing tactic:       {report.missing_tactic:,}",
+        f"Malformed records:    {report.malformed_records:,}",
+        f"Unique states:        {report.unique_states:,}",
+        f"Tactic families:      {report.num_families}",
     ]
-    if report.top_premises:
+    if report.family_distribution:
         lines.append("")
-        lines.append("Top premises:")
-        for name, count in report.top_premises:
-            lines.append(f"  {name:<40s} {count}")
+        lines.append("Family distribution:")
+        for name, count in report.family_distribution[:20]:
+            pct = count / report.total_steps * 100 if report.total_steps else 0
+            lines.append(f"  {name:<20s} {count:>8,}  ({pct:5.1f}%)")
+        if len(report.family_distribution) > 20:
+            lines.append(f"  ... and {len(report.family_distribution) - 20} more families")
+    for w in report.warnings:
+        lines.append(f"\nWARNING: {w}")
+    return "\n".join(lines)
+
+
+def _format_evaluation_report_json(report) -> str:
+    """Format EvaluationReport as JSON."""
+    obj = {
+        "accuracy_at_1": report.accuracy_at_1,
+        "accuracy_at_5": report.accuracy_at_5,
+        "test_count": report.test_count,
+        "eval_latency_ms": report.eval_latency_ms,
+        "per_family_precision": report.per_family_precision,
+        "per_family_recall": report.per_family_recall,
+        "label_names": report.label_names,
+        "warnings": report.warnings,
+    }
+    return json.dumps(obj, indent=2)
+
+
+def _format_evaluation_report_human(report) -> str:
+    """Format EvaluationReport as human-readable text."""
+    lines = [
+        "Evaluation Report",
+        "=================",
+        f"Test examples:    {report.test_count:,}",
+        f"Accuracy@1:       {report.accuracy_at_1:.4f}",
+        f"Accuracy@5:       {report.accuracy_at_5:.4f}",
+        f"Eval latency:     {report.eval_latency_ms:.1f} ms",
+    ]
+    if report.per_family_precision:
+        lines.append("")
+        lines.append(f"{'Family':<20s} {'Prec':>6s}  {'Recall':>6s}")
+        lines.append("-" * 36)
+        for name in report.label_names:
+            prec = report.per_family_precision.get(name, 0.0)
+            rec = report.per_family_recall.get(name, 0.0)
+            lines.append(f"  {name:<18s} {prec:>6.3f}  {rec:>6.3f}")
     for w in report.warnings:
         lines.append(f"\nWARNING: {w}")
     return "\n".join(lines)

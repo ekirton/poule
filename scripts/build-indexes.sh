@@ -92,31 +92,6 @@ if [[ "$has_indexes" == false ]]; then
     echo "" >&2
 fi
 
-# --- Compute neural embeddings (optional) ---
-# Runs only if a model checkpoint exists. Skipped silently otherwise.
-
-MODEL_DIR="${POULE_MODEL_DIR:-${OUTPUT_DIR}}"
-MODEL_PATH="${MODEL_DIR}/neural-premise-selector.onnx"
-VOCAB_PATH="${MODEL_DIR}/coq-vocabulary.json"
-
-_compute_embeddings() {
-    local db_path="$1"
-    if [[ ! -f "$MODEL_PATH" ]]; then
-        return 0
-    fi
-    echo "  Computing embeddings for $(basename "$db_path")..." >&2
-    python -c "
-from pathlib import Path
-from Poule.neural.encoder import NeuralEncoder
-from Poule.neural.embeddings import compute_embeddings
-
-vocab = Path('${VOCAB_PATH}') if Path('${VOCAB_PATH}').exists() else None
-encoder = NeuralEncoder.load(Path('${MODEL_PATH}'), vocabulary_path=vocab)
-compute_embeddings(Path('${db_path}'), encoder)
-print(f'  Embeddings computed ({encoder.model_hash()[:12]}...)')
-" 2>&1 || echo "  Warning: embedding computation failed for $(basename "$db_path")" >&2
-}
-
 # --- Map library identifiers to opam package names ---
 
 declare -A OPAM_PACKAGES=(
@@ -189,9 +164,6 @@ for lib in "${LIB_ARRAY[@]}"; do
         RESULTS[$lib]="rebuilt"
         COUNTS[$lib]="$count"
         REBUILT=$((REBUILT + 1))
-
-        # Compute neural embeddings if model checkpoint exists
-        _compute_embeddings "$db_path"
     else
         RESULTS[$lib]="FAILED"
         COUNTS[$lib]="-"

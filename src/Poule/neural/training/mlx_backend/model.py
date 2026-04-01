@@ -1,7 +1,8 @@
-"""MLX bi-encoder model for neural premise selection training.
+"""MLX tactic classifier model for neural tactic prediction training.
 
-Architecturally identical to the PyTorch BiEncoder: shared-weight encoder
-with mean pooling and L2 normalization, producing 768-dim embeddings.
+Architecturally identical to the PyTorch TacticClassifier: CodeBERT encoder
+with mean pooling and a linear classification head, producing logits over
+a fixed set of tactic families.
 
 Requires: mlx (macOS with Apple Silicon only).
 """
@@ -38,15 +39,17 @@ class TransformerEncoderLayer(nn.Module):
         return self.ln2(x + ffn_out)
 
 
-class MLXBiEncoder(nn.Module):
-    """Shared-weight bi-encoder with mean pooling and L2 normalization.
+class MLXTacticClassifier(nn.Module):
+    """CodeBERT encoder with mean pooling and classification head.
 
-    spec §4.10: Architecturally identical to the PyTorch BiEncoder.
+    Architecture: CodeBERT -> mean pooling -> Linear -> [B, num_classes] logits.
+    Architecturally identical to the PyTorch TacticClassifier.
     """
 
     def __init__(
         self,
         vocab_size: int,
+        num_classes: int,
         num_layers: int = 12,
         hidden_size: int = 768,
         num_heads: int = 12,
@@ -54,6 +57,7 @@ class MLXBiEncoder(nn.Module):
     ):
         super().__init__()
         self.hidden_size = hidden_size
+        self.num_classes = num_classes
         self.embedding = nn.Embedding(vocab_size, hidden_size)
         self.position_embedding = nn.Embedding(max_seq_length, hidden_size)
         self.layers = [
@@ -61,16 +65,17 @@ class MLXBiEncoder(nn.Module):
             for _ in range(num_layers)
         ]
         self.embedding_ln = nn.LayerNorm(hidden_size)
+        self.classifier = nn.Linear(hidden_size, num_classes)
 
     def __call__(self, input_ids: mx.array, attention_mask: mx.array) -> mx.array:
-        """Encode text to L2-normalized embedding vectors.
+        """Classify proof states into tactic families.
 
         Args:
             input_ids: [B, seq_len] token IDs.
             attention_mask: [B, seq_len] with values 0 or 1.
 
         Returns:
-            [B, hidden_size] L2-normalized embeddings.
+            [B, num_classes] unnormalized logits.
         """
         seq_len = input_ids.shape[1]
         positions = mx.arange(seq_len)
@@ -78,7 +83,7 @@ class MLXBiEncoder(nn.Module):
         x = self.embedding(input_ids) + self.position_embedding(positions)
         x = self.embedding_ln(x)
 
-        # Create causal-style mask for attention (0 = attend, -inf = ignore)
+        # Create attention mask (0 = attend, -inf = ignore)
         # MLX MultiHeadAttention expects additive mask
         if attention_mask is not None:
             # [B, seq_len] -> [B, 1, 1, seq_len] for broadcasting
@@ -97,20 +102,18 @@ class MLXBiEncoder(nn.Module):
         mask_expanded = attention_mask[:, :, None].astype(mx.float32)
         summed = (x * mask_expanded).sum(axis=1)
         counts = mx.maximum(mask_expanded.sum(axis=1), mx.array(1e-9))
-        pooled = summed / counts
+        pooled = summed / counts  # [B, hidden_size]
 
-        # L2 normalization
-        norms = mx.linalg.norm(pooled, axis=1, keepdims=True)
-        norms = mx.maximum(norms, mx.array(1e-9))
-        return pooled / norms
+        return self.classifier(pooled)  # [B, num_classes]
 
     def load_codebert_weights(
         self, pytorch_model_name: str = "microsoft/codebert-base"
     ) -> None:
         """Load CodeBERT weights from HuggingFace, converting to MLX arrays.
 
-        spec §4.10: Converts torch.Tensor → numpy → mx.array and maps
-        parameter names from HuggingFace convention to MLX convention.
+        Converts torch.Tensor -> numpy -> mx.array and maps parameter names
+        from HuggingFace convention to MLX convention. The classification head
+        is left with its random initialization.
         """
         try:
             from transformers import AutoModel
@@ -151,7 +154,7 @@ class MLXBiEncoder(nn.Module):
         emb_np[:overlap] = (
             pt_state["embeddings.word_embeddings.weight"][:overlap].detach().numpy()
         )
-        # Random init for new tokens (σ=0.02)
+        # Random init for new tokens (sigma=0.02)
         if vocab_size > old_vocab_size:
             rng = np.random.default_rng(42)
             emb_np[old_vocab_size:] = rng.normal(

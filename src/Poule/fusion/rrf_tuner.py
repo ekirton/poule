@@ -29,7 +29,6 @@ class PrecomputedQuery:
     structural: list[tuple[str, float]]
     mepo: list[tuple[str, float]]
     fts: list[tuple[str, float]]
-    neural: list[tuple[str, float]] | None
     ground_truth: set[str]
 
 
@@ -108,10 +107,6 @@ def evaluate_cached(
 
         channel_lists.append(pq.fts)
         channel_weights.append(weights.get("fts", 1.0))
-
-        if pq.neural is not None:
-            channel_lists.append(pq.neural)
-            channel_weights.append(weights.get("neural", 1.0))
 
         fused = weighted_rrf_fuse(channel_lists, channel_weights, k=k)
         top_names = {item[0] for item in fused[:limit]}
@@ -234,7 +229,6 @@ def precompute_channel_results(
             structural=structural,
             mepo=mepo,
             fts=fts,
-            neural=None,
             ground_truth=ground_truth,
         ))
 
@@ -295,8 +289,7 @@ class RRFTuner:
             output_dir: Directory for the Optuna study SQLite DB.
             n_trials: Number of trials to run.
             channel_names: Channel names to optimize weights for
-                (e.g., ["structural", "mepo", "fts"] for phase 1,
-                 ["structural", "mepo", "fts", "neural"] for phase 3).
+                (default: ["structural", "mepo", "fts"]).
             study_name: Optuna study name.
             resume: If True, resume an existing study.
 

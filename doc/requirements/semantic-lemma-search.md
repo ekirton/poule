@@ -7,7 +7,7 @@ Cross-reference: see [modular-index-distribution.md](modular-index-distribution.
 
 Coq/Rocq users consistently cite lemma discoverability as their top daily friction. The built-in `Search` command is purely syntactic — users must already know the approximate shape of what they seek. Lean has at least six actively maintained search tools; Coq has none.
 
-This initiative delivers a semantic lemma search engine for Coq/Rocq libraries, exposed as an MCP server for Claude Code. It provides immediate, standalone value to every Coq user with access to Claude Code and establishes the retrieval infrastructure required by future AI-for-Coq tools (copilot, neural premise selection).
+This initiative delivers a semantic lemma search engine for Coq/Rocq libraries, exposed as an MCP server for Claude Code. It provides immediate, standalone value to every Coq user with access to Claude Code and establishes the retrieval infrastructure required by future AI-for-Coq tools (copilot, tactic prediction).
 
 **Success metrics:**
 - ≥ 70% recall@50 on a hand-curated evaluation set of common Coq search tasks
@@ -111,10 +111,10 @@ Cross-references:
 - MCP server deployment for Claude Code integration (stdio transport)
 - Standalone CLI search tool (same retrieval capabilities as MCP, for terminal workflows)
 - Offline indexing CLI for configured libraries and user projects
-- Tree-based and symbolic retrieval channels (no neural embeddings in v1)
+- Tree-based and symbolic retrieval channels (structural, MePo, FTS)
 - SQLite-based local index storage
 
 **Out of scope (this initiative):**
 - Web interface deployment
 - coq-lsp / IDE plugin deployment
-- Neural embedding models or GPU-dependent retrieval
+- Neural embedding models or GPU-dependent retrieval (neural tactic prediction is a separate initiative, not a search channel)

@@ -1,4 +1,4 @@
-"""Closed-vocabulary construction for Coq/Rocq neural premise selection.
+"""Closed-vocabulary construction for Coq/Rocq neural tactic prediction.
 
 Builds a vocabulary JSON file mapping every Coq identifier, syntax token,
 and Unicode symbol to a unique integer token ID. Replaces CodeBERT's generic
@@ -147,7 +147,7 @@ class VocabularyBuilder:
         index_count = next_id - index_start
 
         # Step 4: Tokens from training data
-        # Reads "s" field from both "p" (pair) and "g" (goal-state) records
+        # Reads "s" field from both "s" (step) and "g" (goal-state) records
         # in the compact training data format (spec §4.0.5).
         training_tokens: set[str] = set()
         for path in jsonl_paths:
@@ -161,8 +161,8 @@ class VocabularyBuilder:
                     except json.JSONDecodeError:
                         continue
 
-                    # Compact format: read "s" from "p" and "g" records
-                    if record.get("t") in ("p", "g"):
+                    # Compact format: read "s" from "s" and "g" records
+                    if record.get("t") in ("s", "g"):
                         state_text = record.get("s", "")
                         if state_text:
                             for token in state_text.split():

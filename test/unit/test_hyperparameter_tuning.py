@@ -1,7 +1,7 @@
 """TDD tests for hyperparameter optimization (specification/neural-training.md §4.8, §4.9).
 
 Tests are written BEFORE implementation. Covers: TuningError in error hierarchy,
-_get_device() priority logic, epoch_callback propagation in BiEncoderTrainer,
+_get_device() priority logic, epoch_callback propagation in TacticClassifierTrainer,
 TUNABLE_HYPERPARAMS search space, TuningResult fields, HyperparameterTuner.tune()
 (objective function, pruning, resume, memory cleanup, zero-completion error).
 """
@@ -26,7 +26,7 @@ from Poule.neural.training.errors import (
     InsufficientDataError,
 )
 from Poule.neural.training.trainer import (
-    BiEncoderTrainer,
+    TacticClassifierTrainer,
     DEFAULT_HYPERPARAMS,
     EarlyStoppingTracker,
     save_checkpoint,
@@ -82,14 +82,15 @@ class TestGetDevice:
             assert device.type == "cuda"
             importlib.reload(trainer)
 
-    def test_returns_mps_when_cuda_unavailable(self):
+    def test_returns_cpu_when_only_mps_available(self):
+        """MPS is intentionally skipped (memory leak issues). Falls back to CPU."""
         mock_torch = self._make_mock_torch(mps_available=True)
         with patch.dict("sys.modules", {"torch": mock_torch}):
             import importlib
             from Poule.neural.training import trainer
             importlib.reload(trainer)
             device = trainer._get_device()
-            assert device.type == "mps"
+            assert device.type == "cpu"
             importlib.reload(trainer)
 
     def test_returns_cpu_as_fallback(self):
@@ -123,40 +124,44 @@ class TestEpochCallback:
     """spec §4.3: train() accepts epoch_callback and invokes it after each epoch."""
 
     def test_train_accepts_epoch_callback_parameter(self):
-        """BiEncoderTrainer.train() must accept epoch_callback kwarg."""
+        """TacticClassifierTrainer.train() must accept epoch_callback kwarg."""
         import inspect
-        sig = inspect.signature(BiEncoderTrainer.train)
+        sig = inspect.signature(TacticClassifierTrainer.train)
         assert "epoch_callback" in sig.parameters
 
+    @pytest.mark.skip(reason="fine_tune removed in tactic prediction pivot")
     def test_fine_tune_accepts_epoch_callback_parameter(self):
-        """BiEncoderTrainer.fine_tune() must accept epoch_callback kwarg."""
-        import inspect
-        sig = inspect.signature(BiEncoderTrainer.fine_tune)
-        assert "epoch_callback" in sig.parameters
+        """TacticClassifierTrainer.fine_tune() must accept epoch_callback kwarg."""
+        pass
 
     def test_callback_invoked_with_epoch_and_recall(self):
-        """spec §4.3: callback is called with (epoch, val_recall) after each epoch's validation."""
+        """spec §4.3: callback is called with (epoch, val_accuracy) after each epoch's validation."""
         callback = Mock()
 
         # Create a minimal mock training that runs 2 epochs and calls the callback
-        trainer = BiEncoderTrainer()
+        trainer = TacticClassifierTrainer()
 
         # We need to mock _train_impl to verify callback propagation
         original_train_impl = trainer._train_impl
 
-        def mock_train_impl(dataset, output_path, hp, initial_state_dict=None,
-                            vocabulary_path=None, epoch_callback=None):
+        def mock_train_impl(**kwargs):
             # Simulate 2 epochs
-            if epoch_callback is not None:
-                epoch_callback(1, 0.35)
-                epoch_callback(2, 0.42)
+            cb = kwargs.get("epoch_callback")
+            if cb is not None:
+                cb(1, 0.35)
+                cb(2, 0.42)
+            return kwargs.get("output_path", Path("/tmp/test.pt"))
 
         trainer._train_impl = mock_train_impl
 
         dataset = Mock()
-        dataset.train = [(f"state_{i}", [f"p_{i}"]) for i in range(1000)]
+        dataset.train_pairs = [(f"state_{i}", i % 10) for i in range(1000)]
+        dataset.val_pairs = []
+        dataset.label_map = {f"family_{i}": i for i in range(10)}
+        dataset.label_names = [f"family_{i}" for i in range(10)]
+        dataset.family_counts = {f"family_{i}": 100 for i in range(10)}
 
-        trainer.train(dataset, Path("/tmp/test.pt"), epoch_callback=callback)
+        trainer.train(dataset, Mock(), Path("/tmp/test.pt"), epoch_callback=callback)
 
         assert callback.call_count == 2
         callback.assert_any_call(1, 0.35)
@@ -168,26 +173,31 @@ class TestEpochCallback:
         class PruneSignal(Exception):
             pass
 
-        def pruning_callback(epoch, val_recall):
+        def pruning_callback(epoch, val_accuracy):
             if epoch >= 2:
                 raise PruneSignal("pruned at epoch 2")
 
-        trainer = BiEncoderTrainer()
+        trainer = TacticClassifierTrainer()
 
         calls = []
-        def mock_train_impl(dataset, output_path, hp, initial_state_dict=None,
-                            vocabulary_path=None, epoch_callback=None):
+        def mock_train_impl(**kwargs):
+            cb = kwargs.get("epoch_callback")
             for epoch in range(1, 6):
                 calls.append(epoch)
-                if epoch_callback is not None:
-                    epoch_callback(epoch, 0.1 * epoch)
+                if cb is not None:
+                    cb(epoch, 0.1 * epoch)
+            return kwargs.get("output_path", Path("/tmp/test.pt"))
 
         trainer._train_impl = mock_train_impl
         dataset = Mock()
-        dataset.train = [(f"state_{i}", [f"p_{i}"]) for i in range(1000)]
+        dataset.train_pairs = [(f"state_{i}", i % 10) for i in range(1000)]
+        dataset.val_pairs = []
+        dataset.label_map = {f"family_{i}": i for i in range(10)}
+        dataset.label_names = [f"family_{i}" for i in range(10)]
+        dataset.family_counts = {f"family_{i}": 100 for i in range(10)}
 
         with pytest.raises(PruneSignal):
-            trainer.train(dataset, Path("/tmp/test.pt"), epoch_callback=pruning_callback)
+            trainer.train(dataset, Mock(), Path("/tmp/test.pt"), epoch_callback=pruning_callback)
 
         # Training should have stopped at epoch 2
         assert calls == [1, 2]
@@ -205,8 +215,8 @@ class TestTunableHyperparams:
         from Poule.neural.training.tuner import TUNABLE_HYPERPARAMS
 
         expected = {
-            "learning_rate", "temperature", "batch_size",
-            "weight_decay", "hard_negatives_per_state",
+            "learning_rate", "batch_size",
+            "weight_decay", "class_weight_alpha",
         }
         assert set(TUNABLE_HYPERPARAMS.keys()) == expected
 
@@ -219,21 +229,20 @@ class TestTunableHyperparams:
         assert lr["high"] == 1e-4
         assert lr["log"] is True
 
-    def test_temperature_range(self):
-        """spec §4.8: temperature is log-uniform in [0.01, 0.2]."""
+    def test_class_weight_alpha_range(self):
+        """spec §4.8: class_weight_alpha is uniform in [0.0, 1.0]."""
         from Poule.neural.training.tuner import TUNABLE_HYPERPARAMS
 
-        temp = TUNABLE_HYPERPARAMS["temperature"]
-        assert temp["low"] == 0.01
-        assert temp["high"] == 0.2
-        assert temp["log"] is True
+        cwa = TUNABLE_HYPERPARAMS["class_weight_alpha"]
+        assert cwa["low"] == 0.0
+        assert cwa["high"] == 1.0
 
     def test_batch_size_choices(self):
-        """spec §4.8: batch_size is categorical {64, 128, 256}."""
+        """spec §4.8: batch_size is categorical {32, 64, 128}."""
         from Poule.neural.training.tuner import TUNABLE_HYPERPARAMS
 
         bs = TUNABLE_HYPERPARAMS["batch_size"]
-        assert set(bs["choices"]) == {64, 128, 256}
+        assert set(bs["choices"]) == {32, 64, 128}
 
     def test_weight_decay_range(self):
         """spec §4.8: weight_decay is log-uniform in [1e-4, 1e-1]."""
@@ -243,14 +252,6 @@ class TestTunableHyperparams:
         assert wd["low"] == 1e-4
         assert wd["high"] == 1e-1
         assert wd["log"] is True
-
-    def test_hard_negatives_range(self):
-        """spec §4.8: hard_negatives_per_state is integer in [1, 5]."""
-        from Poule.neural.training.tuner import TUNABLE_HYPERPARAMS
-
-        hn = TUNABLE_HYPERPARAMS["hard_negatives_per_state"]
-        assert hn["low"] == 1
-        assert hn["high"] == 5
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -287,7 +288,7 @@ class TestTuningResult:
             "number": 0,
             "value": 0.51,
             "state": "COMPLETE",
-            "hyperparams": {"learning_rate": 3e-5, "temperature": 0.042},
+            "hyperparams": {"learning_rate": 3e-5, "class_weight_alpha": 0.5},
         }
         result = TuningResult(
             best_hyperparams={},
@@ -312,12 +313,12 @@ class TestTuningResult:
 class TestHyperparameterTuner:
     """spec §4.8: HyperparameterTuner.tune() runs Optuna study.
 
-    Strategy: let Optuna run for real, mock only BiEncoderTrainer and load_checkpoint.
+    Strategy: let Optuna run for real, mock only TacticClassifierTrainer and load_checkpoint.
     """
 
     def _make_dataset(self, n=1000):
         dataset = Mock()
-        dataset.train = [(f"s{i}", [f"p{i}"]) for i in range(n)]
+        dataset.train_pairs = [(f"s{i}", i % 10) for i in range(n)]
         return dataset
 
     def _run_tune(self, tmp_path, n_trials=1, resume=False, trainer_side_effect=None):
@@ -336,9 +337,9 @@ class TestHyperparameterTuner:
             mock_trainer_instance.train.side_effect = trainer_side_effect
         mock_trainer_cls = MagicMock(return_value=mock_trainer_instance)
 
-        with patch("Poule.neural.training.tuner.BiEncoderTrainer", mock_trainer_cls), \
+        with patch("Poule.neural.training.tuner.TacticClassifierTrainer", mock_trainer_cls), \
              patch("Poule.neural.training.tuner.load_checkpoint",
-                    return_value={"best_recall_32": 0.5}):
+                    return_value={"best_accuracy_5": 0.5}):
             result = HyperparameterTuner.tune(
                 dataset, output_dir, n_trials=n_trials, resume=resume,
             )
@@ -370,10 +371,10 @@ class TestHyperparameterTuner:
         result, _, _ = self._run_tune(tmp_path, n_trials=1)
         params = result.all_trials[0]["hyperparams"]
         assert "learning_rate" in params
-        assert "temperature" in params
+        assert "class_weight_alpha" in params
         assert "batch_size" in params
         assert "weight_decay" in params
-        assert "hard_negatives_per_state" in params
+        assert "class_weight_alpha" in params
 
     def test_tune_hyperparams_in_valid_ranges(self, tmp_path):
         """spec §4.8: sampled values fall within specified ranges."""
@@ -381,10 +382,9 @@ class TestHyperparameterTuner:
         for trial in result.all_trials:
             hp = trial["hyperparams"]
             assert 1e-6 <= hp["learning_rate"] <= 1e-4
-            assert 0.01 <= hp["temperature"] <= 0.2
-            assert hp["batch_size"] in {64, 128, 256}
+            assert hp["batch_size"] in {32, 64, 128}
             assert 1e-4 <= hp["weight_decay"] <= 1e-1
-            assert 1 <= hp["hard_negatives_per_state"] <= 5
+            assert 0.0 <= hp["class_weight_alpha"] <= 1.0
 
     def test_tune_uses_sqlite_storage(self, tmp_path):
         """spec §4.8: study persists in SQLite at output_dir/hpo-study.db."""
@@ -422,9 +422,9 @@ class TestHyperparameterTuner:
         mock_trainer_instance.train.side_effect = fake_train
         mock_trainer_cls = MagicMock(return_value=mock_trainer_instance)
 
-        with patch("Poule.neural.training.tuner.BiEncoderTrainer", mock_trainer_cls), \
+        with patch("Poule.neural.training.tuner.TacticClassifierTrainer", mock_trainer_cls), \
              patch("Poule.neural.training.tuner.load_checkpoint",
-                    return_value={"best_recall_32": 0.5}):
+                    return_value={"best_accuracy_5": 0.5}):
             HyperparameterTuner.tune(dataset, output_dir, n_trials=1)
 
         assert (output_dir / "best-model.pt").exists()
@@ -457,7 +457,7 @@ class TestHyperparameterTuner:
         mock_trainer_instance.train.side_effect = always_fail
         mock_trainer_cls = MagicMock(return_value=mock_trainer_instance)
 
-        with patch("Poule.neural.training.tuner.BiEncoderTrainer", mock_trainer_cls), \
+        with patch("Poule.neural.training.tuner.TacticClassifierTrainer", mock_trainer_cls), \
              pytest.raises(TuningError, match="0 of"):
             HyperparameterTuner.tune(dataset, output_dir, n_trials=3)
 
@@ -477,9 +477,9 @@ class TestHyperparameterTuner:
         mock_trainer_instance = MagicMock()
         mock_trainer_cls = MagicMock(return_value=mock_trainer_instance)
 
-        with patch("Poule.neural.training.tuner.BiEncoderTrainer", mock_trainer_cls), \
+        with patch("Poule.neural.training.tuner.TacticClassifierTrainer", mock_trainer_cls), \
              patch("Poule.neural.training.tuner.load_checkpoint",
-                    return_value={"best_recall_32": 0.5}):
+                    return_value={"best_accuracy_5": 0.5}):
             result2 = HyperparameterTuner.tune(
                 dataset, output_dir, n_trials=3, resume=True,
             )
@@ -500,12 +500,12 @@ class TestHyperparameterTuner:
         call_count = [0]
         def varying_checkpoint(*args, **kwargs):
             call_count[0] += 1
-            return {"best_recall_32": 0.3 if call_count[0] == 1 else 0.7}
+            return {"best_accuracy_5": 0.3 if call_count[0] == 1 else 0.7}
 
         mock_trainer_instance = MagicMock()
         mock_trainer_cls = MagicMock(return_value=mock_trainer_instance)
 
-        with patch("Poule.neural.training.tuner.BiEncoderTrainer", mock_trainer_cls), \
+        with patch("Poule.neural.training.tuner.TacticClassifierTrainer", mock_trainer_cls), \
              patch("Poule.neural.training.tuner.load_checkpoint", side_effect=varying_checkpoint):
             result = HyperparameterTuner.tune(dataset, output_dir, n_trials=2)
 

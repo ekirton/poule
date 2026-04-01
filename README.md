@@ -7,7 +7,7 @@ Poule ("Hen") supports the Coq ("Rooster") procedural logic community.
 
 Semantic lemma search, interactive proof exploration, and proof visualization for Coq/Rocq libraries — delivered as an MCP server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
-Poule indexes compiled Coq `.vo` libraries into a SQLite database and provides multi-channel retrieval (structural, symbol, lexical, neural, type-based) with reciprocal rank fusion. It also supports interactive proof sessions and Mermaid-based visualization of proof states, proof trees, and dependency graphs.
+Poule indexes compiled Coq `.vo` libraries into a SQLite database and provides multi-channel retrieval (structural, symbol, lexical, type-based) with reciprocal rank fusion. It also supports interactive proof sessions and Mermaid-based visualization of proof states, proof trees, and dependency graphs.
 
 Six Coq libraries are available as prebuilt indexes: **stdlib**, **MathComp**, **std++**, **Flocq**, **Coquelicot**, and **CoqInterval**. All 6 are downloaded and merged into a single searchable index — no configuration required.
 
@@ -18,16 +18,16 @@ Six Coq libraries are available as prebuilt indexes: **stdlib**, **MathComp**, *
 - **Structural** — Weisfeiler-Lehman graph kernels, tree edit distance, and collapse matching
 - **Symbol** — MePo-style iterative relevance filtering with weighted symbol overlap
 - **Lexical** — FTS5 full-text search over names, statements, and modules
-- **Neural** *(NYI)* — bi-encoder embeddings (INT8, CPU-only) fused with symbolic channels via RRF
+- **Tactic prediction** *(NYI)* — encoder-based tactic family classifier (INT8, CPU-only) for proof assistance via `suggest_tactics`
 - **Type** — multi-channel fusion combining all of the above
 - **Dependency navigation** — `uses`, `used_by`, `same_module`, `same_typeclass`
 
-### Neural Premise Selection *(NYI)*
+### Neural Tactic Prediction *(NYI)*
 
-- Train a bi-encoder on proof traces with masked contrastive loss and hard negative mining
-- Evaluate with Recall@k and MRR; compare neural vs. symbolic retrieval
-- Fine-tune on project-specific proofs; export to INT8 ONNX for <10ms CPU inference
-- Graceful degradation — search works identically without a model checkpoint
+- Train a tactic family classifier on ~105K proof state/tactic pairs from six Coq libraries
+- Evaluate with accuracy@k and per-family precision/recall
+- Export to INT8 ONNX for <50ms CPU inference; integrate into `suggest_tactics` MCP tool
+- Graceful degradation — tactic suggestions work with rule-based fallbacks without a model
 
 ### Proof Interaction
 

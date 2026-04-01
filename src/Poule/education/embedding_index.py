@@ -9,7 +9,7 @@ import numpy as np
 
 
 class EmbeddingIndex:
-    """Holds L2-normalized premise embeddings in a FAISS index for cosine search."""
+    """Holds L2-normalized embeddings in a FAISS index for cosine search."""
 
     def __init__(self, index: faiss.Index):
         self._index = index

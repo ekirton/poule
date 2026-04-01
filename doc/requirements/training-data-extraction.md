@@ -2,7 +2,7 @@
 
 Cross-reference: see [coq-ecosystem-opportunities.md](coq-ecosystem-opportunities.md) for ecosystem context and initiative sequencing.
 
-Lineage: The Proof Interaction Protocol identified proof trace export (R2-P2-1) and benchmark generation (R2-P2-2) as deferred capabilities. This initiative promotes and expands those capabilities into a complete extraction pipeline.
+Lineage: The Proof Interaction Protocol identified proof trace export (R2-P2-1) and benchmark generation (R2-P2-2) as deferred capabilities. This initiative promotes and expands those capabilities into a complete extraction pipeline. The extracted data serves Neural Tactic Prediction (~105K proof state/tactic pairs) and vocabulary construction.
 
 ## 1. Business Goals
 
@@ -65,7 +65,7 @@ Cross-references:
 |----|-------------|
 | R3-P0-1 | Process a Coq project directory and extract proof traces for all provable theorems, producing one structured record per proof |
 | R3-P0-2 | Each extracted training pair includes: serialized proof state (goals, hypotheses), per-step premise annotations (which lemmas and definitions each tactic actually used, determined by proof term analysis), and source file path for split assignment |
-| R3-P0-3 | Output extraction results in compact training data JSON Lines format: one pair per line with source file, serialized proof state, and used premises. Metadata and error records are included for provenance |
+| R3-P0-3 | Output extraction results in compact training data JSON Lines format. Each step with a tactic and goal state produces a `"s"` (step) record containing source file, serialized proof state, and tactic command text. Supplementary `"g"` (goal) records provide additional proof states for vocabulary construction. Metadata and error records are included for provenance |
 | R3-P0-4 | Identical inputs produce byte-identical output across runs (deterministic extraction) |
 | R3-P0-5 | When a single proof fails to extract, skip it with a structured error record and continue extracting remaining proofs in the file and project (graceful degradation) |
 | R3-P0-6 | Report extraction summary statistics after each run: total theorems found, successfully extracted, failed, and skipped, with per-file breakdown |
@@ -118,7 +118,7 @@ Cross-references:
 - Real-time extraction during editing or interactive proof development
 - Proof synthesis or automated theorem proving
 - Web interface or API server for dataset access
-- Neural premise selection model development
+- Neural tactic prediction model training (covered by Neural Tactic Prediction initiative)
 - Tactic suggestion or auto-completion
 - Cross-language extraction (Lean, Isabelle)
 - MCP server exposure (extraction is a batch pipeline, not an interactive tool)

@@ -811,7 +811,7 @@ TOOL_DEFINITIONS = [
     ),
     Tool(
         name="suggest_tactics",
-        description="Get contextual tactic suggestions for the current proof state.",
+        description="Get contextual tactic suggestions for the current proof state. Includes neural predictions when a trained model is available, merged with rule-based suggestions.",
         inputSchema={
             "type": "object",
             "properties": {

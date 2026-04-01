@@ -9,7 +9,7 @@ DATA_GLOB="/data/training-*.jsonl"
 usage() {
     echo "Usage: $(basename "$0") [--checkpoint PATH] [--db PATH] [--output PATH]" >&2
     echo "" >&2
-    echo "Evaluate a trained model: retrieval metrics then neural vs. symbolic comparison." >&2
+    echo "Evaluate a trained tactic prediction model: accuracy@1, accuracy@5, per-family metrics." >&2
     echo "" >&2
     echo "Options:" >&2
     echo "  --checkpoint   Model checkpoint path (default: $CHECKPOINT)" >&2
@@ -47,23 +47,7 @@ if [[ ! -f "$CHECKPOINT" ]]; then
     fi
 fi
 
-echo "=== Step 1: Retrieval metrics (R@1, R@10, R@32, MRR) ==="
-EVAL_JSON=$(poule evaluate --json --checkpoint "$CHECKPOINT" --test-data "$TEST_DATA" --db "$DB")
-echo "$EVAL_JSON" | python -m json.tool 2>/dev/null || echo "$EVAL_JSON"
-
+echo "=== Tactic prediction evaluation (accuracy@1, accuracy@5) ==="
+poule evaluate --json --checkpoint "$CHECKPOINT" --test-data "$TEST_DATA" --db "$DB" | tee "$OUTPUT"
 echo ""
-echo "=== Step 2: Compare neural vs. symbolic vs. union ==="
-COMPARE_JSON=$(poule compare --json --checkpoint "$CHECKPOINT" --test-data "$TEST_DATA" --db "$DB")
-echo "$COMPARE_JSON" | python -m json.tool 2>/dev/null || echo "$COMPARE_JSON"
-
-# Write combined results
-python -c "
-import json, sys
-results = {
-    'evaluate': json.loads(sys.argv[1]),
-    'compare': json.loads(sys.argv[2]),
-}
-with open(sys.argv[3], 'w') as f:
-    json.dump(results, f, indent=2)
-print(f'\nResults written to {sys.argv[3]}')
-" "$EVAL_JSON" "$COMPARE_JSON" "$OUTPUT"
+echo "Results written to $OUTPUT"

@@ -61,15 +61,6 @@ CREATE TABLE index_meta (
 -- Required keys (merged indexes):
 --   'libraries'       → JSON array of library identifiers (e.g., '["stdlib", "mathcomp"]')
 --   'library_versions'→ JSON object mapping identifier to version (e.g., '{"stdlib": "9.1.1", "mathcomp": "2.5.0"}')
--- Optional keys (Neural Premise Selection):
---   'neural_model_hash' → SHA-256 hash of the model checkpoint used to compute embeddings
-
--- Neural premise embeddings (added by Neural Premise Selection)
-CREATE TABLE embeddings (
-  decl_id INTEGER PRIMARY KEY REFERENCES declarations(id) ON DELETE CASCADE,
-  vector BLOB NOT NULL              -- 768 × 4 bytes = 3,072 bytes, raw float32
-);
-
 -- Full-text search
 CREATE VIRTUAL TABLE declarations_fts USING fts5(
   name, statement, module,
@@ -92,8 +83,6 @@ CREATE VIRTUAL TABLE declarations_fts USING fts5(
 **Proof-body annotation**: The `has_proof_body` column is an integer boolean (0 or 1) set at index time by scanning the `.v` source file for a `Proof.` block matching each declaration. Declarations without `.v` sources, `:=`-style definitions, declarations brought in via module `Include`/functor application (whose proof bodies exist in different source files), and axioms all have `has_proof_body = 0`. The extraction campaign uses this flag to skip declarations that cannot produce proof traces, avoiding redundant backend launches for the same file. The default is 0 (no proof body) so declarations indexed without source-file scanning are conservatively excluded from extraction campaigns.
 
 **Kind values**: The `kind` column stores: `lemma`, `theorem`, `definition`, `instance`, `inductive`, `constructor`, `axiom`. Coq declaration forms that map to these kinds include Record → `inductive`, Class → `inductive`, Let → `definition`, etc. (see [coq-extraction.md](coq-extraction.md) § Kind Mapping for the full table).
-
-**Embeddings table and FAISS sidecar**: The `embeddings` table stores dense vector embeddings as raw float32 BLOBs (768-dimensional, 3,072 bytes per row) during the write path. At finalization, these embeddings are read from SQLite, built into a FAISS `IndexFlatIP` index, and serialized to a `.faiss` sidecar file alongside the database (e.g., `index.db` → `index.faiss`). The read path loads the FAISS sidecar directly — it never reads from the SQLite `embeddings` table during normal operation. The sidecar can be regenerated from SQLite without re-encoding, supporting migration from pre-FAISS databases. The `neural_model_hash` key in `index_meta` tracks which model produced the embeddings; a mismatch between the current model and the stored hash invalidates the embeddings. See [neural-retrieval.md](neural-retrieval.md) for the embedding computation pipeline.
 
 **Content-synced FTS5 constraints**: With `content=declarations`, the FTS5 index reads from the declarations table and does not independently track deletions or updates. The index is consistent only after the explicit `rebuild` command. Since the database is always built from scratch (no incremental updates), this is not a problem. Any future update/delete path would require manual trigger management for FTS5 consistency.
 

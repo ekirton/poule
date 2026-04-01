@@ -176,7 +176,7 @@ def _file_sha256(path: Path) -> str:
     "--include-model",
     is_flag=True,
     default=False,
-    help="Also download the ONNX neural premise selection model.",
+    help="Also download the ONNX tactic prediction model.",
 )
 @click.option(
     "--model-dir",
@@ -209,7 +209,7 @@ def download_index(
     libraries = list(ALL_LIBRARIES)
 
     # 3. Check for existing model before downloading anything
-    model_path = model_dir / "neural-premise-selector.onnx"
+    model_path = model_dir / "tactic-predictor.onnx"
     if include_model and model_path.exists() and not force:
         raise click.ClickException(
             f"{model_path} already exists. Use --force to overwrite."
@@ -264,19 +264,6 @@ def download_index(
     merged_dest = libraries_dir / "index.db"
     merge_indexes(sources, merged_dest)
 
-    # 7b. Download FAISS sidecar from merged release if available
-    try:
-        merged_release = _find_release(TAG_MERGED)
-        faiss_asset = _find_asset(merged_release, "index.faiss")
-        faiss_dest = libraries_dir / "index.faiss"
-        faiss_url = faiss_asset["browser_download_url"]
-        tmp = _download_file(faiss_url, faiss_dest, "index.faiss")
-        os.replace(tmp, faiss_dest)
-        click.echo(f"  index.faiss -> {faiss_dest}", err=True)
-    except Exception:
-        # No FAISS sidecar in release — neural channel will use SQLite fallback
-        pass
-
     # 8. Handle ONNX model if requested
     if include_model:
         onnx_checksum = manifest.get("onnx_model_sha256")
@@ -288,10 +275,10 @@ def download_index(
             model_dir.mkdir(parents=True, exist_ok=True)
             _download_and_verify(
                 release,
-                "neural-premise-selector.onnx",
+                "tactic-predictor.onnx",
                 model_path,
                 onnx_checksum,
-                "neural-premise-selector.onnx",
+                "tactic-predictor.onnx",
             )
 
     # 9. Done

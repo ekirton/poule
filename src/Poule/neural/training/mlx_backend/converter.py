@@ -1,7 +1,7 @@
 """Weight conversion from MLX safetensors to PyTorch checkpoint format.
 
-spec §4.12: Converts MLX-trained checkpoints to PyTorch format compatible
-with the existing ONNX quantization and inference pipeline.
+Converts MLX-trained TacticClassifier checkpoints to PyTorch format
+compatible with the existing inference pipeline.
 """
 
 from __future__ import annotations
@@ -21,10 +21,10 @@ from Poule.neural.training.errors import (
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Parameter name mappings (per spec §4.10)
+# Parameter name mappings
 # ---------------------------------------------------------------------------
 
-# Template mappings — {i} is replaced with layer index
+# Template mappings -- {i} is replaced with layer index
 _HF_TO_MLX_TEMPLATES = {
     "roberta.embeddings.word_embeddings.weight": "embedding.weight",
     "roberta.embeddings.position_embeddings.weight": "position_embedding.weight",
@@ -51,9 +51,15 @@ _HF_TO_MLX_LAYER_TEMPLATES = {
     "roberta.encoder.layer.{i}.output.LayerNorm.bias": "layers.{i}.ln2.bias",
 }
 
+# Classification head: MLX name -> PyTorch name
+_CLASSIFIER_MAPPING = {
+    "classifier.weight": "classifier.weight",
+    "classifier.bias": "classifier.bias",
+}
+
 
 def _build_mappings(num_layers: int) -> tuple[dict[str, str], dict[str, str]]:
-    """Build concrete HF↔MLX parameter name mappings for a given layer count."""
+    """Build concrete HF<->MLX parameter name mappings for a given layer count."""
     hf_to_mlx = dict(_HF_TO_MLX_TEMPLATES)
     for i in range(num_layers):
         for hf_template, mlx_template in _HF_TO_MLX_LAYER_TEMPLATES.items():
@@ -70,18 +76,20 @@ HF_TO_MLX_MAPPING, MLX_TO_HF_MAPPING = _build_mappings(12)
 
 
 class WeightConverter:
-    """Converts MLX checkpoints to PyTorch format."""
+    """Converts MLX TacticClassifier checkpoints to PyTorch format."""
 
     @staticmethod
     def convert(mlx_checkpoint_dir: Path, output_path: Path) -> None:
         """Convert an MLX-trained checkpoint to PyTorch format.
 
-        spec §4.12: Loads MLX weights, maps parameter names, converts arrays,
-        creates a PyTorch BiEncoder, validates, and saves.
+        Loads MLX weights, maps parameter names, converts arrays,
+        creates a PyTorch TacticClassifier, validates label agreement,
+        and saves.
 
         Args:
             mlx_checkpoint_dir: Directory containing model.safetensors,
-                config.json, hyperparams.json, vocabulary_path.txt.
+                config.json, hyperparams.json, vocabulary_path.txt,
+                label_map.json.
             output_path: Path to write the PyTorch checkpoint (.pt).
         """
         mlx_checkpoint_dir = Path(mlx_checkpoint_dir)
@@ -93,6 +101,7 @@ class WeightConverter:
             "config.json",
             "hyperparams.json",
             "vocabulary_path.txt",
+            "label_map.json",
         ]
         missing = [
             f for f in required_files
@@ -104,7 +113,7 @@ class WeightConverter:
                 + ", ".join(missing)
             )
 
-        # Load config
+        # Load config and metadata
         config = json.loads((mlx_checkpoint_dir / "config.json").read_text())
         hyperparams = json.loads(
             (mlx_checkpoint_dir / "hyperparams.json").read_text()
@@ -112,13 +121,17 @@ class WeightConverter:
         vocabulary_path = (
             (mlx_checkpoint_dir / "vocabulary_path.txt").read_text().strip()
         )
+        label_map = json.loads(
+            (mlx_checkpoint_dir / "label_map.json").read_text()
+        )
 
-        best_recall = 0.0
-        recall_path = mlx_checkpoint_dir / "best_recall_32.txt"
-        if recall_path.exists():
-            best_recall = float(recall_path.read_text().strip())
+        best_accuracy = 0.0
+        accuracy_path = mlx_checkpoint_dir / "best_accuracy_5.txt"
+        if accuracy_path.exists():
+            best_accuracy = float(accuracy_path.read_text().strip())
 
         num_layers = config.get("num_layers", 12)
+        num_classes = config["num_classes"]
         vocab_size = config["vocab_size"]
         hidden_size = config.get("hidden_size", 768)
         num_heads = config.get("num_heads", 12)
@@ -131,7 +144,7 @@ class WeightConverter:
         # Build name mapping for this architecture
         _, mlx_to_hf = _build_mappings(num_layers)
 
-        # Convert MLX → PyTorch state dict
+        # Convert MLX -> PyTorch state dict
         import torch
 
         pt_state_dict = {}
@@ -139,29 +152,112 @@ class WeightConverter:
             np_array = np.array(mlx_array)
             torch_tensor = torch.from_numpy(np_array.copy())
 
-            # Map MLX name to HuggingFace name for PyTorch BiEncoder
-            # The PyTorch BiEncoder wraps AutoModel, so keys have "encoder." prefix
-            if mlx_name in mlx_to_hf:
+            # Classification head weights pass through directly
+            if mlx_name in _CLASSIFIER_MAPPING:
+                pt_state_dict[_CLASSIFIER_MAPPING[mlx_name]] = torch_tensor
+            elif mlx_name in mlx_to_hf:
                 hf_name = mlx_to_hf[mlx_name]
-                # Strip "roberta." prefix — PyTorch BiEncoder uses "encoder."
+                # Strip "roberta." prefix -- PyTorch TacticClassifier uses "encoder."
                 if hf_name.startswith("roberta."):
                     pt_name = "encoder." + hf_name[len("roberta."):]
                 else:
                     pt_name = hf_name
+                pt_state_dict[pt_name] = torch_tensor
             else:
-                pt_name = mlx_name
+                pt_state_dict[mlx_name] = torch_tensor
 
-            pt_state_dict[pt_name] = torch_tensor
+        # Validate: build both models, feed random input, check label agreement
+        WeightConverter._validate_conversion(
+            mlx_weights, config, pt_state_dict, num_classes, label_map,
+        )
 
         # Save as PyTorch checkpoint
         checkpoint = {
             "model_state_dict": pt_state_dict,
-            "optimizer_state_dict": {},
-            "epoch": 0,
-            "best_recall_32": best_recall,
+            "num_classes": num_classes,
+            "label_map": label_map,
+            "best_accuracy_5": best_accuracy,
             "hyperparams": hyperparams,
             "vocabulary_path": vocabulary_path,
         }
 
         torch.save(checkpoint, str(output_path))
         logger.info(f"Converted MLX checkpoint to PyTorch: {output_path}")
+
+    @staticmethod
+    def _validate_conversion(
+        mlx_weights: dict,
+        config: dict,
+        pt_state_dict: dict,
+        num_classes: int,
+        label_map: dict,
+    ) -> None:
+        """Validate that MLX and PyTorch models produce the same labels.
+
+        Feeds random inputs through both models and checks that predicted
+        labels agree on >= 98% of samples. Raises WeightConversionError
+        on failure.
+        """
+        import mlx.core as mx
+        import mlx.nn as nn
+
+        from Poule.neural.training.mlx_backend.model import MLXTacticClassifier
+
+        vocab_size = config["vocab_size"]
+        num_layers = config.get("num_layers", 12)
+        hidden_size = config.get("hidden_size", 768)
+        num_heads = config.get("num_heads", 12)
+
+        # Rebuild MLX model and load weights
+        mlx_model = MLXTacticClassifier(
+            vocab_size=vocab_size,
+            num_classes=num_classes,
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            num_heads=num_heads,
+        )
+        mlx_model.load_weights(list(mlx_weights.items()))
+        mx.eval(mlx_model.parameters())
+
+        # Build PyTorch model
+        import torch
+
+        from Poule.neural.training.model import TacticClassifier
+
+        pt_checkpoint = {
+            "model_state_dict": pt_state_dict,
+            "num_classes": num_classes,
+        }
+        pt_model = TacticClassifier.from_checkpoint(pt_checkpoint)
+        pt_model.eval()
+
+        # Generate random inputs
+        rng = np.random.default_rng(42)
+        n_samples = 50
+        seq_len = 32
+        input_ids_np = rng.integers(0, min(vocab_size, 1000), size=(n_samples, seq_len)).astype(np.int32)
+        attention_mask_np = np.ones((n_samples, seq_len), dtype=np.int32)
+
+        # MLX forward
+        mlx_logits = mlx_model(
+            mx.array(input_ids_np), mx.array(attention_mask_np)
+        )
+        mx.eval(mlx_logits)
+        mlx_labels = np.argmax(np.array(mlx_logits), axis=1)
+
+        # PyTorch forward
+        with torch.no_grad():
+            pt_logits = pt_model(
+                torch.from_numpy(input_ids_np.astype(np.int64)),
+                torch.from_numpy(attention_mask_np.astype(np.int64)),
+            )
+        pt_labels = torch.argmax(pt_logits, dim=1).numpy()
+
+        agreement = np.mean(mlx_labels == pt_labels)
+        if agreement < 0.98:
+            raise WeightConversionError(
+                f"Label agreement between MLX and PyTorch models is {agreement:.2%}, "
+                f"expected >= 98%. Weight conversion may be incorrect."
+            )
+
+        logger.info(f"Validation passed: label agreement {agreement:.2%}")

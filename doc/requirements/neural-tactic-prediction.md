@@ -1,23 +1,24 @@
-# Neural Premise Selection for Coq/Rocq — Product Requirements Document
+# Neural Tactic Prediction for Coq/Rocq — Product Requirements Document
 
 Cross-reference: see [coq-ecosystem-opportunities.md](coq-ecosystem-opportunities.md) for ecosystem context and initiative sequencing.
 
-Lineage: Depends on Training Data Extraction for `(proof_state, premises_used)` pairs. Enhances Semantic Lemma Search by adding a neural retrieval channel to its hybrid ranking pipeline. Consumed by Proof Search & Automation for premise-augmented tactic candidate generation.
+Lineage: Depends on Training Data Extraction for `(proof_state, tactic_text)` pairs. Enhances the `suggest_tactics` MCP tool with learned predictions. Independent of Semantic Lemma Search — tactic prediction is a proof assistance capability, not a search channel.
 
 ## 1. Business Goals
 
-Semantic Lemma Search delivers tree-based and symbolic retrieval channels that work without training data or GPU. These channels excel at syntactic and structural matches but miss semantically related premises that lack surface-level overlap — the "semantic gap." Research shows that neural and symbolic selectors make complementary errors: LeanHammer's union of neural and symbolic selection improves results by 21% over either alone. Coq users working with large libraries (MathComp, Iris, CompCert) routinely need lemmas whose relevance depends on mathematical relationships invisible to syntactic matching.
+The extraction pipeline captures ~134,000 proof records from six Coq libraries, containing ~105,000 unique goal states each paired with the tactic that was applied to it. This data is currently discarded in the compact output format. Meanwhile, the original plan to train a neural premise retrieval model failed: only ~3,500 of those 134,000 records produce non-empty premise lists — a 97% attrition rate caused by Coq's kernel not tracking per-tactic premise usage. With ~3,500 pairs (1,600x smaller than LeanHammer's dataset), the premise retrieval model cannot achieve competitive quality.
 
-This initiative delivers a neural retrieval channel for the Semantic Lemma Search pipeline. Given a proof state, it retrieves premises from the indexed library ranked by learned semantic relevance, complementing the existing structural and symbolic channels. The neural model is trained on proof trace data produced by Training Data Extraction.
+Tactic prediction reuses the same extraction infrastructure with 30x more training data. Given a proof state (goal type + hypotheses), a tactic family classifier predicts which tactic the user should apply next (e.g., `apply`, `rewrite`, `induction`, `auto`). This is directly useful as proof assistance: "you should try `induction n`" is more actionable than "these lemmas might be relevant." The existing rule-based `suggest_tactics` MCP tool provides structural goal classification but cannot learn from proof patterns across libraries.
 
-**What this initiative does not do:** It does not replace Semantic Lemma Search's existing retrieval channels, build a separate search interface, or create a standalone premise selection tool. It adds a neural signal to the existing hybrid ranking system. Claude Code continues to be the user interface; the neural channel is invisible to users except through improved search quality.
+**What this initiative does:** Train a tactic family classifier on ~105K (proof_state, tactic_text) pairs extracted from Coq libraries, and integrate neural predictions into the existing `suggest_tactics` MCP tool. The classifier predicts which tactic family to apply; argument selection (e.g., which lemma to `apply`) remains a separate concern addressed by the existing rule-based system and premise retrieval in future work.
+
+**What this initiative does not do:** It does not add a neural retrieval channel to Semantic Lemma Search. It does not predict full tactic text with arguments (that is a future generation task). It does not replace the rule-based `suggest_tactics` — it enhances it with learned predictions that rank above rule-based fallbacks.
 
 **Success metrics:**
-- ≥ 50% Recall@32 on a held-out evaluation set of Coq proofs with known premise annotations
-- Neural+symbolic union achieves ≥ 15% relative improvement in Recall@32 over symbolic-only retrieval
-- Neural channel query latency < 100ms on CPU (no GPU required at inference time)
-- Index rebuild latency < 10 minutes for libraries up to 50K declarations on a single machine without GPU
-- End-to-end search latency (including fusion with existing channels) remains < 1 second
+- Top-1 tactic family accuracy >= 40% on a held-out test set of Coq proof steps
+- Top-5 tactic family accuracy >= 80% on the same test set
+- Inference latency < 50ms on CPU (no GPU required)
+- Graceful degradation: `suggest_tactics` works identically without a trained model
 
 ---
 
@@ -25,40 +26,32 @@ This initiative delivers a neural retrieval channel for the Semantic Lemma Searc
 
 | Segment | Needs | Priority |
 |---------|-------|----------|
-| Coq developers using Claude Code | Higher-quality lemma retrieval when working with large libraries where syntactic search misses semantically relevant results | Primary |
-| Proof Search & Automation | Premise-augmented tactic candidate generation during automated proof search, improving search success rate | Primary |
-| AI researchers | A neural premise selection baseline for Coq that can be evaluated, compared, and extended | Secondary |
+| Coq developers using Claude Code | Tactic suggestions during interactive proof development, reducing trial-and-error | Primary |
+| Proof Search & Automation | Tactic candidate generation during automated proof search, improving search success rate | Primary |
+| AI researchers | A tactic prediction baseline for Coq that can be evaluated, compared, and extended | Secondary |
 
 ---
 
 ## 3. Competitive Context
 
 Cross-references:
-- [Premise selection and retrieval survey](../background/coq-premise-retrieval.md)
-- [Neural retrieval architectures survey](../background/neural-retrieval.md)
+- [AI-assisted theorem proving survey](../background/coq-ai-theorem-proving.md)
 - [Neural encoder architectures for premise selection](../background/neural-encoder-architectures-premise-selection.md)
 
-**Lean ecosystem (comparative baseline):**
-- LeanHammer: encoder-only transformer (82M params), 72.7% R@32 on Mathlib, ~1-second latency on CPU. The current state of the art for neural premise selection in any proof assistant.
-- ReProver: ByT5 dual-encoder (299M params), 38.4% R@10. Established the bi-encoder paradigm for formal math retrieval.
-- Lean Finder: 7B decoder-as-encoder with DPO, 81.6% user preference rate. Best user-facing search satisfaction but requires GPU.
-- RGCN-augmented retrieval: +26% R@10 over ReProver by adding dependency graph structure to text embeddings.
-
-**Coq ecosystem (current state):**
-- CoqHammer: symbol-overlap heuristic. Fast and deterministic but no learned semantic understanding.
-- Graph2Tac (Tactician): GNN-based premise selection with online adaptation. Architecturally sophisticated but requires Tactician's infrastructure; niche adoption.
-- RocqStar: CodeBERT bi-encoder trained on proof similarity (BigRocq dataset). Open-source model and training code. +28% over Jaccard baseline.
-- Rango: BM25 retrieval beats CodeBERT dense embeddings by 46% for in-project Coq proof retrieval (ICSE 2025), demonstrating the critical importance of lexical signal for Coq.
-- No system combines neural embeddings with symbolic/structural retrieval for Coq.
+**Tactic prediction systems (comparative baselines):**
+- Tactician (Blaauwbroek et al., 2020): k-NN on proof states for Coq, 39% of theorems proved. Requires the Tactician platform; niche adoption.
+- Proverbot9001 (Sanchez-Stern et al., 2020): RNN tactic prediction for Coq CompCert, 48% of theorems in 10 minutes. Pinned to older Coq version.
+- CoqHammer (Czajka & Kaliszyk, 2018): ATP premise selection + reconstruction, ~40% automation rate. No learned tactic prediction.
+- GPT-f (Polu & Sutskever, 2020): Transformer tactic generation for Lean, 56.5% on miniF2F.
+- HTPS (Lample et al., 2022): Hyper-tree proof search + tactic generation, 82.6% on miniF2F.
+- ReProver (Yang et al., 2023): Retrieval-augmented tactic generation for Lean, 51.2% on LeanDojo benchmark.
 
 **Key research findings informing design:**
-- Small models win: LeanHammer (82M) outperforms ReProver (299M) by 150% — better training objectives and data quality matter more than model size
-- BM25 beats dense embeddings for Coq in-project retrieval (Rango), so the neural channel must complement, not replace, lexical and structural channels
-- Hybrid dense+sparse achieves 20% relative improvement over dense-only (MSMARCO benchmark); nobody has combined all signal types for formal math
-- Training a formal math retrieval model costs $50–600 in GPU time; the bottleneck is data preparation, not compute
-- 100M-class models with INT8 quantization run at <10ms/item on CPU — no GPU needed at inference time
-- Domain-specific tokenization improves retrieval 33% for small models (CFR finding)
-- Cross-system transfer works: PROOFWALA shows models trained on both Lean and Coq outperform monolingual models
+- Tactic prediction works well without per-step premise annotations — models learn tactic patterns from proof state structure alone (Tactician, Proverbot9001)
+- Small encoder models (82M-125M parameters) are sufficient for formal math tasks (LeanHammer, RocqStar)
+- Domain-specific tokenization improves performance 33% for small models (CFR finding)
+- Class imbalance is a known challenge: `auto`, `simpl`, `intros` dominate tactic distributions
+- SSReflect compound tactics require special handling (MathComp uses a different proof style)
 
 ---
 
@@ -68,67 +61,59 @@ Cross-references:
 
 | ID | Requirement |
 |----|-------------|
-| R5-P0-1 | Train a bi-encoder retrieval model on `(proof_state, premises_used)` pairs extracted by the Training Data Extraction pipeline |
-| R5-P0-2 | Encode proof states and premise declarations into a shared embedding space; retrieve premises by cosine similarity |
-| R5-P0-3 | Integrate the neural retrieval channel into the Semantic Lemma Search pipeline as an additional retrieval channel, participating in the existing fusion/ranking mechanism |
-| R5-P0-4 | Precompute and store premise embeddings in the search index alongside other retrieval channel data |
-| R5-P0-5 | Neural channel query latency < 100ms on CPU without GPU |
-| R5-P0-6 | Support INT8 quantized inference for the encoder model on CPU |
-| R5-P0-7 | Rebuild premise embeddings when the library index is rebuilt, using the same trigger as existing index rebuilds |
-| R5-P0-8 | Achieve ≥ 50% Recall@32 on a held-out evaluation set derived from extracted Coq proof traces |
-| R5-P0-9 | Neural+symbolic union achieves ≥ 15% relative improvement in Recall@32 over symbolic-only on the same evaluation set |
-| R5-P0-10 | Provide a CLI command to train the retrieval model from extracted training data |
-| R5-P0-11 | Provide a CLI command to evaluate retrieval quality (recall@k, MRR) on a held-out test set |
-| R5-P0-12 | Ship a pre-trained model checkpoint covering the Coq standard library and MathComp so that users do not need to train a model themselves |
-| R5-P0-13 | Model training must complete on a single consumer GPU (≤ 24GB VRAM), Apple Silicon Mac (≥ 32GB unified memory) using MLX, or be offloadable to a cloud GPU within a $200 budget |
-| R5-P0-14 | Build a closed-vocabulary tokenizer from the indexed library declarations and extracted proof states, replacing the generic BPE tokenizer with one that assigns every Coq identifier its own token ID |
-| R5-P0-15 | Provide a CLI command to build the vocabulary from the search index and training data, producing a JSON file mapping tokens to integer IDs |
-| R5-P0-16 | Support training the bi-encoder model on Apple Silicon Macs using MLX as an alternative to PyTorch, producing checkpoints that can be converted to PyTorch format for inference in the Linux container |
-| R5-P0-17 | Provide a weight conversion step that transforms MLX-trained checkpoints into PyTorch format compatible with the existing ONNX quantization and inference pipeline |
+| R6-P0-1 | Train a tactic family classifier on `(proof_state, tactic_text)` pairs extracted by the Training Data Extraction pipeline |
+| R6-P0-2 | Support a tactic family vocabulary of ~30 families covering >95% of extracted proof steps |
+| R6-P0-3 | Handle class imbalance via weighted cross-entropy loss with inverse-frequency class weights |
+| R6-P0-4 | Integrate neural predictions into the existing `suggest_tactics` MCP tool, ranking neural predictions above rule-based fallbacks |
+| R6-P0-5 | Inference latency < 50ms per proof state on CPU without GPU |
+| R6-P0-6 | Support INT8 quantized inference for the classifier model on CPU |
+| R6-P0-7 | Achieve top-1 tactic family accuracy >= 40% on a held-out test set |
+| R6-P0-8 | Achieve top-5 tactic family accuracy >= 80% on a held-out test set |
+| R6-P0-9 | Provide a CLI command to train the tactic classifier from extracted training data |
+| R6-P0-10 | Provide a CLI command to evaluate tactic prediction accuracy (accuracy@k, per-family metrics) on a held-out test set |
+| R6-P0-11 | Graceful degradation: `suggest_tactics` operates with rule-based suggestions when no trained model is available |
+| R6-P0-12 | Model training must complete on a single consumer GPU (<=24GB VRAM), Apple Silicon Mac (>=32GB unified memory) using MLX, or be offloadable to a cloud GPU within a $100 budget |
+| R6-P0-13 | Build a closed-vocabulary tokenizer from the indexed library declarations and extracted proof states, replacing the generic BPE tokenizer with one that assigns every Coq identifier its own token ID |
+| R6-P0-14 | Provide a CLI command to build the vocabulary from the search index and training data |
+| R6-P0-15 | Support training on Apple Silicon Macs using MLX as an alternative to PyTorch, producing checkpoints convertible to PyTorch format for ONNX inference |
 
 ### P1 — Should Have
 
 | ID | Requirement |
 |----|-------------|
-| R5-P1-1 | Support fine-tuning the pre-trained model on a user's project-specific extracted data to improve retrieval quality for that project's declarations |
-| R5-P1-2 | Use hard negative mining during training: sample negatives from the set of accessible but unused premises for each proof state |
-| R5-P1-3 | Use masked contrastive loss to handle shared premises (premises used in many proofs) without generating false negative training signal |
-| R5-P1-4 | When the Semantic Lemma Search index includes dependency graph data, augment text-based embeddings with graph structure signal during retrieval |
-| R5-P1-5 | Provide a training data validation step that checks extracted `(proof_state, premises_used)` pairs for completeness and consistency before training |
-| R5-P1-6 | Support configurable retrieval budget (top-k) per query, defaulting to 32 |
-| R5-P1-7 | Report training metrics (loss curves, validation recall@k) during and after training |
-| R5-P1-8 | Provide automated hyperparameter optimization that searches over training hyperparameters (learning rate, temperature, batch size, weight decay, hard negatives per state) to maximize validation Recall@32, with early pruning of underperforming configurations to reduce total compute |
+| R6-P1-1 | Provide a training data validation step that checks extracted `(proof_state, tactic_text)` pairs for completeness, tactic family distribution, and class imbalance before training |
+| R6-P1-2 | Report training metrics (loss curves, validation accuracy@k) during and after training |
+| R6-P1-3 | Provide automated hyperparameter optimization that searches over training hyperparameters (learning rate, batch size, class weight exponent) to maximize validation accuracy@5, with early pruning |
+| R6-P1-4 | Normalize SSReflect compound tactics for classification: handle `move=>`, `apply/`, `rewrite !term`, and other SSReflect-specific syntax |
+| R6-P1-5 | Report per-family precision and recall in evaluation, identifying which tactic families the model predicts well vs. poorly |
+| R6-P1-6 | Support fine-tuning the pre-trained classifier on a user's project-specific extracted data |
 
 ### P2 — Nice to Have
 
 | ID | Requirement |
 |----|-------------|
-| R5-P2-1 | Support cross-system transfer: initialize from a model pre-trained on Lean retrieval data before fine-tuning on Coq data |
-| R5-P2-2 | Support two-stage retrieval: bi-encoder first pass followed by cross-encoder reranking of top-k results |
-| R5-P2-3 | *(Promoted to R5-P0-14/15)* |
-| R5-P2-4 | Support Matryoshka embeddings (variable-dimension) to enable dimension-accuracy tradeoffs for deployment on constrained hardware |
-| R5-P2-5 | Collect retrieval telemetry (queries per session, recall feedback from proof success/failure) to enable future model improvement |
-| R5-P2-6 | Support BM25+dense hybrid scoring within the neural channel itself, using learned sparse representations (SPLADE) alongside dense embeddings |
+| R6-P2-1 | Predict full tactic text with arguments (generative model or retrieval+template), not just tactic family |
+| R6-P2-2 | Combine tactic family prediction with premise retrieval: predict the tactic family, then retrieve argument candidates for tactics that take lemma arguments (`apply`, `rewrite`, `exact`) |
+| R6-P2-3 | Support proof search by iterating tactic prediction: predict -> execute -> predict until the goal is closed or a depth limit is reached |
+| R6-P2-4 | Collect prediction telemetry (suggestions accepted/rejected) to enable future model improvement |
 
 ---
 
 ## 5. Scope Boundaries
 
 **In scope:**
-- Training a bi-encoder retrieval model on Coq proof trace data
+- Training a tactic family classifier on Coq proof trace data
 - MLX training backend for Apple Silicon Macs with weight conversion to PyTorch
-- Integrating the neural channel into the existing Semantic Lemma Search MCP server and CLI
-- Pre-trained model checkpoint for standard library and MathComp
-- CLI tools for training, evaluation, and fine-tuning
+- Integrating neural tactic predictions into the existing `suggest_tactics` MCP tool
+- CLI tools for training, evaluation, and vocabulary building
 - CPU-based INT8 quantized inference (no GPU required at inference time)
-- Evaluation framework for retrieval quality
+- Evaluation framework for tactic prediction accuracy
 
 **Out of scope:**
-- Replacing or modifying existing symbolic/structural retrieval channels in Semantic Lemma Search
-- Building a separate MCP server or search interface for neural retrieval
+- Adding a neural retrieval channel to Semantic Lemma Search (the original premise selection approach is deprecated due to insufficient training data)
+- Full tactic text generation with arguments (P2 future work)
+- Automated proof search using tactic prediction (P2 future work)
 - Training data extraction (covered by Training Data Extraction initiative)
-- Proof search or tactic generation (covered by Proof Search & Automation initiative)
 - GPU hosting infrastructure for inference
-- IDE plugin development (search is accessed via Claude Code's MCP integration or CLI)
-- Web interface for search results
-- Real-time online learning (adapting embeddings during interactive proof development)
+- IDE plugin development
+- Web interface

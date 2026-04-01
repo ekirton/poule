@@ -89,7 +89,7 @@ def _make_release(tag: str = "index-v1-coq8.19") -> dict:
             "url": f"https://api.github.com/repos/ekirton/Poule/releases/assets/{i + 2}",
         })
     assets.append({
-        "name": "neural-premise-selector.onnx",
+        "name": "tactic-predictor.onnx",
         "browser_download_url": "https://example.com/model.onnx",
         "url": f"https://api.github.com/repos/ekirton/Poule/releases/assets/{len(ALL_LIBRARIES) + 2}",
     })
@@ -316,7 +316,7 @@ class TestDownloadIndexCommand:
             extra_args=["--include-model", "--model-dir", str(model_dir)],
         )
         assert result.exit_code == 0, result.output
-        model_path = model_dir / "neural-premise-selector.onnx"
+        model_path = model_dir / "tactic-predictor.onnx"
         assert model_path.exists()
         assert model_path.read_bytes() == SAMPLE_ONNX_CONTENT
 
@@ -368,7 +368,7 @@ class TestDownloadIndexCommand:
             )
         assert result.exit_code == 0, result.output
         assert "Warning" in result.output or "No ONNX model" in result.output
-        assert not (model_dir / "neural-premise-selector.onnx").exists()
+        assert not (model_dir / "tactic-predictor.onnx").exists()
 
 
 # ===========================================================================
@@ -387,7 +387,7 @@ class TestDownloadIndexErrors:
         config.write_text('[index]\nlibraries = ["stdlib"]\n')
         model_dir = tmp_path / "models"
         model_dir.mkdir()
-        (model_dir / "neural-premise-selector.onnx").write_text("existing")
+        (model_dir / "tactic-predictor.onnx").write_text("existing")
         result = runner.invoke(
             download_index,
             ["--libraries-dir", str(libs_dir), "--include-model", "--model-dir", str(model_dir)],

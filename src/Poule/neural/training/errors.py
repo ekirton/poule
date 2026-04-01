@@ -20,13 +20,7 @@ class TrainingResourceError(NeuralTrainingError):
 class QuantizationError(NeuralTrainingError):
     """INT8 conversion quality check failed."""
 
-    def __init__(self, max_distance: float | None = None, message: str | None = None):
-        self.max_distance = max_distance
-        if message is None:
-            message = (
-                f"Quantization validation failed: max cosine distance "
-                f"{max_distance:.4f} >= 0.02 threshold"
-            )
+    def __init__(self, message: str = "Quantization validation failed"):
         super().__init__(message)
 
 
