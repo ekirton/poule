@@ -1218,13 +1218,13 @@ def _add_neural_rankings(cached, val_data, checkpoint_path, dataset, db_path):
 
     ckpt = load_checkpoint(checkpoint_path)
     hp = ckpt.get("hyperparams", {})
-    vocab_path = ckpt.get("vocabulary_path")
-    vocab_size = None
-    if vocab_path and Path(vocab_path).exists():
-        import json as _json
-        vocab_size = len(_json.loads(Path(vocab_path).read_text()))
+    state_dict = ckpt["model_state_dict"]
+
+    # Infer vocab_size from the embedding weight in the state dict
+    emb_key = "encoder.embeddings.word_embeddings.weight"
+    vocab_size = state_dict[emb_key].shape[0] if emb_key in state_dict else None
     model = BiEncoder(vocab_size=vocab_size)
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(state_dict, strict=False)
     model.eval()
 
     tokenizer = AutoTokenizer.from_pretrained(
