@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import pickle
 import random
@@ -709,8 +710,20 @@ def save_checkpoint(data: dict, path: Path) -> None:
 
 
 def load_checkpoint(path: Path) -> dict:
-    """Load checkpoint dict. Tries torch.load first, falls back to pickle."""
+    """Load checkpoint dict.
+
+    Accepts PyTorch .pt files or MLX safetensors checkpoint directories.
+    When *path* points to a ``.safetensors`` file, the sibling metadata
+    files (``config.json``, ``hyperparams.json``, etc.) are read and the
+    MLX parameter names are mapped to PyTorch BiEncoder names (spec §4.10).
+    """
     path = Path(path)
+
+    if path.suffix == ".safetensors" or (
+        path.is_dir() and (path / "model.safetensors").exists()
+    ):
+        return _load_safetensors_checkpoint(path)
+
     try:
         import torch
 
@@ -718,6 +731,105 @@ def load_checkpoint(path: Path) -> dict:
     except ImportError:
         with open(path, "rb") as f:
             return pickle.load(f)
+
+
+def _load_safetensors(file_path: Path) -> dict:
+    """Load safetensors file into a dict of torch tensors.
+
+    Parses the safetensors binary format directly so the ``safetensors``
+    package is not required at runtime.
+    """
+    import struct
+
+    import torch
+
+    _DTYPE_MAP = {
+        "F64": torch.float64,
+        "F32": torch.float32,
+        "F16": torch.float16,
+        "BF16": torch.bfloat16,
+        "I64": torch.int64,
+        "I32": torch.int32,
+        "I16": torch.int16,
+        "I8": torch.int8,
+        "U8": torch.uint8,
+        "BOOL": torch.bool,
+    }
+
+    with open(file_path, "rb") as f:
+        (header_len,) = struct.unpack("<Q", f.read(8))
+        header = json.loads(f.read(header_len))
+        data_start = 8 + header_len
+        buf = f.read()
+
+    tensors = {}
+    for name, meta in header.items():
+        if name == "__metadata__":
+            continue
+        dtype = _DTYPE_MAP[meta["dtype"]]
+        shape = meta["shape"]
+        begin, end = meta["data_offsets"]
+        tensors[name] = torch.frombuffer(
+            buf, dtype=dtype, count=(end - begin) // torch.tensor([], dtype=dtype).element_size(),
+            offset=begin,
+        ).reshape(shape).clone()
+
+    return tensors
+
+
+def _load_safetensors_checkpoint(path: Path) -> dict:
+    """Convert an MLX safetensors checkpoint to a PyTorch checkpoint dict."""
+    from Poule.neural.training.mlx_backend.converter import _build_mappings
+
+    path = Path(path)
+    if path.is_dir():
+        ckpt_dir = path
+        safetensors_path = path / "model.safetensors"
+    else:
+        ckpt_dir = path.parent
+        safetensors_path = path
+
+    mlx_weights = _load_safetensors(safetensors_path)
+
+    # Read sibling metadata
+    config_path = ckpt_dir / "config.json"
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
+
+    hyperparams_path = ckpt_dir / "hyperparams.json"
+    hyperparams = (
+        json.loads(hyperparams_path.read_text()) if hyperparams_path.exists() else {}
+    )
+
+    vocab_path = ckpt_dir / "vocabulary_path.txt"
+    vocabulary_path = vocab_path.read_text().strip() if vocab_path.exists() else None
+
+    recall_path = ckpt_dir / "best_recall_32.txt"
+    best_recall = float(recall_path.read_text().strip()) if recall_path.exists() else 0.0
+
+    # Map MLX parameter names to PyTorch BiEncoder names
+    num_layers = config.get("num_layers", 12)
+    _, mlx_to_hf = _build_mappings(num_layers)
+
+    pt_state_dict = {}
+    for mlx_name, tensor in mlx_weights.items():
+        if mlx_name in mlx_to_hf:
+            hf_name = mlx_to_hf[mlx_name]
+            if hf_name.startswith("roberta."):
+                pt_name = "encoder." + hf_name[len("roberta."):]
+            else:
+                pt_name = hf_name
+        else:
+            pt_name = mlx_name
+        pt_state_dict[pt_name] = tensor
+
+    return {
+        "model_state_dict": pt_state_dict,
+        "optimizer_state_dict": {},
+        "epoch": 0,
+        "best_recall_32": best_recall,
+        "hyperparams": hyperparams,
+        "vocabulary_path": vocabulary_path,
+    }
 
 
 def get_fine_tune_hyperparams(overrides: dict | None = None) -> dict:

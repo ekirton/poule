@@ -59,6 +59,38 @@ def _write_jsonl(path, records):
             f.write(json.dumps(record) + "\n")
 
 
+def _write_safetensors(tensors: dict, path):
+    """Write a dict of torch tensors in safetensors binary format."""
+    import struct
+
+    import torch
+
+    _DTYPE_NAMES = {
+        torch.float64: "F64", torch.float32: "F32", torch.float16: "F16",
+        torch.bfloat16: "BF16", torch.int64: "I64", torch.int32: "I32",
+        torch.int16: "I16", torch.int8: "I8", torch.uint8: "U8",
+        torch.bool: "BOOL",
+    }
+    header = {}
+    data_parts = []
+    offset = 0
+    for name, tensor in tensors.items():
+        raw = tensor.contiguous().numpy().tobytes()
+        header[name] = {
+            "dtype": _DTYPE_NAMES[tensor.dtype],
+            "shape": list(tensor.shape),
+            "data_offsets": [offset, offset + len(raw)],
+        }
+        data_parts.append(raw)
+        offset += len(raw)
+    header_bytes = json.dumps(header).encode("utf-8")
+    with open(path, "wb") as f:
+        f.write(struct.pack("<Q", len(header_bytes)))
+        f.write(header_bytes)
+        for part in data_parts:
+            f.write(part)
+
+
 def _make_goal(goal_type, hypotheses=None):
     """Create a Goal dict matching the ExtractionStep schema."""
     return {
@@ -658,6 +690,48 @@ class TestCheckpointFormat:
         assert loaded["epoch"] == 12
         assert abs(loaded["best_recall_32"] - 0.54) < 1e-6
         assert loaded["hyperparams"]["batch_size"] == 256
+
+    def test_load_safetensors_checkpoint(self, tmp_path):
+        """spec §4.10: load_checkpoint auto-converts MLX safetensors directory
+        to PyTorch checkpoint dict with name-mapped state dict and metadata."""
+        import json
+        import struct
+        import torch
+        from Poule.neural.training.trainer import load_checkpoint
+
+        # Create an MLX-style checkpoint directory with sibling metadata
+        ckpt_dir = tmp_path / "mlx_ckpt"
+        ckpt_dir.mkdir()
+
+        # Write a minimal safetensors file (header + raw tensor data)
+        weights = {
+            "embedding.weight": torch.randn(100, 64),
+            "layers.0.attention.query_proj.weight": torch.randn(64, 64),
+        }
+        _write_safetensors(weights, ckpt_dir / "model.safetensors")
+
+        (ckpt_dir / "config.json").write_text(json.dumps({
+            "vocab_size": 100,
+            "num_layers": 1,
+            "hidden_size": 64,
+            "num_heads": 4,
+        }))
+        (ckpt_dir / "hyperparams.json").write_text(json.dumps({
+            "batch_size": 256,
+            "learning_rate": 2e-5,
+        }))
+        (ckpt_dir / "vocabulary_path.txt").write_text("/data/vocab.json")
+        (ckpt_dir / "best_recall_32.txt").write_text("0.54")
+
+        # load_checkpoint should accept the .safetensors file path
+        loaded = load_checkpoint(ckpt_dir / "model.safetensors")
+
+        assert "model_state_dict" in loaded
+        assert "hyperparams" in loaded
+        assert loaded["hyperparams"]["batch_size"] == 256
+        assert abs(loaded["best_recall_32"] - 0.54) < 1e-6
+        # MLX names should be mapped to PyTorch BiEncoder names
+        assert any("encoder." in k for k in loaded["model_state_dict"])
 
 
 # ═══════════════════════════════════════════════════════════════════════════
