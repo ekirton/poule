@@ -42,7 +42,7 @@ echo "Training data: ${DATA_FILES[*]}"
 
 is_complete() {
     local dir="$1"
-    [[ -d "$dir" ]] && [[ -f "$dir/rrf-study.db" ]]
+    [[ -d "$dir" ]] && [[ -f "$dir/best_params.json" ]]
 }
 
 # Phase 1: Symbol-only
