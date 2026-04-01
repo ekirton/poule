@@ -23,6 +23,8 @@ train = [
 ]
 tune = [
     "optuna>=3.0",
+    "torch>=2.0",
+    "transformers>=4.30",
 ]
 mlx-train = [
     "mlx>=0.18",
