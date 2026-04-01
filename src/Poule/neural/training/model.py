@@ -65,6 +65,11 @@ class BiEncoder(nn.Module):
             num_hidden_layers=12,
             num_attention_heads=12,
             intermediate_size=3072,
+            max_position_embeddings=514,
+            type_vocab_size=1,
+            pad_token_id=1,
+            bos_token_id=0,
+            eos_token_id=2,
         )
         model = cls.__new__(cls)
         nn.Module.__init__(model)
