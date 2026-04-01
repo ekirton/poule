@@ -943,7 +943,6 @@ async def run_campaign(
 
     backend_factory = all_kwargs.get("backend_factory")
     watchdog_timeout = all_kwargs.get("watchdog_timeout")
-    workers = all_kwargs.get("workers", 1)
     rss_threshold = all_kwargs.get("rss_threshold")
 
     # Derive load_paths from module_prefix + project_path for bare imports.
@@ -967,83 +966,9 @@ async def run_campaign(
                 load_paths=load_paths,
             )
 
-        async def _collect_group(pid, sf, thms):
-            """Collect generator into a list (needed for parallel gather)."""
-            return [r async for r in _make_group_gen(pid, sf, thms)]
-
-        if workers > 1:
-            # Parallel file processing with bounded concurrency.
-            # File groups run concurrently (up to `workers`), results are
-            # written in plan order as consecutive groups complete.
-            print(
-                f"  Using {workers} parallel workers for "
-                f"{len(file_groups)} file groups",
-                file=sys.stderr,
-            )
-            sem = asyncio.Semaphore(workers)
-            groups_done = 0
-            total_groups = len(file_groups)
-
-            import time as _time
-            _campaign_start = _time.monotonic()
-
-            async def _bounded(group_idx, pid, sf, thms):
-                nonlocal groups_done
-                async with sem:
-                    results = await _collect_group(pid, sf, thms)
-                    groups_done += 1
-                    if groups_done % 20 == 0 or groups_done == total_groups:
-                        elapsed = _time.monotonic() - _campaign_start
-                        m, s = divmod(int(elapsed), 60)
-                        print(
-                            f"  File groups: {groups_done}/{total_groups} "
-                            f"completed  [{m}m{s:02d}s elapsed]",
-                            file=sys.stderr,
-                        )
-                    return group_idx, results
-
-            tasks = [
-                asyncio.ensure_future(_bounded(i, pid, sf, thms))
-                for i, (pid, sf, thms) in enumerate(file_groups)
-            ]
-
-            # Collect results and write in plan order as they complete.
-            pending_results: dict[int, list] = {}
-            next_write = 0
-
-            for coro in asyncio.as_completed(tasks):
-                group_idx, results = await coro
-                pending_results[group_idx] = results
-
-                # Flush all consecutive completed groups
-                while next_write in pending_results:
-                    pid, sf, thms = file_groups[next_write]
-                    for result in pending_results.pop(next_write):
-                        idx += 1
-                        _write_result_compact(outfile, result)
-                        outfile.flush()
-                        fs = project_file_stats[pid][sf]
-                        if isinstance(result, ExtractionRecord):
-                            fs["extracted"] += 1
-                            extracted_count += 1
-                            t = getattr(result, '_extraction_time_s', 0.0)
-                            if t > max_proof_time_s:
-                                max_proof_time_s = t
-                                max_proof_time_name = result.theorem_name
-                        elif isinstance(result, ExtractionError) and result.error_kind == "no_proof_body":
-                            fs["no_proof_body"] += 1
-                            no_proof_body_count += 1
-                        elif isinstance(result, PartialExtractionRecord):
-                            fs["partial"] += 1
-                            partial_count += 1
-                        else:
-                            fs["failed"] += 1
-                            failed_count += 1
-                    next_write += 1
-        else:
-            # Sequential file processing (default): stream results to
-            # keep memory bounded by a single proof trace (§NFR).
-            for pid, sf, thms in file_groups:
+        # Sequential file processing: stream results to keep memory
+        # bounded by a single proof trace (§NFR).
+        for pid, sf, thms in file_groups:
                 idx += 1
                 print(f"  [{idx}/{total_targets}] {sf} ({len(thms)} theorems)", file=sys.stderr)
                 try:
