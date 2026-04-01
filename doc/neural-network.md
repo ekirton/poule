@@ -386,6 +386,35 @@ The neural channel is considered successful if both conditions are met on the he
 
 These thresholds are advisory deployment gates, not hard constraints. A model that narrowly misses one threshold but demonstrates strong complementarity (§4.5) may still warrant deployment. Conversely, a model meeting both thresholds but showing negligible neural-only hits would suggest the improvement comes from fusion noise rather than genuine complementary signal.
 
+### 4.8 RRF Tuning Results
+
+RRF fusion parameters were optimized in two phases using Optuna on the validation split (292 queries).
+
+**Phase 1: Symbol-only** (3 channels, 30 trials)
+
+| Parameter | Value |
+|-----------|-------|
+| *k* | 38 |
+| *w*_structural | 1.901 |
+| *w*_mepo | 1.464 |
+| *w*_fts | 1.197 |
+| Recall@32 (val) | 0.68% |
+
+**Phase 2: Combined** (4 channels including neural, 50 trials)
+
+| Parameter | Value |
+|-----------|-------|
+| *k* | 16 |
+| *w*_structural | 0.116 |
+| *w*_mepo | 1.732 |
+| *w*_fts | 1.202 |
+| *w*_neural | 1.416 |
+| Recall@32 (val) | 8.9% |
+
+**Observations.** Adding the neural channel increased validation Recall@32 from 0.68% to 8.9% — a 13× absolute improvement, with the neural channel receiving the second-highest weight (1.416) behind MePo (1.732). The structural channel weight dropped from 1.901 (symbolic-only) to 0.116 (combined), indicating that the neural channel subsumes most of the signal previously provided by WL kernel hashing. The lower *k* value (16 vs. 38) reflects the neural channel's sharper rank distribution compared to the symbolic channels.
+
+The low absolute Recall@32 values reflect the difficulty of the task: the premise corpus contains ~118,000 declarations, and only ~3,500 training pairs were available. With Lean-scale training data (100K+ pairs), these numbers would be expected to improve substantially.
+
 ## 5. Toward Lean-Comparable Training Data Extraction for Coq
 
 The ~15× training data gap between Coq and Lean is not inherent to the mathematics formalized in these systems — it reflects differences in proof assistant architecture and tooling. This section identifies the specific capabilities that would enable Lean-comparable extraction from Coq/Rocq.
