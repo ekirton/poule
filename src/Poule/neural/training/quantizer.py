@@ -54,18 +54,16 @@ class ModelQuantizer:
         vocab_path_str = checkpoint.get("vocabulary_path")
 
         # Reconstruct model with correct vocab size
-        if vocab_path_str:
+        if vocab_path_str and Path(vocab_path_str).exists():
             from Poule.neural.training.vocabulary import CoqTokenizer
 
             tokenizer = CoqTokenizer(Path(vocab_path_str))
-            model = BiEncoder(vocab_size=tokenizer.vocab_size)
         else:
             from transformers import AutoTokenizer
 
             tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
-            model = BiEncoder()
 
-        model.load_state_dict(checkpoint["model_state_dict"])
+        model = BiEncoder.from_checkpoint(checkpoint)
         model.eval()
 
         # Step 1: Export to ONNX

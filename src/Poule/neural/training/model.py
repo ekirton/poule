@@ -44,6 +44,21 @@ class BiEncoder(nn.Module):
             del old_embeddings
             import gc; gc.collect()
 
+    @classmethod
+    def from_checkpoint(cls, checkpoint: dict) -> "BiEncoder":
+        """Instantiate a BiEncoder from a checkpoint dict.
+
+        Infers vocab_size from the embedding weight shape and uses
+        strict=False to tolerate missing keys (e.g. pooler weights
+        absent from MLX-converted checkpoints).
+        """
+        state_dict = checkpoint["model_state_dict"]
+        emb_key = "encoder.embeddings.word_embeddings.weight"
+        vocab_size = state_dict[emb_key].shape[0] if emb_key in state_dict else None
+        model = cls(vocab_size=vocab_size)
+        model.load_state_dict(state_dict, strict=False)
+        return model
+
     @property
     def embedding_dim(self) -> int:
         return self.encoder.config.hidden_size

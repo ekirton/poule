@@ -93,8 +93,7 @@ class RetrievalEvaluator:
         hp = checkpoint.get("hyperparams", {})
         max_seq_length = hp.get("max_seq_length", 512)
 
-        model = BiEncoder()
-        model.load_state_dict(checkpoint["model_state_dict"])
+        model = BiEncoder.from_checkpoint(checkpoint)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(device)
         model.eval()
@@ -221,8 +220,7 @@ class RetrievalEvaluator:
         hp = checkpoint.get("hyperparams", {})
         max_seq_length = hp.get("max_seq_length", 512)
 
-        model = BiEncoder()
-        model.load_state_dict(checkpoint["model_state_dict"])
+        model = BiEncoder.from_checkpoint(checkpoint)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(device)
         model.eval()
