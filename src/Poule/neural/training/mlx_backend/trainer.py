@@ -289,6 +289,17 @@ class MLXTrainer:
             for entry in training_log:
                 f.write(json.dumps(entry) + "\n")
 
+        # Auto-convert to PyTorch checkpoint for downstream tools
+        pt_path = output_dir / "model.pt"
+        try:
+            from Poule.neural.training.mlx_backend.converter import WeightConverter
+            WeightConverter.convert(output_dir, pt_path)
+            print(f"Converted MLX checkpoint to PyTorch: {pt_path}")
+        except Exception as exc:
+            logger.warning(f"Auto-conversion to PyTorch failed: {exc}")
+            print(f"Warning: auto-conversion to model.pt failed: {exc}")
+            print("Run `poule convert-checkpoint` manually, or pass model.safetensors directly.")
+
     _VAL_PREMISE_CAP = 10_000
     _ENCODE_CHUNK = 256
 
