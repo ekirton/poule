@@ -96,7 +96,6 @@ class MLXTrainer:
         # Load tokenizer
         tokenizer = CoqTokenizer(str(vocabulary_path))
 
-        # Create model
         model = MLXBiEncoder(vocab_size=tokenizer.vocab_size)
         mx.eval(model.parameters())
 
@@ -115,7 +114,7 @@ class MLXTrainer:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         early_stopping = EarlyStoppingTracker(patience)
-        micro_batch_size = min(32, batch_size)
+        micro_batch_size = min(8, batch_size)
         accumulation_steps = max(1, batch_size // micro_batch_size)
 
         best_recall = -1.0
@@ -136,7 +135,11 @@ class MLXTrainer:
             epoch_loss = 0.0
             num_batches = 0
 
+            total_micros = (len(indices) + micro_batch_size - 1) // micro_batch_size
             for batch_start in range(0, len(indices), micro_batch_size):
+                micro_idx = batch_start // micro_batch_size
+                if micro_idx % 50 == 0:
+                    print(f"  micro-batch {micro_idx}/{total_micros}", flush=True)
                 batch_indices = indices[batch_start:batch_start + micro_batch_size]
                 batch_pairs = [dataset.train[i] for i in batch_indices]
 
@@ -145,7 +148,10 @@ class MLXTrainer:
                 all_premises = []
                 positive_indices_list = []
 
+                _MAX_POS = 16
                 for state_text, premise_names in batch_pairs:
+                    if len(premise_names) > _MAX_POS:
+                        premise_names = random.sample(premise_names, _MAX_POS)
                     pos_indices = []
                     for name in premise_names:
                         text = ""
@@ -187,14 +193,49 @@ class MLXTrainer:
                 if not all_premises:
                     continue
 
-                # Tokenize
-                s_ids, s_mask = _tokenize(states)
-                p_ids, p_mask = _tokenize(all_premises)
+                # Cap premises to avoid OOM (matches PyTorch _MAX_POS=16).
+                # Keep all positives referenced by this batch, sample the rest.
+                _MAX_PREMISES = 128
+                if len(all_premises) > _MAX_PREMISES:
+                    # Identify which premises are positive (must keep)
+                    pos_premise_indices = set()
+                    for pidx_list in positive_indices_list:
+                        pos_premise_indices.update(pidx_list)
+                    keep = sorted(pos_premise_indices)
+                    others = [i for i in range(len(all_premises)) if i not in pos_premise_indices]
+                    n_fill = _MAX_PREMISES - len(keep)
+                    if n_fill > 0 and others:
+                        keep += random.sample(others, min(n_fill, len(others)))
+                    keep.sort()
+                    # Remap indices
+                    old_to_new = {old: new for new, old in enumerate(keep)}
+                    all_premises = [all_premises[i] for i in keep]
+                    positive_indices_list = [
+                        [old_to_new[p] for p in pidx if p in old_to_new]
+                        for pidx in positive_indices_list
+                    ]
 
-                # Forward + backward using value_and_grad
+                # Tokenize states
+                s_ids, s_mask = _tokenize(states)
+
+                # Encode premises WITHOUT gradients in chunks to bound memory.
+                # (Matches PyTorch trainer's torch.no_grad() for premises.)
+                # Convert to numpy between chunks to free Metal buffers.
+                _P_CHUNK = 64
+                p_emb_np_parts = []
+                for pstart in range(0, len(all_premises), _P_CHUNK):
+                    chunk = all_premises[pstart:pstart + _P_CHUNK]
+                    pc_ids, pc_mask = _tokenize(chunk)
+                    chunk_embs = model(pc_ids, pc_mask)
+                    mx.eval(chunk_embs)
+                    p_emb_np_parts.append(np.array(chunk_embs))
+                p_embs = mx.array(np.concatenate(p_emb_np_parts, axis=0))
+                p_embs = mx.stop_gradient(p_embs)
+                del p_emb_np_parts
+
+                # Forward + backward only for state encoder
                 def loss_fn(model):
                     s_embs = model(s_ids, s_mask)
-                    p_embs = model(p_ids, p_mask)
                     return masked_contrastive_loss_mlx(
                         s_embs, p_embs, positive_indices_list, temperature
                     )
@@ -205,6 +246,9 @@ class MLXTrainer:
 
                 epoch_loss += float(loss)
                 num_batches += 1
+
+                # Free computation graph to prevent memory accumulation
+                del loss, grads, p_embs, s_ids, s_mask
 
             avg_loss = epoch_loss / max(num_batches, 1)
 
@@ -245,6 +289,9 @@ class MLXTrainer:
             for entry in training_log:
                 f.write(json.dumps(entry) + "\n")
 
+    _VAL_PREMISE_CAP = 10_000
+    _ENCODE_CHUNK = 256
+
     def _compute_recall(
         self,
         model,
@@ -253,7 +300,7 @@ class MLXTrainer:
         max_seq_length: int,
         k: int = 32,
     ) -> float:
-        """Compute Recall@k on the validation set."""
+        """Compute Recall@k on the validation set, batched to bound memory."""
         import mlx.core as mx
 
         if not dataset.val:
@@ -265,54 +312,67 @@ class MLXTrainer:
             mask = mx.array(np.array(result["attention_mask"], dtype=np.int32))
             return ids, mask
 
-        # Build premise corpus subset (cap at 10K)
+        # Build premise corpus subset (cap at _VAL_PREMISE_CAP)
         all_positive_names = set()
         for _, premises in dataset.val:
             all_positive_names.update(premises)
 
-        corpus_texts = []
         corpus_names = []
-        if hasattr(dataset.premise_corpus, 'iter_batched'):
-            for name, text in dataset.premise_corpus.iter_batched():
-                corpus_names.append(name)
-                corpus_texts.append(text)
-                if len(corpus_texts) >= 10000 and name not in all_positive_names:
-                    continue
-        elif hasattr(dataset.premise_corpus, 'items'):
-            for name, text in dataset.premise_corpus.items():
-                corpus_names.append(name)
-                corpus_texts.append(text)
+        if hasattr(dataset.premise_corpus, 'keys'):
+            all_names = list(dataset.premise_corpus.keys())
+        elif hasattr(dataset.premise_corpus, '_names'):
+            all_names = list(dataset.premise_corpus._names)
         else:
             return 0.0
 
-        if not corpus_texts:
+        # Always include positives, then fill up to cap
+        positives_in_corpus = [n for n in all_names if n in all_positive_names]
+        others = [n for n in all_names if n not in all_positive_names]
+        import random as _rand
+        n_others = max(0, self._VAL_PREMISE_CAP - len(positives_in_corpus))
+        sampled_others = _rand.sample(others, min(n_others, len(others)))
+        corpus_names = positives_in_corpus + sampled_others
+
+        if not corpus_names:
             return 0.0
 
-        # Encode premises
-        p_ids, p_mask = _tokenize(corpus_texts)
-        p_embs = model(p_ids, p_mask)
-        mx.eval(p_embs)
+        # Encode premises in chunks
+        get_batch = getattr(dataset.premise_corpus, "get_batch", None)
+        all_p_embs = []
+        for start in range(0, len(corpus_names), self._ENCODE_CHUNK):
+            chunk_names = corpus_names[start:start + self._ENCODE_CHUNK]
+            if get_batch is not None:
+                chunk_texts = get_batch(chunk_names)
+            else:
+                chunk_texts = [dataset.premise_corpus[n] for n in chunk_names]
+            p_ids, p_mask = _tokenize(chunk_texts)
+            embs = model(p_ids, p_mask)
+            mx.eval(embs)
+            all_p_embs.append(np.array(embs))
 
+        all_p_embs_np = np.concatenate(all_p_embs, axis=0)
+
+        # Encode all validation states in chunks
+        state_texts = [s for s, _ in dataset.val]
+        all_s_embs = []
+        for start in range(0, len(state_texts), self._ENCODE_CHUNK):
+            chunk = state_texts[start:start + self._ENCODE_CHUNK]
+            s_ids, s_mask = _tokenize(chunk)
+            embs = model(s_ids, s_mask)
+            mx.eval(embs)
+            all_s_embs.append(np.array(embs))
+        all_s_embs_np = np.concatenate(all_s_embs, axis=0)
+
+        # Score with numpy (already on CPU)
         hits = 0
-        total = 0
-
-        for state_text, premise_names in dataset.val:
-            s_ids, s_mask = _tokenize([state_text])
-            s_emb = model(s_ids, s_mask)
-            mx.eval(s_emb)
-
-            # Cosine similarity
-            sim = mx.matmul(s_emb, p_embs.T)[0]
-            mx.eval(sim)
-
-            top_k_indices = np.array(sim).argsort()[-k:][::-1]
-            top_k_names = {corpus_names[i] for i in top_k_indices}
-
-            if top_k_names & set(premise_names):
+        for i, (_, premise_names) in enumerate(dataset.val):
+            scores = all_s_embs_np[i] @ all_p_embs_np.T
+            top_k_indices = scores.argsort()[-k:][::-1]
+            top_k_names = {corpus_names[j] for j in top_k_indices}
+            if set(premise_names) & top_k_names:
                 hits += 1
-            total += 1
 
-        return hits / max(total, 1)
+        return hits / len(dataset.val)
 
     def _save_checkpoint(
         self,
@@ -324,20 +384,10 @@ class MLXTrainer:
     ) -> None:
         """Save MLX checkpoint in the spec-defined directory format."""
         import mlx.core as mx
+        import mlx.nn as nn
 
-        # Flatten model parameters for safetensors
-        params = {}
-        for k, v in model.parameters().items():
-            if isinstance(v, dict):
-                for k2, v2 in v.items():
-                    if isinstance(v2, dict):
-                        for k3, v3 in v2.items():
-                            params[f"{k}.{k2}.{k3}"] = v3
-                    else:
-                        params[f"{k}.{k2}"] = v2
-            else:
-                params[k] = v
-
+        # Flatten model parameters using MLX's tree_flatten utility
+        params = dict(nn.utils.tree_flatten(model.parameters()))
         mx.save_safetensors(str(output_dir / "model.safetensors"), params)
 
         config = {

@@ -427,7 +427,6 @@ def _handle_session_error(exc: SessionError) -> None:
 @click.option("--resume", "resume_flag", is_flag=True, default=False, help="Resume interrupted extraction (P1).")
 @click.option("--include-diffs", is_flag=True, default=False, help="Include proof state diffs (P1).")
 @click.option("--watchdog-timeout", default=600, type=int, help="Inactivity threshold (seconds) before declaring backend dead. 0 to disable.")
-@click.option("--workers", default=0, type=int, help="Number of parallel file workers (0 = auto-detect CPU count, default: 0).")
 def cmd_extract(
     project_dirs: tuple[str, ...],
     output: str,
@@ -439,7 +438,6 @@ def cmd_extract(
     resume_flag: bool,
     include_diffs: bool,
     watchdog_timeout: int,
-    workers: int,
 ):
     """Batch extract proof traces from Coq project directories."""
     if incremental and resume_flag:
@@ -464,11 +462,9 @@ def cmd_extract(
     import os
     from Poule.session.backend import create_coq_backend
     rss_limit = int(os.environ.get("POULE_LSP_RSS_LIMIT", 5 * 1024 * 1024 * 1024))
-    effective_workers = workers if workers > 0 else (os.cpu_count() or 4)
     kwargs = {
         "backend_factory": create_coq_backend,
         "watchdog_timeout": wt,
-        "workers": effective_workers,
         "rss_threshold": rss_limit,
         "index_db_path": index_db,
     }
@@ -479,7 +475,6 @@ def cmd_extract(
     if include_diffs:
         kwargs["include_diffs"] = include_diffs
 
-    click.echo(f"Workers: {effective_workers}", err=True)
     summary = asyncio.run(run_campaign(
         list(project_dirs), output, kwargs,
     ))
@@ -848,8 +843,27 @@ def cmd_train(
 
     try:
         vocab_path = Path(vocabulary) if vocabulary else None
-        trainer = BiEncoderTrainer()
-        trainer.train(dataset, Path(output), vocabulary_path=vocab_path, hyperparams=hp or None, sample=sample)
+
+        # Use MLX backend on macOS with Apple Silicon when vocabulary is provided
+        use_mlx = False
+        if sys.platform == "darwin" and vocab_path is not None:
+            try:
+                import mlx.core  # noqa: F401
+                use_mlx = True
+            except (ImportError, ModuleNotFoundError):
+                pass
+
+        if use_mlx:
+            from Poule.neural.training.mlx_backend.trainer import MLXTrainer
+
+            click.echo("Using MLX backend (Apple Silicon Metal acceleration)", err=True)
+            output_dir = Path(output).parent if Path(output).suffix else Path(output)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            trainer = MLXTrainer()
+            trainer.train(dataset, output_dir, vocabulary_path=vocab_path, hyperparams=hp or None)
+        else:
+            trainer = BiEncoderTrainer()
+            trainer.train(dataset, Path(output), vocabulary_path=vocab_path, hyperparams=hp or None, sample=sample)
     except InsufficientDataError as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)

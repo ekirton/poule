@@ -19,6 +19,9 @@ def masked_contrastive_loss_mlx(
 ) -> mx.array:
     """Compute masked contrastive loss (InfoNCE with premise masking).
 
+    Vectorized: builds mask matrices and computes logsumexp in bulk
+    rather than iterating per positive pair in Python.
+
     Args:
         state_embs: [B, dim] L2-normalized state embeddings.
         premise_embs: [P, dim] L2-normalized premise embeddings.
@@ -35,35 +38,51 @@ def masked_contrastive_loss_mlx(
     # Cosine similarity scaled by temperature
     sim = mx.matmul(state_embs, premise_embs.T) / temperature  # [B, P]
 
-    total_loss = mx.array(0.0)
-    count = 0
+    # Flatten all (state_idx, positive_idx) pairs and build masks.
+    # For each positive pair (i, j), candidates = {j} ∪ {all non-positives for i}.
+    # We use additive masking: 0 for candidates, -inf for excluded.
+    rows = []      # state index for each pair
+    pos_cols = []  # positive premise index for each pair
+    # mask_matrix[pair_k, p] = 0 if p is a candidate, -inf otherwise
+    import numpy as np
+    mask_rows = []
 
     for i in range(B):
         pos_set = set(positive_indices[i])
         if not pos_set:
             continue
-
         for j in positive_indices[i]:
-            # Mask: exclude other positives for this state from negatives
-            mask = mx.ones(P, dtype=mx.bool_)
-            for p in pos_set:
-                if p != j:
-                    mask = mask.at[p].add(-1)  # set to False
+            rows.append(i)
+            pos_cols.append(j)
+            # Candidate mask: j itself + all non-positives
+            mask = np.full(P, -1e9, dtype=np.float32)
+            mask[j] = 0.0
+            for p in range(P):
+                if p not in pos_set:
+                    mask[p] = 0.0
+            mask_rows.append(mask)
 
-            # Rebuild mask without .at (not always available)
-            mask_list = [True] * P
-            for p in pos_set:
-                if p != j:
-                    mask_list[p] = False
-            mask = mx.array(mask_list)
-
-            pos_logit = sim[i, j]
-            candidate_logits = sim[i][mask]
-            loss_ij = -pos_logit + mx.logsumexp(candidate_logits)
-            total_loss = total_loss + loss_ij
-            count += 1
-
-    if count == 0:
+    if not rows:
         return mx.array(0.0)
 
-    return total_loss / count
+    K = len(rows)
+    rows_arr = mx.array(np.array(rows, dtype=np.int32))
+    pos_cols_arr = mx.array(np.array(pos_cols, dtype=np.int32))
+    mask_matrix = mx.array(np.stack(mask_rows))  # [K, P]
+
+    # Gather similarity rows for each pair: [K, P]
+    pair_sims = sim[rows_arr]  # [K, P]
+
+    # Apply mask (additive: -inf removes non-candidates from logsumexp)
+    masked_sims = pair_sims + mask_matrix  # [K, P]
+
+    # logsumexp over candidates for each pair
+    lse = mx.logsumexp(masked_sims, axis=1)  # [K]
+
+    # Positive logits: sim[rows[k], pos_cols[k]]
+    pos_logits = sim[rows_arr, pos_cols_arr]  # [K]
+
+    # Loss per pair: -pos_logit + logsumexp(candidates)
+    losses = -pos_logits + lse  # [K]
+
+    return mx.mean(losses)
