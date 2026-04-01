@@ -1217,14 +1217,20 @@ def _add_neural_rankings(cached, val_data, checkpoint_path, dataset, db_path):
     from transformers import AutoTokenizer
 
     ckpt = load_checkpoint(checkpoint_path)
-    model = BiEncoder(embedding_dim=ckpt.get("embedding_dim", 256))
+    hp = ckpt.get("hyperparams", {})
+    vocab_path = ckpt.get("vocabulary_path")
+    vocab_size = None
+    if vocab_path and Path(vocab_path).exists():
+        import json as _json
+        vocab_size = len(_json.loads(Path(vocab_path).read_text()))
+    model = BiEncoder(vocab_size=vocab_size)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
     tokenizer = AutoTokenizer.from_pretrained(
-        ckpt.get("tokenizer_name", "bert-base-uncased")
+        hp.get("model_name", "microsoft/codebert-base")
     )
-    max_seq = ckpt.get("max_seq_length", 256)
+    max_seq = hp.get("max_seq_length", 256)
 
     # Encode all premises
     premise_names = list(dataset.premise_corpus.keys())
