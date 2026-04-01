@@ -238,14 +238,6 @@ The RSS threshold defaults to 5 GiB, overridable via the `POULE_LSP_RSS_LIMIT` e
 > **When** `_extract_file_group(...)` is called with theorems `[A, B, C]`
 > **Then** results are [ExtractionRecord(A), ExtractionError(B, "backend_crash"), ExtractionError(C, "backend_crash", "Backend restart failed: ...")]
 
-#### Parallel file processing
-
-When `workers > 1`, the orchestrator processes file groups concurrently using up to `workers` parallel backend instances. Each file group is assigned to one worker.
-
-- REQUIRES: `workers` is a positive integer.
-- ENSURES: Results are written in deterministic plan order regardless of the number of workers. Within each file, theorem order matches the campaign plan. Across files, the interleaving matches the plan's file ordering.
-- MAINTAINS: The deterministic ordering guarantee from §4.3 holds even with `workers > 1`.
-
 ### 4.4 Campaign Execution
 
 #### run_campaign(project_dirs, output_path, options)
@@ -317,7 +309,6 @@ Options:
 | `include_diffs` | boolean | false | Include proof state diffs in output (P1) |
 | `watchdog_timeout` | positive float or null | 600 | Inactivity threshold (seconds) before declaring backend dead; null to disable |
 | `backend_factory` | async callable or null | null | Backend factory `(file_path, watchdog_timeout=, load_paths=) → CoqProofBackend`. When provided, enables file-grouped extraction (§4.3). When null, falls back to per-proof extraction via SessionManager. |
-| `workers` | positive integer | 1 | Number of parallel file workers. Only effective when `backend_factory` is provided. |
 | `module_prefix` | string or null | null | Module prefix for the library (e.g., `"Flocq."`). Used to derive load path bindings for the backend factory. When provided, the orchestrator passes `load_paths=[(project_path, prefix_without_dot)]` to the backend factory so that bare `Require Import` directives resolve correctly. |
 
 ### Extraction Campaign Orchestrator → CoqProofBackend (file-grouped path)
@@ -391,7 +382,7 @@ Per-proof errors (tactic failure, backend crash, backend unresponsive, load fail
 - The system shall process the Coq standard library in under 1 hour on a single machine without GPU.
 - Memory usage shall be bounded by the largest single proof's trace, not by the total dataset size (streaming output).
 - When `backend_factory` is provided, the orchestrator shall use file-grouped extraction: one backend per source file, with all proofs in that file extracted on the shared backend. This amortizes the file type-checking cost across all proofs in the file.
-- When `workers > 1`, the orchestrator may process up to `workers` file groups concurrently. Deterministic output ordering is preserved.
+- The orchestrator processes file groups sequentially to keep memory bounded and ensure deterministic output ordering without buffering.
 
 ## 9. Examples
 

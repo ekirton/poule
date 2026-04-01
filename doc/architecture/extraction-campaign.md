@@ -229,15 +229,6 @@ For large files with many theorems, the coq-lsp process may accumulate memory du
 
 The RSS threshold is configurable via environment variable (`POULE_LSP_RSS_LIMIT`, default 5 GiB), matching the indexing pipeline's strategy. The RSS check reads `/proc/{pid}/status` (Linux only; on other platforms, the check is a no-op).
 
-## Concurrency Model
-
-The campaign processes files sequentially by default. When `workers > 1`, multiple files are processed concurrently, each with its own coq-lsp process. Results are collected per-file-group and written in plan order to preserve deterministic output.
-
-Parallel file processing is acceptable because:
-- Each file has its own coq-lsp process — no shared state between workers
-- Results are written in plan order after each file group completes, preserving determinism
-- The `asyncio.Semaphore(workers)` bounds concurrent resource usage
-
 ## Design Rationale
 
 ### Why the orchestrator is a separate component from SessionManager
