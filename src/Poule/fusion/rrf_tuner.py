@@ -349,7 +349,7 @@ class RRFTuner:
                 "params": trial.params,
             })
 
-        return RRFTuningResult(
+        result = RRFTuningResult(
             best_k=best.params["rrf_k"],
             best_weights=best_weights,
             best_recall_32=best.value,
@@ -357,3 +357,16 @@ class RRFTuner:
             study_path=str(study_path),
             all_trials=all_trials,
         )
+
+        # Persist best parameters for downstream consumption
+        import json
+
+        params_path = output_dir / "best_params.json"
+        params_path.write_text(json.dumps({
+            "rrf_k": result.best_k,
+            "weights": result.best_weights,
+            "recall_32": result.best_recall_32,
+            "n_trials": result.n_trials,
+        }, indent=2) + "\n")
+
+        return result
