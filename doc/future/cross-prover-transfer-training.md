@@ -6,16 +6,18 @@ Future proposal — not scheduled for implementation.
 
 ## Problem
 
-Neural premise selection for Coq suffers from a data scarcity bottleneck. The Coq ecosystem has no equivalent of LeanDojo's continuously-updated extraction infrastructure, which produces millions of (proof_state, premise) pairs from Lean's Mathlib. Our extraction pipeline targets ~50K-100K pairs from stdlib + MathComp + stdpp + Flocq + Coquelicot + CoqInterval. By contrast:
+Neural premise selection for Coq suffers from a severe data scarcity bottleneck. The Coq ecosystem has no equivalent of LeanDojo's continuously-updated extraction infrastructure, which produces millions of (proof_state, premise) pairs from Lean's Mathlib. Our extraction pipeline processes ~134,000 proof records from stdlib + MathComp + stdpp + Flocq + Coquelicot + CoqInterval but yields only ~3,500 (proof_state, premises_used) training pairs — a 97% attrition rate caused by Coq's lack of per-tactic premise tracking (see §Problem below). By contrast:
 
 | System | Pairs | Unique premises | Source |
 |--------|-------|----------------|--------|
 | LeanHammer (Lean) | 5,817,740 | 265,348 | Mathlib extraction |
 | Magnushammer (Isabelle) | 4,400,000 | 433,000 | MAPL dataset |
 | ReProver (Lean) | 129,243 tactics | 130,262 | LeanDojo/Mathlib |
-| **Our pipeline (Coq)** | **~50K-100K** | **~30K-50K** | **stdlib + 5 libraries** |
+| **Our pipeline (Coq)** | **~3,500** | **~22,000** | **stdlib + 5 libraries** |
 
-Our training corpus is 50-100x smaller than the Lean/Isabelle datasets that produced the best retrieval models. While training data quality matters more than quantity (LeanHammer's masked contrastive loss + rich extraction outperformed ReProver despite similar data scale), the Coq training set covers fewer mathematical domains and proof patterns.
+Our training corpus is ~1,600× smaller than the Lean/Isabelle datasets that produced the best retrieval models. While training data quality matters more than quantity (LeanHammer's masked contrastive loss + rich extraction outperformed ReProver despite similar data scale), the Coq training set covers fewer mathematical domains and proof patterns.
+
+**Why 134K proof records yield only 3,500 pairs.** Coq's kernel does not track which lemmas a tactic step actually uses. When a tactic like `auto`, `omega`, `lia`, or `ring` discharges a goal, it invokes internal decision procedures that do not report the premises they consulted. The extraction pipeline can only record premises when Coq's proof state explicitly references them (e.g., `apply`, `rewrite`, `exact`). Most proof steps — especially those using automation — produce empty premise lists and are discarded as training data. In Lean, `rw` and `simp` record their lemma arguments in the proof term, so LeanDojo extracts a premise annotation from nearly every tactic step. This structural difference in kernel-level premise tracking is the primary reason for the 40:1 extraction efficiency gap between Lean and Coq.
 
 ## Proposed Approach
 

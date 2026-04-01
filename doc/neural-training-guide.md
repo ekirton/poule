@@ -79,7 +79,7 @@ The validator reports:
 - Unique premise count and premise frequency distribution (top 10)
 - Warnings for: >10% empty premises, malformed fields, <5,000 pairs, <1,000 unique premises, any premise >5% of all occurrences
 
-A minimum of 5,000 pairs is needed; the stdlib alone provides ~4,800. The six target libraries combined yield ~8,300 pairs.
+A minimum of 5,000 pairs is recommended; the stdlib alone provides ~2,100. The six target libraries combined yield ~3,500 pairs (stdlib 2,071, mathcomp 546, flocq 504, coqinterval 268, coquelicot 140, stdpp 0) from ~134,000 extracted proof records.
 
 ## Step 3: Build the vocabulary
 
@@ -160,11 +160,11 @@ Estimated wall time for a **single training run** on M2 Pro (32GB, MPS backend, 
 
 | `--sample` | Training pairs | Estimated wall time |
 |------------|---------------|---------------------|
-| `0.15` | ~1,100 | ~10 min |
-| `0.25` | ~1,800 | ~15 min |
-| `0.50` | ~3,600 | ~30 min |
-| `0.75` | ~5,300 | ~45 min |
-| *(none)* | ~7,100 | ~1 hour |
+| `0.15` | ~430 | ~5 min |
+| `0.25` | ~710 | ~8 min |
+| `0.50` | ~1,400 | ~15 min |
+| `0.75` | ~2,100 | ~25 min |
+| *(none)* | ~2,850 | ~35 min |
 
 Hyperparameter tuning (`poule tune`) runs 20 Optuna trials by default. With median pruning, roughly half the trials are killed early (after 3-4 epochs). The total cost is equivalent to approximately 8–12 full training runs.
 
