@@ -215,7 +215,7 @@ class TestTunableHyperparams:
         from Poule.neural.training.tuner import TUNABLE_HYPERPARAMS
 
         expected = {
-            "learning_rate", "batch_size",
+            "num_hidden_layers", "learning_rate", "batch_size",
             "weight_decay", "class_weight_alpha",
         }
         assert set(TUNABLE_HYPERPARAMS.keys()) == expected
@@ -238,11 +238,11 @@ class TestTunableHyperparams:
         assert cwa["high"] == 1.0
 
     def test_batch_size_choices(self):
-        """spec §4.8: batch_size is categorical {32, 64, 128}."""
+        """spec §4.8: batch_size is categorical {16, 32, 64}."""
         from Poule.neural.training.tuner import TUNABLE_HYPERPARAMS
 
         bs = TUNABLE_HYPERPARAMS["batch_size"]
-        assert set(bs["choices"]) == {32, 64, 128}
+        assert set(bs["choices"]) == {16, 32, 64}
 
     def test_weight_decay_range(self):
         """spec §4.8: weight_decay is log-uniform in [1e-4, 1e-1]."""
@@ -381,8 +381,9 @@ class TestHyperparameterTuner:
         result, _, _ = self._run_tune(tmp_path, n_trials=3)
         for trial in result.all_trials:
             hp = trial["hyperparams"]
+            assert hp["num_hidden_layers"] in {4, 6, 8, 12}
             assert 1e-6 <= hp["learning_rate"] <= 1e-4
-            assert hp["batch_size"] in {32, 64, 128}
+            assert hp["batch_size"] in {16, 32, 64}
             assert 1e-4 <= hp["weight_decay"] <= 1e-1
             assert 0.0 <= hp["class_weight_alpha"] <= 1.0
 
