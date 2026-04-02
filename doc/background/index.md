@@ -36,6 +36,14 @@ Surveys and analyses of the state of the art. Documents here describe what exist
 
 ---
 
+## Training Methods
+
+| File | Summary |
+|------|---------|
+| [class-imbalance.md](class-imbalance.md) | Class imbalance techniques for neural network training: loss re-weighting, decoupled training, data-level methods, and the finding that standard pipeline tuning can match specialized approaches. |
+
+---
+
 ## Semantic Search, Vector Databases, and MCP
 
 | File | Summary |
