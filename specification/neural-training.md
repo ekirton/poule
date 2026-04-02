@@ -230,6 +230,70 @@ Training data files use a compact JSONL format with two record types. Each line 
 
 Records with `"record_type"` (e.g., `campaign_metadata`, `extraction_summary`, `extraction_error`) are passed through unchanged for provenance.
 
+### 4.0.6 TacticCollapser
+
+Post-extraction preprocessing that merges per-library JSONL files into a single training file with normalized tactic families, addressing class imbalance caused by compound tactic parsing artifacts.
+
+#### collapse(input_paths, output_path, min_count, dry_run)
+
+- REQUIRES: `input_paths` is a non-empty list of paths to compact training data JSONL files. `output_path` is a writable file path. `min_count` is a positive integer (default: 50). `dry_run` is a boolean (default: false).
+- ENSURES: Reads all `"s"` records from input files, normalizes each record's tactic family via `normalize_tactic_family`, counts family occurrences across the full corpus, maps families below `min_count` to `"other"`, and writes all step records to `output_path` with the `"c"` field replaced by the final normalized family name. Returns a `CollapseReport`.
+- ENSURES: If `dry_run` is true, computes and returns the `CollapseReport` without writing the output file.
+- ENSURES: Input files are not modified.
+
+#### normalize_tactic_family(tactic_text)
+
+Extends `extract_tactic_family` with additional normalization rules for compound tactic fragments:
+
+1. Strip leading and trailing whitespace.
+2. Handle SSReflect: if the text starts with `by ` (followed by space), strip the `by ` prefix.
+3. Strip leading parentheses: `(apply` → `apply`, `(do` → `do`.
+4. Strip goal selector prefixes: `1:lia` → `lia`, `2:reflexivity` → `reflexivity`. Pattern: `^\d+:`.
+5. Split on `;` and take the first segment (compound tactic handling).
+6. Take the first whitespace-delimited token.
+7. Strip trailing punctuation (`.`, `;`, `:`, `?`, `-`).
+8. Lowercase.
+9. Apply alias mapping (same as `extract_tactic_family`: `intro` → `intros`, `Proof` → `intros`, `now` → `auto`).
+
+- REQUIRES: `tactic_text` is a string (may be empty).
+- ENSURES: Returns a lowercase string representing the normalized tactic family, or `"other"` if the input is empty or produces an empty result after normalization.
+
+> **Given** tactic text `"destruct(q_dec foo bar)"`
+> **When** `normalize_tactic_family` runs
+> **Then** returns `"destruct"` (parenthesized suffix is part of argument, first token after stripping is `destruct(q_dec`, leading paren stripped → `destruct`)
+
+Wait — the first token of `"destruct(q_dec foo bar)"` is `"destruct(q_dec"`. After stripping trailing non-alpha: `"destruct(q_dec"`. We need to handle embedded parens. Revised rule: after extracting the first token, strip everything from the first `(` onward.
+
+Revised step 6a: After extracting the first whitespace-delimited token, truncate at the first `(` character if present.
+
+> **Given** tactic text `"destruct(q_dec foo bar)."`
+> **When** `normalize_tactic_family` runs
+> **Then** returns `"destruct"` (first token `destruct(q_dec` truncated at `(`)
+
+> **Given** tactic text `"1:lia."`
+> **When** `normalize_tactic_family` runs
+> **Then** returns `"lia"` (goal selector `1:` stripped, trailing `.` stripped)
+
+> **Given** tactic text `"(apply H)."`
+> **When** `normalize_tactic_family` runs
+> **Then** returns `"apply"` (leading `(` stripped)
+
+> **Given** tactic text `"clear- x y"`
+> **When** `normalize_tactic_family` runs
+> **Then** returns `"clear"` (trailing `-` stripped)
+
+#### CollapseReport
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_records` | int | Total `"s"` records read from all input files |
+| `input_files` | int | Number of input files processed |
+| `families_before` | int | Distinct family count before min-count thresholding |
+| `families_after` | int | Distinct family count after thresholding (including "other") |
+| `collapsed_to_other` | int | Number of families merged into "other" |
+| `family_distribution` | list of (str, int) | Final family distribution sorted by count descending |
+| `output_path` | str or None | Path to written output file, or None if dry_run |
+
 ### 4.1 TrainingDataLoader
 
 #### load(jsonl_paths)

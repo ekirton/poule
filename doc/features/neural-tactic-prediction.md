@@ -83,3 +83,25 @@ The same argument as for premise retrieval: 100M-class models with INT8 quantiza
 
 - GIVEN a training dataset with imbalanced tactic family distribution WHEN training is configured THEN class weights are computed from inverse frequency and applied to the cross-entropy loss
 - GIVEN class-weighted training WHEN evaluated on minority tactic families THEN per-family recall is significantly higher than without weighting
+
+### Collapse Training Data
+
+**Priority:** P1
+**Stability:** Stable
+**Traces to:** R6-P1-7
+
+The raw extraction output contains 2,113 tactic families, but 1,330 (63%) are singletons and 1,808 (86%) have ≤5 examples. Many are parsing artifacts — compound tactics that were not fully normalized during extraction (e.g., `destruct(q_dec`, `1:lia`, `(do`). Training on this raw distribution wastes capacity on noise and inflates the "other" class.
+
+A collapse step merges per-library JSONL files into a single training file, normalizing tactic families by:
+1. Stripping parenthesized prefixes and suffixes that indicate compound tactic fragments
+2. Merging families below a configurable minimum count into "other"
+3. Applying alias mappings to consolidate variant spellings
+
+The original per-library files are preserved unchanged. The collapsed file is a derived artifact that can be regenerated with different parameters.
+
+**What this is not:** This is not a change to the extraction pipeline. Extraction continues to emit raw tactic text. Collapse is a post-extraction preprocessing step.
+
+- GIVEN per-library training JSONL files WHEN the collapse command runs with default settings THEN a single merged JSONL file is produced containing all step records with normalized tactic families
+- GIVEN the collapsed output WHEN tactic families are counted THEN no family has fewer than the configured minimum count (default 50), except "other"
+- GIVEN the original per-library files WHEN the collapse command completes THEN the originals are unchanged
+- GIVEN different `--min-count` values WHEN the collapse command is re-run THEN the output reflects the new threshold without re-extracting

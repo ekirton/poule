@@ -113,6 +113,57 @@ A lightweight tokenizer class wrapping the vocabulary JSON:
 - `encode_batch(texts, max_length=512)` -> batched tensors with padding
 - `vocab_size` property for embedding layer construction
 
+## Training Data Collapse
+
+A post-extraction preprocessing step that merges per-library JSONL files into a single training file with normalized tactic families. This addresses severe class imbalance in the raw extraction output: 2,113 raw families, of which 1,330 are singletons and many are parsing artifacts (compound tactic fragments like `destruct(q_dec`, `1:lia`).
+
+```
+poule collapse-training-data --min-count 50 --output training.jsonl training-stdlib.jsonl training-mathcomp.jsonl ...
+```
+
+### Pipeline
+
+```
+Per-library JSONL files (training-stdlib.jsonl, training-mathcomp.jsonl, ...)
+  │
+  │ 1. Read all "s" records
+  │ 2. Normalize tactic family (enhanced extraction)
+  │ 3. Count families across all inputs
+  │ 4. Merge rare families → "other"
+  │ 5. Write merged "s" records with updated "c" field
+  ▼
+Single collapsed JSONL file (training.jsonl)
+```
+
+### Enhanced Tactic Family Normalization
+
+Extends the existing `extract_tactic_family` with additional rules to clean up compound tactic fragments:
+
+1. **Strip parenthesized prefixes**: `destruct(q_dec` → `destruct`, `(apply` → `apply`, `(do` → `do`
+2. **Strip numeric prefixes**: `1:lia` → `lia`, `2:reflexivity` → `reflexivity`
+3. **Strip trailing modifiers**: `clear-` → `clear`, `split_and?` → `split`
+4. All existing normalization (SSReflect `by` stripping, alias mapping, lowercasing, punctuation stripping)
+
+### Output Format
+
+The collapsed file contains only `"s"` records. Metadata, goal, error, and summary records from the per-library files are not copied — the collapsed file is a pure training input. Each record's `"c"` field is replaced with the normalized tactic family name:
+
+```json
+{"t":"s", "f":"Arith/Plus.v", "s":"n : nat\n...", "c":"simpl"}
+```
+
+### Configurable Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--min-count` | 50 | Families with fewer occurrences are mapped to "other" |
+| `--output` | `training.jsonl` | Output file path |
+| `--dry-run` | false | Print family distribution without writing output |
+
+### Relationship to Data Loading
+
+The collapsed file is consumed by `TrainingDataLoader.load()` identically to the per-library files. The loader's existing `min_family_count` threshold still applies, but after collapse, most families already exceed it. The collapse step is optional — the training pipeline works with or without it.
+
 ## Data Loading
 
 ### Input Format

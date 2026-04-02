@@ -82,6 +82,7 @@ Cross-references:
 | ID | Requirement |
 |----|-------------|
 | R6-P1-1 | Provide a training data validation step that checks extracted `(proof_state, tactic_text)` pairs for completeness, tactic family distribution, and class imbalance before training |
+| R6-P1-7 | Provide a CLI command to collapse per-library training data into a single merged file with normalized tactic families, merging rare and malformed families into their parent tactic or an "other" class, so that the collapsed output can be regenerated with different parameters without modifying the original extraction output |
 | R6-P1-2 | Report training metrics (loss curves, validation accuracy@k) during and after training |
 | R6-P1-3 | Provide automated hyperparameter optimization that searches over training hyperparameters (learning rate, batch size, class weight exponent) to maximize validation accuracy@5, with early pruning |
 | R6-P1-4 | Normalize SSReflect compound tactics for classification: handle `move=>`, `apply/`, `rewrite !term`, and other SSReflect-specific syntax |
