@@ -2,18 +2,18 @@
 
 ## Status
 
-**Active development.** Replaces the abandoned neural premise selection approach (see [neural-network-search.md](neural-network-search.md) for why that failed). The extraction pipeline already captures ~105K (proof_state, tactic) pairs — 30x more training data than was available for premise retrieval.
+**Active development.** Replaces the abandoned neural premise selection approach (see [neural-network-search.md](neural-network-search.md) for why that failed). The extraction pipeline captures 140,358 (proof_state, tactic) steps across 136,936 unique states — 40x more training data than was available for premise retrieval.
 
 ## Problem
 
-The original neural training pipeline trained a bi-encoder to retrieve *premises* given a proof state. This required (proof_state, premises_used) pairs, but Coq's kernel does not track which lemmas each tactic consults. The result: the extraction pipeline captures ~134,000 proof records containing ~105,000 unique goal states, but only ~3,500 produce non-empty premise lists usable as training pairs — a 97% attrition rate.
+The original neural training pipeline trained a bi-encoder to retrieve *premises* given a proof state. This required (proof_state, premises_used) pairs, but Coq's kernel does not track which lemmas each tactic consults. The result: the extraction pipeline captures proof records but only ~3,500 produce non-empty premise lists usable as training pairs — a 97% attrition rate.
 
-However, the extraction pipeline *does* capture the tactic text at each step (`ExtractionStep.tactic`). Every goal state has the tactic that was applied to it, regardless of whether that tactic's premises are known. This represents a 30× larger training signal that is currently discarded in the compact output format.
+However, the extraction pipeline *does* capture the tactic text at each step (`ExtractionStep.tactic`). Every goal state has the tactic that was applied to it, regardless of whether that tactic's premises are known. This represents a 40× larger training signal.
 
 | Training signal | Available pairs | Source |
 |----------------|----------------|--------|
-| Premise retrieval (current) | ~3,500 | Steps with non-empty `premises` |
-| Tactic prediction (proposed) | ~105,000 | All steps with `tactic` text |
+| Premise retrieval (old) | ~3,500 | Steps with non-empty `premises` |
+| Tactic prediction (current) | 140,358 | All steps with `tactic` text |
 
 ## What is Tactic Prediction
 
@@ -38,30 +38,67 @@ The common thread: tactic prediction works well even without per-step premise an
 
 ## Proposed Approach
 
-### Phase 1: Emit tactic labels in extraction output
+### Phase 1: Emit tactic labels in extraction output (done)
 
-Extend `_write_result_compact` in `campaign.py` to emit a new record type `"s"` (step) containing the proof state and tactic text:
+The extraction pipeline emits JSONL training data with (proof_state, tactic) pairs. Validation of the current training corpus:
 
-```json
-{"t": "s", "f": "Arith/Plus.v", "s": "n : nat\nm : nat\nn + S m = S (n + m)", "c": "simpl"}
-```
+| Metric | Value |
+|--------|-------|
+| Total steps | 140,358 |
+| Unique states | 136,936 |
+| Missing tactic | 0 |
+| Malformed records | 0 |
+| Tactic families | 2,113 |
 
-Fields: `t` = record type, `f` = source file, `s` = serialized proof state, `c` = tactic command text.
+Top tactic families by frequency:
 
-This requires no changes to the extraction backend — the data is already in `ExtractionStep.tactic`. Only the compact output writer needs updating.
+| Family | Count | % |
+|--------|------:|--:|
+| `rewrite` | 26,950 | 19.2% |
+| `apply` | 24,562 | 17.5% |
+| `intros` | 10,702 | 7.6% |
+| `auto` | 5,692 | 4.1% |
+| `unfold` | 5,232 | 3.7% |
+| `have` | 4,184 | 3.0% |
+| `move=>` | 3,890 | 2.8% |
+| `case` | 3,834 | 2.7% |
+| `destruct` | 3,831 | 2.7% |
+| `-` | 3,240 | 2.3% |
+| `{` | 2,869 | 2.0% |
+| `assert` | 2,808 | 2.0% |
+| `exists` | 2,368 | 1.7% |
+| `elim` | 2,172 | 1.5% |
+| `exact` | 2,168 | 1.5% |
+| `replace` | 2,093 | 1.5% |
+| `simpl` | 1,941 | 1.4% |
+| `split` | 1,873 | 1.3% |
+| `move` | 1,616 | 1.2% |
+| `+` | 1,357 | 1.0% |
+
+The top 20 families cover ~80% of all steps. However, 2,011 families have fewer than 50 examples — these rare families will need grouping or exclusion during training.
 
 ### Phase 2: Tactic family classifier
 
-Train a classifier on (proof_state → tactic_family) using the bi-encoder architecture:
+Train a classifier on (proof_state → tactic_family) using a custom tokenizer and encoder:
 
-1. Tokenize the proof state using the existing CodeBERT tokenizer
-2. Encode via the bi-encoder's shared encoder (mean pooling → 768-dim)
+1. Tokenize the proof state using a Coq-specific vocabulary (see below)
+2. Encode via transformer encoder (mean pooling)
 3. Add a classification head mapping to the top-K tactic families
-4. Train with cross-entropy loss on ~105K (state, tactic_family) pairs
+4. Train with cross-entropy loss on 140K (state, tactic_family) pairs
 
-The tactic family vocabulary can be derived from the extraction data. A reasonable starting set (~30 families covering >95% of steps):
+#### Vocabulary
 
-`apply`, `rewrite`, `simpl`, `auto`, `induction`, `destruct`, `intros`, `exact`, `unfold`, `assert`, `exists`, `split`, `left`, `right`, `constructor`, `omega`/`lia`, `ring`, `reflexivity`, `symmetry`, `transitivity`, `case`, `elim`, `generalize`, `specialize`, `pose`, `set`, `change`, `pattern`, `ssreflect` (compound), `trivial`
+A Coq-specific vocabulary has been built from the index and training data:
+
+| Component | Tokens |
+|-----------|-------:|
+| Special tokens (`[PAD]`, `[UNK]`, `[CLS]`, `[SEP]`, `[MASK]`) | 5 |
+| Fixed tokens (punctuation, operators, scope annotations, Unicode symbols, Coq keywords) | 111 |
+| Index declarations (all 6 libraries) | 118,363 |
+| Training data tokens (from proof states) | 39,895 |
+| **Total vocabulary** | **158,374** |
+
+This domain-specific tokenizer avoids sub-word fragmentation of Coq identifiers — every declaration in the index and every token observed in training data gets a single vocabulary entry.
 
 ### Phase 3: Tactic argument retrieval
 
@@ -79,7 +116,7 @@ Expose tactic prediction as a new MCP tool `suggest_tactics` that takes a proof 
 
 ## Advantages Over Current Approach
 
-1. **30× more training data**: ~105K tactic-labeled states vs. ~3,500 premise pairs, from the same extraction output.
+1. **40× more training data**: 140K tactic-labeled states vs. ~3,500 premise pairs, from the same extraction output.
 2. **No kernel changes needed**: The tactic text is already captured by the extraction pipeline. Only the output format needs updating.
 3. **Complements premise retrieval**: Tactic prediction and premise retrieval are orthogonal — tactic prediction selects the *verb*, premise retrieval selects the *noun*. They can be combined.
 4. **Directly useful**: "You should try `induction n`" is more actionable than "these lemmas are relevant." Users of the MCP proof session tools would benefit immediately.
@@ -96,7 +133,7 @@ Coq tactics have complex syntax with arguments, combinators (`;`, `||`), and SSR
 
 ### Class imbalance
 
-Some tactics (`auto`, `simpl`, `intros`) dominate the distribution. The classifier needs class weighting or focal loss to avoid degenerate predictions.
+Some tactics (`rewrite` at 19.2%, `apply` at 17.5%) dominate the distribution while 2,011 of 2,113 families have fewer than 50 examples. The classifier needs class weighting or focal loss to avoid degenerate predictions, and rare families should be grouped or excluded.
 
 ### SSReflect proofs
 
@@ -111,18 +148,16 @@ Tactic prediction accuracy is not the same as proof completion rate. The model m
 
 ## Implementation Scope
 
-| Phase | Effort | Dependencies |
-|-------|--------|-------------|
-| Phase 1: Emit tactic records | Small | None — data already available |
-| Phase 2: Tactic classifier | Medium | Phase 1 + existing training infrastructure |
-| Phase 3: Argument retrieval | Medium | Phase 2 + existing premise retrieval |
-| Phase 4: MCP integration | Small | Phase 2 or 3 |
-
-Phase 1 is nearly free — it's a ~10-line change to `_write_result_compact`. Phase 2 reuses the existing bi-encoder training infrastructure with a classification head instead of contrastive loss.
+| Phase | Effort | Status |
+|-------|--------|--------|
+| Phase 1: Emit tactic records | Small | **Done** — 140K steps extracted, validated |
+| Phase 2: Tactic classifier | Medium | **In progress** — vocabulary built (158K tokens) |
+| Phase 3: Argument retrieval | Medium | Blocked on Phase 2 |
+| Phase 4: MCP integration | Small | Blocked on Phase 2 or 3 |
 
 ## Relationship to Other Work
 
 - **Complements**: premise retrieval (tactic prediction selects the verb, retrieval selects the noun)
 - **Supersedes**: cross-prover transfer training (uses existing Coq data instead of requiring Lean datasets)
 - **Enables**: proof search / auto-completion in the MCP proof session tools
-- **Blocked by**: nothing — the extraction data already exists
+- **Blocked by**: nothing — extraction data (140K steps) and vocabulary (158K tokens) are ready
