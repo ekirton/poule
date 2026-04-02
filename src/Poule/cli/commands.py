@@ -987,6 +987,78 @@ def cmd_quantize(checkpoint: str, output: str):
 
 
 # ---------------------------------------------------------------------------
+# collapse-training-data
+# ---------------------------------------------------------------------------
+
+
+@cli.command("collapse-training-data")
+@_json_option
+@click.argument("data", nargs=-1, required=True)
+@click.option(
+    "--output",
+    default="training.jsonl",
+    type=click.Path(),
+    help="Output file path (default: training.jsonl).",
+)
+@click.option(
+    "--min-count",
+    default=50,
+    type=int,
+    help="Minimum occurrences for a family to keep its own class (default: 50).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Print family distribution without writing output.",
+)
+def cmd_collapse_training_data(
+    json_mode: bool,
+    data: tuple[str, ...],
+    output: str,
+    min_count: int,
+    dry_run: bool,
+):
+    """Merge per-library training JSONL with normalized tactic families."""
+    from Poule.neural.training.collapse import TacticCollapser
+
+    jsonl_paths = _validate_input_files(data)
+
+    click.echo(
+        f"Collapsing {len(jsonl_paths)} input file(s), min_count={min_count}...",
+        err=True,
+    )
+
+    report = TacticCollapser.collapse(
+        jsonl_paths,
+        Path(output),
+        min_count=min_count,
+        dry_run=dry_run,
+    )
+
+    if json_mode:
+        click.echo(json.dumps(report.to_dict(), indent=2))
+    else:
+        click.echo(f"Input files:        {report.input_files}")
+        click.echo(f"Total step records: {report.total_records}")
+        click.echo(f"Families before:    {report.families_before}")
+        click.echo(f"Families after:     {report.families_after}")
+        click.echo(f"Collapsed to other: {report.collapsed_to_other}")
+        click.echo("")
+        click.echo("Family distribution:")
+        for name, count in report.family_distribution[:30]:
+            pct = count / report.total_records * 100 if report.total_records else 0
+            click.echo(f"  {name:20s} {count:>7d}  ({pct:5.1f}%)")
+        remaining = len(report.family_distribution) - 30
+        if remaining > 0:
+            click.echo(f"  ... and {remaining} more families")
+        if dry_run:
+            click.echo("\n(dry run — no output written)")
+        else:
+            click.echo(f"\nOutput written to: {report.output_path}")
+
+
+# ---------------------------------------------------------------------------
 # validate-training-data
 # ---------------------------------------------------------------------------
 
