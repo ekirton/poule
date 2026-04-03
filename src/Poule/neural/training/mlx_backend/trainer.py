@@ -105,6 +105,11 @@ class MLXTrainer:
         )
         mx.eval(model.parameters())
 
+        # Initialize with pre-trained CodeBERT weights for transfer learning
+        print("Loading CodeBERT weights...", flush=True)
+        model.load_codebert_weights()
+        mx.eval(model.parameters())
+
         # Compute class weights (inverse-frequency)
         class_weights = self._compute_class_weights(
             dataset.family_counts, dataset.label_map, num_classes,
@@ -132,30 +137,65 @@ class MLXTrainer:
             mask = mx.array(np.array(result["attention_mask"], dtype=np.int32))
             return ids, mask
 
+        # Pre-tokenize all training data to avoid per-batch tokenization cost.
+        # Pad all sequences to max_seq_length for uniform array shapes.
+        # Store actual lengths for length-bucketed batching.
+        print("Pre-tokenizing training data...", flush=True)
+        all_ids_np = np.zeros((len(train_pairs), max_seq_length), dtype=np.int32)
+        all_mask_np = np.zeros((len(train_pairs), max_seq_length), dtype=np.int32)
+        all_label_np = np.zeros(len(train_pairs), dtype=np.int32)
+        all_lengths = np.zeros(len(train_pairs), dtype=np.int32)
+        for i, (text, label) in enumerate(train_pairs):
+            ids, mask = tokenizer.encode(text, max_length=max_seq_length)
+            all_ids_np[i] = ids
+            all_mask_np[i] = mask
+            all_label_np[i] = label
+            all_lengths[i] = sum(mask)
+        # Sort by length for efficient length-bucketed batching
+        sort_idx = np.argsort(all_lengths)
+        all_ids_np = all_ids_np[sort_idx]
+        all_mask_np = all_mask_np[sort_idx]
+        all_label_np = all_label_np[sort_idx]
+        all_lengths = all_lengths[sort_idx]
+        all_ids = mx.array(all_ids_np)
+        all_masks = mx.array(all_mask_np)
+        all_labels = mx.array(all_label_np)
+        del all_ids_np, all_mask_np, all_label_np
+        print(
+            f"Pre-tokenized {len(train_pairs)} samples "
+            f"(lengths: median={int(np.median(all_lengths))}, "
+            f"mean={int(np.mean(all_lengths))}, max={int(all_lengths.max())})",
+            flush=True,
+        )
+
+        n_train = len(train_pairs)
+        # Pre-compute batch start indices for length-bucketed batching.
+        # Data is sorted by length; we shuffle batch ORDER each epoch
+        # so the model sees batches in random order while keeping
+        # similar-length samples together (avoids wasted attention on padding).
+        batch_starts = list(range(0, n_train, micro_batch_size))
+        total_micros = len(batch_starts)
+
         for epoch in range(1, max_epochs + 1):
-            # Shuffle training data
-            indices = list(range(len(train_pairs)))
-            random.shuffle(indices)
+            np.random.shuffle(batch_starts)
 
             epoch_loss = 0.0
             num_batches = 0
 
-            total_micros = (len(indices) + micro_batch_size - 1) // micro_batch_size
-            for batch_start in range(0, len(indices), micro_batch_size):
-                micro_idx = batch_start // micro_batch_size
-                if micro_idx % 50 == 0:
-                    print(f"  micro-batch {micro_idx}/{total_micros}", flush=True)
-                batch_indices = indices[batch_start:batch_start + micro_batch_size]
-                batch_pairs = [train_pairs[i] for i in batch_indices]
+            for bi, batch_start in enumerate(batch_starts):
+                if bi % 100 == 0:
+                    print(f"  micro-batch {bi}/{total_micros}", flush=True)
 
-                # Collect states and labels
-                states = [p[0] for p in batch_pairs]
-                labels = mx.array(
-                    np.array([p[1] for p in batch_pairs], dtype=np.int32)
-                )
+                end = min(batch_start + micro_batch_size, n_train)
+                s_ids_full = all_ids[batch_start:end]
+                s_mask_full = all_masks[batch_start:end]
+                labels = all_labels[batch_start:end]
 
-                # Tokenize states
-                s_ids, s_mask = _tokenize(states)
+                # Trim to actual max sequence length in this batch to
+                # reduce attention cost (O(n²)) for short-sequence batches.
+                actual_max = int(s_mask_full.sum(axis=1).max())
+                s_ids = s_ids_full[:, :actual_max]
+                s_mask = s_mask_full[:, :actual_max]
 
                 # Forward + backward
                 def loss_fn(model):
@@ -168,9 +208,6 @@ class MLXTrainer:
 
                 epoch_loss += float(loss)
                 num_batches += 1
-
-                # Free computation graph to prevent memory accumulation
-                del loss, grads, s_ids, s_mask, labels
 
             avg_loss = epoch_loss / max(num_batches, 1)
 

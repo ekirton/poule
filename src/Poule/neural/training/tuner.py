@@ -20,6 +20,24 @@ from Poule.neural.training.errors import (
 )
 from Poule.neural.training.trainer import TacticClassifierTrainer, load_checkpoint
 
+# ---------------------------------------------------------------------------
+# MLX backend detection
+# ---------------------------------------------------------------------------
+
+
+def _mlx_available() -> bool:
+    """Return True when running on macOS with Apple Silicon and MLX installed."""
+    import sys
+
+    if sys.platform != "darwin":
+        return False
+    try:
+        import mlx.core  # noqa: F401
+
+        return True
+    except (ImportError, ModuleNotFoundError):
+        return False
+
 logger = logging.getLogger(__name__)
 
 # spec §4.8: tunable hyperparameters with sampling ranges
@@ -65,6 +83,8 @@ class HyperparameterTuner:
         n_trials: int = 20,
         study_name: str = "poule-hpo",
         resume: bool = False,
+        hpo_max_epochs: int | None = None,
+        hpo_patience: int | None = None,
     ) -> TuningResult:
         """Run hyperparameter optimization.
 
@@ -75,6 +95,8 @@ class HyperparameterTuner:
             n_trials: Number of trials to run (default: 20).
             study_name: Optuna study name (default: "poule-hpo").
             resume: If True, resume an existing study from the SQLite DB.
+            hpo_max_epochs: Override max_epochs for HPO trials (default: use sampled value).
+            hpo_patience: Override early_stopping_patience for HPO trials.
 
         Returns:
             TuningResult with best hyperparameters and study statistics.
@@ -108,6 +130,10 @@ class HyperparameterTuner:
                 n_warmup_steps=3,
             ),
         )
+
+        use_mlx = _mlx_available()
+        if use_mlx:
+            logger.info("Using MLX backend for HPO (Apple Silicon GPU)")
 
         def objective(trial):
             # Sample hyperparameters from search space
@@ -150,33 +176,74 @@ class HyperparameterTuner:
                 ),
             }
 
+            # Apply HPO-specific epoch/patience overrides
+            if hpo_max_epochs is not None:
+                hp["max_epochs"] = hpo_max_epochs
+            if hpo_patience is not None:
+                hp["early_stopping_patience"] = hpo_patience
+
             def epoch_callback(epoch, val_accuracy):
                 trial.report(val_accuracy, epoch)
                 if trial.should_prune():
                     raise optuna.TrialPruned()
 
-            trial_output = output_dir / f"trial-{trial.number}.pt"
-            trainer = TacticClassifierTrainer(hyperparams=hp)
-
             try:
-                trainer.train(
-                    dataset,
-                    trial_output,
-                    vocabulary_path=vocabulary_path,
-                    epoch_callback=epoch_callback,
-                )
+                if use_mlx:
+                    from Poule.neural.training.mlx_backend.trainer import MLXTrainer
+
+                    trial_dir = output_dir / f"trial-{trial.number}"
+                    trainer = MLXTrainer()
+                    trainer.train(
+                        dataset,
+                        trial_dir,
+                        vocabulary_path=vocabulary_path,
+                        hyperparams=hp,
+                        epoch_callback=epoch_callback,
+                    )
+                    # Read best accuracy from text file
+                    acc_path = trial_dir / "best_accuracy_5.txt"
+                    if acc_path.exists():
+                        return float(acc_path.read_text().strip())
+                    # Fall back to converted .pt checkpoint
+                    pt_path = trial_dir / "model.pt"
+                    if pt_path.exists():
+                        checkpoint = load_checkpoint(pt_path)
+                        return checkpoint.get("best_accuracy_5", 0.0)
+                    return 0.0
+                else:
+                    trial_output = output_dir / f"trial-{trial.number}.pt"
+                    trainer = TacticClassifierTrainer(hyperparams=hp)
+                    # Build tokenizer
+                    if vocabulary_path:
+                        from Poule.neural.training.vocabulary import CoqTokenizer
+                        tokenizer = CoqTokenizer(vocabulary_path)
+                    else:
+                        from transformers import AutoTokenizer
+                        tokenizer = AutoTokenizer.from_pretrained(
+                            "microsoft/codebert-base"
+                        )
+                    trainer.train(
+                        dataset,
+                        tokenizer,
+                        output_path=trial_output,
+                        vocabulary_path=vocabulary_path,
+                        epoch_callback=epoch_callback,
+                    )
+                    checkpoint = load_checkpoint(trial_output)
+                    return checkpoint.get("best_accuracy_5", 0.0)
             except optuna.TrialPruned:
                 raise  # Let Optuna handle pruned trials
             except TrainingResourceError as e:
                 logger.warning("Trial %d OOM: %s", trial.number, e)
                 raise optuna.TrialPruned()  # Treat OOM as pruned
 
-            # Load checkpoint to get best accuracy@5
-            checkpoint = load_checkpoint(trial_output)
-            return checkpoint.get("best_accuracy_5", 0.0)
-
         def _cleanup_memory():
             gc.collect()
+            try:
+                import mlx.core as mx
+                mx.metal.reset_peak_memory()
+            except Exception:
+                pass
             try:
                 import torch
                 if torch.cuda.is_available():
@@ -199,10 +266,22 @@ class HyperparameterTuner:
 
         # Copy best trial's checkpoint to best-model.pt
         best_trial = study.best_trial
-        best_checkpoint_src = output_dir / f"trial-{best_trial.number}.pt"
         best_checkpoint_dst = output_dir / "best-model.pt"
-        if best_checkpoint_src.exists():
-            shutil.copy2(best_checkpoint_src, best_checkpoint_dst)
+        if use_mlx:
+            # MLX trials save to directories; use the converted model.pt
+            best_trial_dir = output_dir / f"trial-{best_trial.number}"
+            best_pt = best_trial_dir / "model.pt"
+            if best_pt.exists():
+                shutil.copy2(best_pt, best_checkpoint_dst)
+            elif best_trial_dir.exists():
+                # Trigger conversion
+                checkpoint = load_checkpoint(best_trial_dir)
+                import torch
+                torch.save(checkpoint, best_checkpoint_dst)
+        else:
+            best_checkpoint_src = output_dir / f"trial-{best_trial.number}.pt"
+            if best_checkpoint_src.exists():
+                shutil.copy2(best_checkpoint_src, best_checkpoint_dst)
 
         # Build result
         pruned_count = sum(
