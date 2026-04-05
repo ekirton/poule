@@ -19,9 +19,9 @@ Closed vocabulary (coq-vocabulary.json)
   ▼
 PyTorch checkpoint (.pt)
   │  poule evaluate
-  │  poule quantize
+  │  poule quantize (exports to ONNX)
   ▼
-INT8 ONNX model (tactic-predictor.onnx) + tactic-labels.json
+ONNX model (tactic-predictor.onnx) + tactic-labels.json
   │  placed in model directory
   ▼
 suggest_tactics MCP tool → neural predictions active
@@ -183,25 +183,25 @@ Reports accuracy@1, accuracy@5, per-family precision/recall, and a confusion mat
 - accuracy@1 < 40%
 - accuracy@5 < 80%
 
-## Step 6: Quantize for deployment
+## Step 6: Export to ONNX
 
-Convert the PyTorch checkpoint to INT8 ONNX for CPU inference.
+Export the PyTorch checkpoint to ONNX for cross-platform CPU inference.
 
 ```bash
 poule quantize --checkpoint model.pt --output tactic-predictor.onnx
 ```
 
-The quantization pipeline:
-1. Exports the model to ONNX (opset 17+)
-2. Applies dynamic INT8 quantization via ONNX Runtime
-3. Validates by comparing predicted labels on 100 random inputs — fails if agreement < 98%
+The export pipeline:
+1. Loads the checkpoint and reconstructs the model (respecting `num_hidden_layers`)
+2. Exports to ONNX via the torch dynamo exporter (opset 17+)
+3. Validates by comparing predicted labels between PyTorch and ONNX across 100 random inputs — fails if agreement < 98%
 4. Writes `tactic-labels.json` alongside the ONNX model (maps class index to family name)
 
-Result: ~25MB ONNX file, <50ms per prediction on CPU.
+The exported model is FP32. INT8 quantization is not applied — see the [design doc](neural-network-tactic-prediction.md) for rationale.
 
 ## Step 7: Deploy
 
-Place the quantized model and label file where the `suggest_tactics` MCP tool can find them:
+Place the ONNX model and label file where the `suggest_tactics` MCP tool can find them:
 
 ```bash
 # Default model directory
@@ -262,6 +262,6 @@ poule train \
 # 7. Evaluate
 poule evaluate --checkpoint model.pt --test-data training.jsonl --db index.db
 
-# 8. Quantize
+# 8. Export to ONNX
 poule quantize --checkpoint model.pt --output tactic-predictor.onnx
 ```
