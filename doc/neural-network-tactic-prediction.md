@@ -246,14 +246,100 @@ Tactic prediction accuracy is not the same as proof completion rate. The model m
 - Full tactic accuracy (exact match after normalization)
 - Proof closure rate (can the predicted tactic close the current goal when executed?)
 
+## Training Results
+
+### HPO results
+
+10-trial Optuna study on 114K training samples (13.8K validation, 12.4K test), 96 tactic family classes:
+
+| Trial | Layers | LR | Batch | alpha | label_smooth | sam_rho | val_acc@5 | Status |
+|-------|--------|----|-------|-------|-------------|---------|-----------|--------|
+| 0 | 6 | 2.1e-6 | 64 | 0.71 | 0.006 | 0.183 | 0.5296 | Complete |
+| 1 | **4** | **4.1e-6** | **16** | **0.14** | **0.088** | **0.030** | **0.6971** | **Best** |
+| 2 | 6 | 1.5e-5 | 32 | 0.95 | 0.290 | 0.113 | 0.4428 | Complete |
+| 3 | 8 | 1.8e-6 | 64 | 0.66 | 0.094 | 0.047 | 0.5731 | Complete |
+| 4 | 8 | 7.6e-5 | 64 | 0.20 | 0.014 | 0.027 | 0.5328 | Pruned |
+| 5 | 8 | 3.6e-6 | 64 | 0.99 | 0.232 | 0.018 | 0.2850 | Pruned |
+| 6 | 6 | 3.5e-5 | 32 | 0.62 | 0.099 | 0.012 | 0.5390 | Pruned |
+| 7 | 8 | 5.9e-5 | 64 | 0.56 | 0.231 | 0.044 | 0.5451 | Pruned |
+| 8 | 4 | 1.2e-6 | 16 | 0.25 | 0.123 | 0.096 | 0.6791 | Complete |
+| 9 | 4 | 1.2e-5 | 32 | 0.51 | 0.160 | 0.128 | 0.5451 | Pruned |
+
+HPO time: 51.9 hours on a 32 GiB Mac Mini (Apple M4, 10 CPU cores, MLX Metal GPU).
+
+**Key findings from HPO:**
+- **4-layer models dominate.** Both top trials used 4 layers. 6- and 8-layer models consistently underperformed, confirming Shwartz-Ziv et al.'s finding that larger models overfit on class-imbalanced data.
+- **Small batch size matters.** batch_size=16 appeared in the top 2 trials; batch_size=64 never won. This is consistent with class imbalance research showing smaller batches see more diverse class distributions per step.
+- **Low class_weight_alpha is better.** The best trial used alpha=0.14 (nearly uniform weights), not aggressive rebalancing. Over-weighting rare classes may hurt when the long tail contains noise (many of the 96 classes are SSReflect fragments with few examples).
+- **Moderate label smoothing helps.** The best trial used ε=0.088. High label smoothing (>0.2) consistently produced worse results — it likely over-softens the targets for classes with strong signal.
+
+### Final model results
+
+The final model was trained with trial 1's best hyperparameters for 20 epochs (patience=3). Early stopping triggered at epoch 10 (best: epoch 7).
+
+**Training curve:**
+
+| Epoch | Loss | val_acc@5 |
+|-------|------|-----------|
+| 1 | 2.977 | 0.6497 |
+| 2 | 2.703 | 0.6663 |
+| 3 | 2.550 | 0.6772 |
+| 4 | 2.423 | 0.6854 |
+| 5 | 2.306 | 0.6980 |
+| 6 | 2.202 | 0.7012 |
+| 7 | 2.107 | **0.7015** |
+| 8 | 2.015 | 0.6904 |
+| 9 | 1.923 | 0.6743 |
+| 10 | 1.832 | 0.6760 |
+
+Final training time: 7.6 hours (458 minutes).
+
+**Test set evaluation:**
+
+| Metric | Value |
+|--------|-------|
+| Accuracy@1 | 14.0% |
+| Accuracy@5 | 46.6% |
+
+**Per-family highlights (test set):**
+
+| Family | Precision | Recall | Notes |
+|--------|-----------|--------|-------|
+| `intros` | 0.647 | 0.204 | Best precision; high-confidence when predicted |
+| `rewrite` | 0.437 | 0.064 | Precise but rarely predicted |
+| `elim` | 0.290 | 0.027 | Very conservative |
+| `apply` | 0.249 | 0.369 | Most balanced of the major families |
+| `{` | 0.226 | 0.278 | Bullet markers well-learned |
+| `auto` | 0.089 | 0.440 | High recall, low precision (over-predicted) |
+| `other` | 0.110 | 0.323 | Catch-all absorbs uncertainty |
+| `destruct` | 0.026 | 0.246 | Low precision, confused with other case analysis |
+
+### Analysis: validation–test gap
+
+The model achieves 70.2% val_acc@5 but only 46.6% test_acc@5 — a 24 percentage-point gap. Several factors contribute:
+
+**1. 96 classes is too many for the training signal.** The collapse step reduced 2,113 raw families to 96 (min_count=50), but many of the resulting classes still have marginal training data. Of the 96 families, the model achieves non-zero recall on only ~10. The effective classifier is a ~10-class model with 86 dead classes.
+
+**2. SSReflect families inflate the class count.** Families like `apply/eqp`, `apply/matrixp`, `move/`, `case/andp` are SSReflect-specific compound tactics that were not fully normalized during collapse. They consume class capacity without contributing useful signal — all show 0.0 precision and recall.
+
+**3. Class weight alpha was too low.** The best HPO trial used alpha=0.14 (nearly uniform weights). This favors dominant classes (`apply`, `rewrite`, `intros`) at the expense of the mid-tier (`induction`, `simpl`, `reflexivity`, `split`) which all show 0.0 recall on the test set.
+
+**4. Validation and test splits may have different distributions.** The deterministic file-level split (position % 10) could place different libraries in different splits. If the validation set over-represents libraries with simpler tactic distributions, val_acc@5 will be inflated.
+
+**Recommended next steps:**
+1. **Reduce class count.** Increase min_family_count to 200-500, or manually curate a ~30-class vocabulary of the most useful tactic families. This would concentrate training signal on families the model can actually learn.
+2. **Normalize SSReflect compounds.** Strip `/`-suffixed variants (`apply/eqp` → `apply`, `move/` → `move`) during collapse, rather than treating them as separate families.
+3. **Increase class_weight_alpha.** Re-run HPO with alpha ∈ [0.3, 0.7] to give more weight to mid-tier families.
+4. **Stratified splitting.** Split by library rather than file position to ensure each split contains examples from all six libraries.
+
 ## Implementation Scope
 
 | Phase | Effort | Status |
 |-------|--------|--------|
 | Phase 1: Emit tactic records | Small | **Done** — 140K steps extracted, validated |
-| Phase 2: Tactic classifier | Medium | **In progress** — model, training pipeline, HPO tuner, and evaluator implemented; supports PyTorch (CUDA/CPU) and MLX (Apple Silicon) backends |
-| Phase 3: Argument retrieval | Medium | Blocked on Phase 2 |
-| Phase 4: MCP integration | Small | Blocked on Phase 2 or 3 |
+| Phase 2: Tactic classifier | Medium | **Done** — model trained (4-layer CodeBERT, 96 classes), val_acc@5=70.2%, test_acc@5=46.6%; see "Training Results" for analysis and next steps |
+| Phase 3: Argument retrieval | Medium | **Done** — ArgumentRetriever routes tactic families to retrieval strategies (type_match for apply/exact, equality filter for rewrite); integrated into suggest_tactics |
+| Phase 4: MCP integration | Small | **In progress** — neural predictions and argument retrieval integrated into suggest_tactics; pending ONNX quantization and deployment |
 
 ## Relationship to Other Work
 

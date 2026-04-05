@@ -79,6 +79,81 @@ At inference time, only the quantized ONNX export is used. The PyTorch model is 
 
 These assets are standalone — they are **not** part of the search index (`index.db`). They do not participate in library indexing or RRF fusion.
 
+## Tactic Argument Retrieval
+
+For tactic families that take lemma arguments, the argument retrieval layer queries the existing retrieval pipeline to find specific candidates. This produces full tactic suggestions (e.g., `apply Nat.add_comm`) instead of bare family names.
+
+### Component Diagram
+
+```
+TacticPredictor.predict(proof_state_text)
+  │
+  │ → [(family_name, confidence), ...]
+  ▼
+ArgumentRetriever.retrieve(family_name, goal, hypotheses, pipeline_context)
+  │
+  │ Routes to retrieval strategy based on tactic family:
+  │   apply/exact → search_by_type(goal.type)
+  │   rewrite     → search_by_type(goal.type) filtered to equalities
+  │   other       → no retrieval (family-only suggestion)
+  │
+  │ → [(full_tactic, score), ...]
+  ▼
+suggest_tactics MCP tool response
+  │
+  │ Merge: argument-enriched suggestions first, then family-only, then rule-based
+  ▼
+list[TacticSuggestion]
+```
+
+### ArgumentRetriever
+
+The `ArgumentRetriever` class maps tactic families to retrieval strategies:
+
+```
+class ArgumentRetriever:
+    pipeline_context: PipelineContext | None   # search index (may be absent)
+
+    retrieve(family, goal, hypotheses, limit=5) → list[(tactic_text, score)]
+```
+
+**Retrieval strategies by family:**
+
+| Family | Strategy | Rationale |
+|--------|----------|-----------|
+| `apply` | `search_by_type(goal.type, limit)` | Lemmas whose conclusion matches the goal type can be applied directly |
+| `exact` | `search_by_type(goal.type, limit)` | Same as `apply` but the match must be exact (no unification residuals) |
+| `rewrite` | `search_by_type(goal.type, limit)` filtered to equalities | Rewrite requires an equality lemma; filter results for `=` in the statement |
+| Others | No retrieval | Families like `intros`, `simpl`, `auto`, `destruct`, `induction` either take no arguments, take hypothesis names (already in context), or take non-lemma arguments |
+
+**Hypothesis-based candidates:** For `apply` and `rewrite`, hypotheses in the proof context are also candidates. Hypotheses whose type matches the goal (for `apply`) or contains an equality (for `rewrite`) are included alongside retrieval results, with a fixed high score.
+
+**Graceful degradation:** When `pipeline_context` is None (no search index loaded), the retriever returns an empty list and the system falls back to family-only suggestions.
+
+### Integration with suggest_tactics
+
+The argument retriever is called after neural prediction but before response construction:
+
+1. Neural predictor returns top-K families with confidence scores
+2. For each family with confidence >= threshold:
+   a. If the family takes lemma arguments, call `ArgumentRetriever.retrieve()`
+   b. For each candidate, construct a full tactic suggestion: `"{family} {candidate.name}"`
+   c. Score = family_confidence × candidate_retrieval_score
+3. Merge argument-enriched suggestions with family-only suggestions and rule-based suggestions
+4. Deduplicate and apply limit
+
+### Candidate Scoring
+
+Each argument candidate's final score combines two signals:
+
+```
+score = family_confidence × retrieval_score
+```
+
+where `family_confidence` is the neural classifier's softmax probability and `retrieval_score` is the retrieval pipeline's [0, 1] relevance score. This naturally ranks suggestions where both the tactic family and the argument are confident highest.
+
+---
+
 ## Differences from Previous Neural Retrieval Design
 
 The previous design (documented in `doc/neural-network-search.md`) used a bi-encoder to produce 768-dim embeddings for cosine similarity search over a FAISS index. That approach was abandoned because only ~3,500 training pairs could be extracted (insufficient for competitive retrieval quality).

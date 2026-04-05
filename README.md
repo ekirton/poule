@@ -18,16 +18,17 @@ Six Coq libraries are available as prebuilt indexes: **stdlib**, **MathComp**, *
 - **Structural** — Weisfeiler-Lehman graph kernels, tree edit distance, and collapse matching
 - **Symbol** — MePo-style iterative relevance filtering with weighted symbol overlap
 - **Lexical** — FTS5 full-text search over names, statements, and modules
-- **Tactic prediction** *(NYI)* — encoder-based tactic family classifier (INT8, CPU-only) for proof assistance via `suggest_tactics`
 - **Type** — multi-channel fusion combining all of the above
 - **Dependency navigation** — `uses`, `used_by`, `same_module`, `same_typeclass`
 
-### Neural Tactic Prediction *(NYI)*
+### Neural Tactic Prediction
 
-- Train a tactic family classifier on ~105K proof state/tactic pairs from six Coq libraries
-- Evaluate with accuracy@k and per-family precision/recall
-- Export to INT8 ONNX for <50ms CPU inference; integrate into `suggest_tactics` MCP tool
-- Graceful degradation — tactic suggestions work with rule-based fallbacks without a model
+- CodeBERT-based tactic family classifier trained on 140K proof state/tactic pairs from six Coq libraries
+- 4-layer transformer encoder with closed Coq vocabulary (158K tokens), 96 tactic family classes
+- Hyperparameter optimization via Optuna (TPE sampler, median pruning)
+- Training supports PyTorch (CUDA/CPU) and MLX (Apple Silicon GPU) backends
+- Argument retrieval: for `apply`, `rewrite`, `exact`, retrieves specific lemma candidates from the search index
+- Integrates into `suggest_tactics` MCP tool; falls back to rule-based suggestions without a model
 
 ### Proof Interaction
 

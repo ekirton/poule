@@ -23,7 +23,7 @@ Neural predictions are integrated into the existing `suggest_tactics` MCP tool:
 
 This is **not** a search channel. The tactic classifier is independent of the Semantic Lemma Search pipeline. It does not produce embeddings, does not participate in RRF fusion, and is not stored in the search index. It is a proof assistance capability exposed through the `suggest_tactics` tool.
 
-This is **not** full tactic generation. The classifier predicts tactic *families* (e.g., `rewrite`, `apply`, `induction`), not complete tactic text with arguments. Argument selection (e.g., which lemma to `apply`) is a separate concern addressed by the rule-based system and future work combining tactic prediction with premise retrieval.
+This is **not** full tactic generation. The classifier predicts tactic *families* (e.g., `rewrite`, `apply`, `induction`), not arbitrary tactic text. For families that take lemma arguments, the argument retrieval layer (see below) suggests specific candidates from the search index — but it does not generate novel argument expressions or handle tactic combinators.
 
 ## Design Rationale
 
@@ -105,3 +105,32 @@ The original per-library files are preserved unchanged. The collapsed file is a 
 - GIVEN the collapsed output WHEN tactic families are counted THEN no family has fewer than the configured minimum count (default 50), except "other"
 - GIVEN the original per-library files WHEN the collapse command completes THEN the originals are unchanged
 - GIVEN different `--min-count` values WHEN the collapse command is re-run THEN the output reflects the new threshold without re-extracting
+
+### Retrieve Tactic Arguments from Search Index
+
+**Priority:** P2
+**Stability:** Draft
+**Traces to:** R6-P2-2
+
+For tactic families that take lemma arguments (`apply`, `rewrite`, `exact`), the system retrieves candidate arguments from the search index and produces full tactic suggestions (e.g., `apply Nat.add_comm`). This bridges the gap between family-level prediction ("use `apply`") and actionable proof advice ("use `apply Nat.add_comm`").
+
+The argument retrieval layer sits between the tactic family classifier and the `suggest_tactics` response. It uses the existing multi-channel retrieval pipeline — type-based search for `apply`/`exact` (lemmas whose conclusion matches the goal), symbol-based search for `rewrite` (equalities involving goal symbols) — without modifying the retrieval pipeline itself.
+
+**What this provides:**
+- Full tactic suggestions with specific lemma names for argument-taking tactic families
+- Retrieval strategies tailored per tactic family (type matching for `apply`, equality filtering for `rewrite`)
+- Integration into the existing `suggest_tactics` MCP tool response
+
+**What this does not provide:**
+- Argument retrieval for tactics that take proof terms, introduction patterns, or non-lemma arguments (e.g., `induction n`, `destruct (pair_dec x y)`)
+- Novel argument expression generation — candidates come only from the search index
+- Any changes to the search index, retrieval channels, or RRF fusion logic
+
+**Acceptance criteria:**
+
+- GIVEN a neural prediction of `apply` and a search index WHEN argument retrieval runs THEN candidates are lemmas whose conclusion type matches the focused goal type, ranked by retrieval score
+- GIVEN a neural prediction of `rewrite` and a search index WHEN argument retrieval runs THEN candidates are lemmas that are equalities containing symbols present in the goal, ranked by retrieval score
+- GIVEN a neural prediction of `exact` and a search index WHEN argument retrieval runs THEN candidates are lemmas whose type exactly matches the goal type, ranked by retrieval score
+- GIVEN a neural prediction with argument candidates WHEN merged into `suggest_tactics` output THEN each candidate appears as a full tactic suggestion (e.g., `apply Nat.add_comm`) with the candidate's retrieval score informing confidence
+- GIVEN a neural prediction for a family that takes arguments but no search index is loaded WHEN argument retrieval runs THEN the family-only suggestion is returned without error
+- GIVEN a neural prediction for a family that does not take lemma arguments (e.g., `intros`, `simpl`, `auto`) WHEN argument retrieval runs THEN no retrieval is attempted and the family-only suggestion is returned

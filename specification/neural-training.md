@@ -1152,3 +1152,104 @@ The `tactic_suggest()` function in `src/Poule/tactics/suggest.py` integrates neu
 > **Given** a `suggest_tactics` call with no trained model
 > **When** the tool executes
 > **Then** only rule-based suggestions are returned (existing behavior, unchanged)
+
+### 8.3 ArgumentRetriever
+
+The `ArgumentRetriever` class in `src/Poule/tactics/argument_retriever.py` resolves tactic family predictions into full tactic suggestions by querying the retrieval pipeline for lemma candidates.
+
+#### Constructor
+
+```python
+ArgumentRetriever(pipeline_context: PipelineContext | None)
+```
+
+- REQUIRES: `pipeline_context` is either a valid `PipelineContext` with a loaded search index, or `None`.
+- ENSURES: When `pipeline_context` is None, all calls to `retrieve()` return an empty list.
+
+#### Tactic family classification
+
+Each tactic family is classified as either **argument-taking** or **argument-free**:
+
+| Classification | Families | Behavior |
+|---|---|---|
+| Argument-taking (type match) | `apply`, `exact` | Retrieve lemmas whose conclusion matches the goal type |
+| Argument-taking (rewrite) | `rewrite` | Retrieve equality lemmas containing symbols from the goal |
+| Argument-free | All others (`intros`, `simpl`, `auto`, `destruct`, `induction`, `unfold`, `split`, `case`, etc.) | No retrieval; return empty list |
+
+This classification is defined as a constant mapping `ARGUMENT_FAMILIES: dict[str, str]` where the key is the tactic family name and the value is the retrieval strategy name (`"type_match"` or `"rewrite"`).
+
+#### retrieve(family, goal_type, hypotheses, limit=5)
+
+```python
+def retrieve(
+    self,
+    family: str,
+    goal_type: str,
+    hypotheses: list[Hypothesis],
+    limit: int = 5,
+) -> list[ArgumentCandidate]
+```
+
+- REQUIRES: `family` is a tactic family name. `goal_type` is the focused goal's type string. `hypotheses` is the list of hypotheses in scope. `limit >= 1`.
+- ENSURES: Returns a list of `ArgumentCandidate` objects, each containing a lemma name and a retrieval score in [0.0, 1.0]. The list has at most `limit` entries, sorted by score descending.
+- ENSURES: If `family` is not in `ARGUMENT_FAMILIES`, returns an empty list.
+- ENSURES: If `pipeline_context` is None, returns an empty list.
+- ENSURES: If the retrieval pipeline raises an exception, catches it, logs a warning, and returns an empty list.
+
+**Strategy: type_match** (for `apply`, `exact`):
+1. Call `search_by_type(pipeline_context, goal_type, limit=limit * 2)` to find lemmas whose type structurally matches the goal.
+2. Also scan hypotheses: any hypothesis whose type string equals the goal type is included as a candidate with score 1.0.
+3. Deduplicate by name (hypotheses take priority over index results).
+4. Return the top `limit` candidates.
+
+**Strategy: rewrite** (for `rewrite`):
+1. Call `search_by_type(pipeline_context, goal_type, limit=limit * 3)` to find lemmas related to the goal.
+2. Filter results to those whose statement contains `=` (equality lemmas).
+3. Also scan hypotheses: any hypothesis whose type contains `=` is included as a candidate with score 1.0.
+4. Deduplicate by name (hypotheses take priority).
+5. Return the top `limit` candidates.
+
+> **Given** a neural prediction of `apply` with confidence 0.35, a goal type `n + 0 = n`, and a search index
+> **When** `retrieve("apply", "n + 0 = n", hypotheses, limit=3)` is called
+> **Then** returns up to 3 `ArgumentCandidate` objects, e.g., `[ArgumentCandidate("Nat.add_0_r", 0.82), ...]`
+
+> **Given** a neural prediction of `rewrite` and a goal type `n + 0 = n`
+> **When** `retrieve("rewrite", "n + 0 = n", hypotheses, limit=3)` is called
+> **Then** returns candidates that are equality lemmas, filtered from retrieval results
+
+> **Given** a neural prediction of `simpl`
+> **When** `retrieve("simpl", goal_type, hypotheses)` is called
+> **Then** returns an empty list (simpl is argument-free)
+
+> **Given** no search index loaded (pipeline_context is None)
+> **When** `retrieve("apply", goal_type, hypotheses)` is called
+> **Then** returns an empty list
+
+#### ArgumentCandidate
+
+```python
+@dataclass(frozen=True)
+class ArgumentCandidate:
+    name: str       # Lemma name (e.g., "Nat.add_0_r")
+    score: float    # Retrieval score in [0.0, 1.0]
+```
+
+### 8.4 Integration of argument retrieval with suggest_tactics
+
+The `tactic_suggest()` function is extended to call `ArgumentRetriever` after neural prediction:
+
+1. Neural predictor returns top-K families with confidence scores (existing §8.2 behavior).
+2. For each neural prediction with confidence >= 0.1:
+   a. Call `ArgumentRetriever.retrieve(family, goal_type, hypotheses, limit=3)`.
+   b. For each `ArgumentCandidate`, construct a `TacticSuggestion` with `tactic="{family} {candidate.name}"`, `confidence` derived from `family_confidence × candidate.score`, and `source="neural+retrieval"`.
+3. Insert argument-enriched suggestions immediately after their parent family suggestion.
+4. The family-only suggestion is preserved (it remains useful when the argument candidates are wrong).
+5. Apply deduplication and limit as before.
+
+- ENSURES: When `ArgumentRetriever` returns no candidates for a family, the family-only suggestion is still included.
+- ENSURES: Argument-enriched suggestions have `source="neural+retrieval"` to distinguish them from family-only neural suggestions (`source="neural"`) and rule-based suggestions (`source="rule"`).
+- ENSURES: The `ArgumentRetriever` is initialized once (lazy singleton) alongside the `TacticPredictor`, using the same `PipelineContext` as the retrieval pipeline.
+
+> **Given** a neural prediction of `apply` (confidence 0.35) and retrieval returning `Nat.add_0_r` (score 0.82)
+> **When** suggestions are constructed
+> **Then** the output includes both `TacticSuggestion(tactic="apply", source="neural")` and `TacticSuggestion(tactic="apply Nat.add_0_r", source="neural+retrieval")`

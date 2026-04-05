@@ -41,6 +41,47 @@ def _get_predictor():
     return _predictor
 
 
+# ---------------------------------------------------------------------------
+# Argument retriever (lazy singleton)
+# ---------------------------------------------------------------------------
+
+_retriever = None  # type: ignore[assignment]
+_retriever_checked = False
+
+
+def _get_retriever():
+    """Return the ArgumentRetriever singleton, or None if unavailable."""
+    global _retriever, _retriever_checked
+    if _retriever_checked:
+        return _retriever
+    _retriever_checked = True
+    try:
+        from Poule.tactics.argument_retriever import ArgumentRetriever
+
+        _retriever = ArgumentRetriever(pipeline_context=None)
+        logger.debug("Argument retriever initialized (no pipeline context yet)")
+    except Exception:
+        logger.debug("Argument retriever not available", exc_info=True)
+    return _retriever
+
+
+def set_retriever_context(pipeline_context) -> None:
+    """Set the pipeline context for argument retrieval.
+
+    Called when the search index is loaded, enabling argument retrieval
+    for tactic suggestions.
+    """
+    global _retriever, _retriever_checked
+    _retriever_checked = True
+    try:
+        from Poule.tactics.argument_retriever import ArgumentRetriever
+
+        _retriever = ArgumentRetriever(pipeline_context=pipeline_context)
+        logger.info("Argument retriever loaded with pipeline context")
+    except Exception:
+        logger.debug("Argument retriever setup failed", exc_info=True)
+
+
 class TacticDocError(Exception):
     """Error raised by tactic suggestion operations."""
 
@@ -402,12 +443,15 @@ async def tactic_suggest(
             proof_state_text = "\n".join(lines)
 
             predictions = predictor.predict(proof_state_text, top_k=5)
+            retriever = _get_retriever()
+
             for family_name, confidence in predictions:
                 conf_label = (
                     "high" if confidence >= 0.3
                     else "medium" if confidence >= 0.1
                     else "low"
                 )
+                # Family-only suggestion
                 neural_suggestions.append(
                     TacticSuggestion(
                         tactic=family_name,
@@ -418,6 +462,34 @@ async def tactic_suggest(
                         source="neural",
                     )
                 )
+                # Argument-enriched suggestions (spec §8.4)
+                if retriever is not None and confidence >= 0.1:
+                    try:
+                        candidates = retriever.retrieve(
+                            family_name, goal_type, hypotheses, limit=3,
+                        )
+                        for cand in candidates:
+                            combined_score = confidence * cand.score
+                            arg_conf = (
+                                "high" if combined_score >= 0.25
+                                else "medium" if combined_score >= 0.08
+                                else "low"
+                            )
+                            neural_suggestions.append(
+                                TacticSuggestion(
+                                    tactic=f"{family_name} {cand.name}",
+                                    rank=0,
+                                    rationale=f"Neural prediction + retrieval ({cand.name}, score: {cand.score:.0%})",
+                                    confidence=arg_conf,
+                                    category="neural",
+                                    source="neural+retrieval",
+                                )
+                            )
+                    except Exception:
+                        logger.debug(
+                            "Argument retrieval failed for %s", family_name,
+                            exc_info=True,
+                        )
         except Exception:
             logger.debug("Neural prediction failed, falling back to rules", exc_info=True)
 

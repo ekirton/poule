@@ -91,11 +91,23 @@ The vocabulary is constructed from two sources:
 
 ## Step 4: Train the model
 
-Train a tactic family classifier from the extracted data. Runs on NVIDIA GPU or CPU; 8GB+ RAM recommended.
+Train a tactic family classifier from the extracted data. Supports three backends:
 
-**Install training dependencies** — torch must be installed separately because the default PyPI wheel bundles ~2.6GB of CUDA libraries:
+| Backend | Platform | Requirements |
+|---------|----------|--------------|
+| MLX | macOS with Apple Silicon | `pip install "mlx>=0.18"` — uses unified memory GPU |
+| PyTorch (CUDA) | Linux/Windows with NVIDIA GPU | `pip install torch` — 8GB+ VRAM recommended |
+| PyTorch (CPU) | Any | `pip install torch --index-url https://download.pytorch.org/whl/cpu` |
+
+On macOS with Apple Silicon, the MLX backend is selected automatically. It trains on the Metal GPU and saves checkpoints in safetensors format, which are auto-converted to PyTorch `.pt` for downstream inference.
+
+**Install training dependencies:**
 
 ```bash
+# macOS with Apple Silicon (recommended for training)
+pip install "mlx>=0.18"
+pip install -e '.[train]'
+
 # CPU-only (containers, CI, machines without a GPU)
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -e '.[train]'
@@ -125,10 +137,39 @@ poule train \
 The `--sample` flag randomly sub-samples the training split to the given fraction. Validation and test splits are not affected. **This is for test runs only.**
 
 Training details:
-- **Architecture**: CodeBERT encoder (125M params) with closed-vocabulary embedding layer, mean pooling, linear classification head (~30 classes)
-- **Loss**: Class-weighted cross-entropy (inverse-frequency weighting handles the long-tailed tactic distribution)
+- **Architecture**: CodeBERT encoder initialized from `microsoft/codebert-base`, with closed-vocabulary embedding layer (158K tokens), mean pooling, and linear classification head (96 classes)
+- **Encoder depth**: Configurable `num_hidden_layers` ∈ {4, 6, 8, 12}. When fewer than 12 layers are used, layers are selected at evenly spaced indices from CodeBERT's 12 layers (layer dropping)
+- **Loss**: Class-weighted cross-entropy with label smoothing. Weights use tunable inverse-frequency power law: `weight[c] = (total / (num_classes × count[c])) ^ alpha`
 - **Split**: Deterministic file-level split — position % 10 == 8 → validation, == 9 → test, rest → training
-- **Early stopping**: Halts when validation accuracy@5 fails to improve for 3 consecutive epochs
+- **Early stopping**: Halts when validation accuracy@5 fails to improve for `patience` consecutive epochs (default 3)
+- **MLX training**: Pre-tokenizes all data, uses length-bucketed batching to reduce attention cost on variable-length sequences, evaluates lazily per micro-batch
+
+### Hyperparameter optimization
+
+The training pipeline includes an Optuna-based hyperparameter tuner that searches over model architecture and training configuration jointly:
+
+```bash
+poule tune \
+  --vocabulary coq-vocabulary.json \
+  --db index.db \
+  --output hpo-results/ \
+  --n-trials 10 \
+  training-data.jsonl
+```
+
+The tuner searches over 7 hyperparameters:
+
+| Hyperparameter | Range |
+|---|---|
+| `num_hidden_layers` | {4, 6, 8, 12} |
+| `learning_rate` | [1e-6, 1e-4] log-uniform |
+| `batch_size` | {16, 32, 64} |
+| `weight_decay` | [1e-4, 1e-1] log-uniform |
+| `class_weight_alpha` | [0.0, 1.0] |
+| `label_smoothing` | [0.0, 0.3] |
+| `sam_rho` | [0.01, 0.2] log-uniform |
+
+The study uses TPE sampling with a MedianPruner (3 startup trials, 3 warmup epochs). Study state persists to SQLite (`hpo-study.db`) for crash recovery with `--resume`. The best trial's checkpoint is copied to `best-model.pt`.
 
 ## Step 5: Evaluate the model
 
@@ -196,16 +237,31 @@ poule build-vocabulary \
   --output coq-vocabulary.json \
   training-data.jsonl
 
-# 4. Train model
+# 4. Collapse training data (normalize tactic families, merge rare into "other")
+poule collapse-training-data \
+  --min-count 50 \
+  --output training.jsonl \
+  training-data.jsonl
+
+# 5. HPO (optional but recommended — finds best architecture + hyperparameters)
+poule tune \
+  --vocabulary coq-vocabulary.json \
+  --db index.db \
+  --output hpo-results/ \
+  --n-trials 10 \
+  training.jsonl
+
+# 6. Train final model with best hyperparameters
 poule train \
   --vocabulary coq-vocabulary.json \
   --db index.db \
   --output model.pt \
-  training-data.jsonl
+  --hyperparams hpo-results/best-hyperparams.json \
+  training.jsonl
 
-# 5. Evaluate
-poule evaluate --checkpoint model.pt --test-data training-data.jsonl --db index.db
+# 7. Evaluate
+poule evaluate --checkpoint model.pt --test-data training.jsonl --db index.db
 
-# 6. Quantize
+# 8. Quantize
 poule quantize --checkpoint model.pt --output tactic-predictor.onnx
 ```
