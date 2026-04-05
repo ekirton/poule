@@ -313,9 +313,9 @@ class TacticClassifierTrainer:
         class_weights = compute_class_weights(
             family_counts, label_map, num_classes, alpha=alpha,
         ).to(device)
-        criterion = nn.CrossEntropyLoss(
-            weight=class_weights,
-            label_smoothing=label_smoothing,
+        from Poule.neural.training.loss import class_conditional_cross_entropy
+        criterion = lambda logits, labels: class_conditional_cross_entropy(
+            logits, labels, class_weights, label_smoothing,
         )
 
         # Optimizer: SAM-AdamW or plain AdamW

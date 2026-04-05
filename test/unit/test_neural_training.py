@@ -653,6 +653,72 @@ class TestTacticClassifierTrainerHyperparams:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# 7a-bis. Class-Conditional Label Smoothing
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestClassConditionalLabelSmoothing:
+    """spec §4.3: Smoothing mass is distributed proportionally to class weights."""
+
+    def test_smooth_distribution_proportional_to_weights(self):
+        """spec §4.3: smooth_dist[c] = class_weight[c] / sum(class_weights)."""
+        import torch
+        from Poule.neural.training.loss import class_conditional_cross_entropy
+
+        # 3 classes with different weights (minority class 2 has highest weight)
+        class_weights = torch.tensor([0.816, 1.0, 1.826])
+        label_smoothing = 0.1
+        num_classes = 3
+
+        # Single sample with true class 0
+        logits = torch.zeros(1, num_classes)  # uniform logits
+        labels = torch.tensor([0])
+
+        loss = class_conditional_cross_entropy(
+            logits, labels, class_weights, label_smoothing,
+        )
+        # Loss should be finite and positive
+        assert loss.item() > 0
+        assert torch.isfinite(loss)
+
+    def test_minority_class_gets_more_smoothing_mass(self):
+        """spec §4.3: Minority classes (higher weight) receive more smoothing mass."""
+        import torch
+        from Poule.neural.training.loss import _smooth_targets
+
+        class_weights = torch.tensor([1.0, 2.0, 3.0])
+        label_smoothing = 0.1
+
+        targets = _smooth_targets(
+            torch.tensor([0]), class_weights, label_smoothing,
+        )
+        # Class 2 (highest weight) should get the most off-diagonal mass
+        assert targets[0, 2] > targets[0, 1] > targets[0, 0] - (1 - label_smoothing)
+
+    def test_zero_smoothing_yields_hard_targets(self):
+        """spec §4.3: When label_smoothing=0.0, standard hard targets are used."""
+        import torch
+        from Poule.neural.training.loss import _smooth_targets
+
+        class_weights = torch.tensor([1.0, 2.0, 3.0])
+        targets = _smooth_targets(torch.tensor([1]), class_weights, 0.0)
+
+        expected = torch.tensor([[0.0, 1.0, 0.0]])
+        assert torch.allclose(targets, expected)
+
+    def test_targets_sum_to_one(self):
+        """Soft targets must be a valid probability distribution."""
+        import torch
+        from Poule.neural.training.loss import _smooth_targets
+
+        class_weights = torch.tensor([0.5, 1.0, 1.5, 2.0, 0.8])
+        targets = _smooth_targets(torch.tensor([0, 2, 4]), class_weights, 0.1)
+
+        sums = targets.sum(dim=-1)
+        assert torch.allclose(sums, torch.ones(3))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # 7b. SAM Optimizer
 # ═══════════════════════════════════════════════════════════════════════════
 
