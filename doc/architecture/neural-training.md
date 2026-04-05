@@ -220,7 +220,16 @@ weight[c] = (total_samples / (num_classes * count[c])) ^ alpha
 
 where `alpha` controls the strength of rebalancing (default 0.5; tunable via HPO).
 
-Label smoothing replaces hard targets y=1 with y = 1 - ε + ε/K, where K is the number of classes and ε is the smoothing parameter (default 0.1). This prevents overconfident predictions and acts as a regularizer, especially for minority classes that are prone to overfitting due to limited examples. Shwartz-Ziv et al. (2023) confirm that label smoothing is "greatly amplified on imbalanced data."
+Label smoothing replaces hard targets y=1 with soft targets. Class-conditional smoothing distributes the smoothing mass ε proportionally to the class weights rather than uniformly across classes:
+
+```
+smooth_distribution[c] = class_weight[c] / sum(class_weights)
+y_target = (1 - ε) * one_hot(label) + ε * smooth_distribution
+```
+
+This directs more smoothing probability mass toward minority classes (which have higher class weights), acting as targeted regularization against overfitting on underrepresented groups. Standard uniform smoothing distributes ε/K to every class regardless of frequency, wasting smoothing budget on already-overrepresented head classes. Shwartz-Ziv et al. (2023) confirm that class-conditional smoothing "prevents overfitting on underrepresented groups" and that its effect is "greatly amplified on imbalanced data."
+
+When `label_smoothing=0.0`, standard hard targets are used (backward compatible).
 
 ### Optimizer: SAM-AdamW
 

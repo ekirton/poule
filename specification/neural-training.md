@@ -457,7 +457,7 @@ All steps from the same file go into the same split.
 
 | Parameter | Default | Constraint |
 |-----------|---------|-----------|
-| `num_hidden_layers` | 6 | Must be in {4, 6, 8, 12} |
+| `num_hidden_layers` | 6 | Must be in {4, 6, 12} |
 | `batch_size` | 16 | Must be positive |
 | `learning_rate` | 2e-5 | Must be positive |
 | `weight_decay` | 1e-2 | Must be non-negative |
@@ -520,11 +520,7 @@ Default `num_hidden_layers` is 6. Single forward pass per batch. No premise enco
   3. Mean pooling: `sum(output * mask.unsqueeze(-1)) / sum(mask).unsqueeze(-1)` per sequence
   4. Linear projection: `nn.Linear(768, num_classes)` → `[B, num_classes]`
 
-#### Class-weighted cross-entropy loss with label smoothing
-
-```
-loss = CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)(logits, labels)
-```
+#### Class-weighted cross-entropy loss with class-conditional label smoothing
 
 Class weights are computed from inverse frequency:
 
@@ -534,18 +530,26 @@ weight[c] = (total_samples / (num_classes * count[c])) ^ alpha
 
 where `alpha` is `class_weight_alpha` (default 0.5). When `alpha=0`, all weights are 1.0 (no rebalancing). When `alpha=1`, weights are fully inverse-frequency.
 
-Label smoothing parameter `label_smoothing` (default 0.1) replaces hard targets with soft targets: y = 1 - ε + ε/K for the correct class, y = ε/K for incorrect classes, where K is the number of classes. When `label_smoothing=0.0`, standard hard targets are used (backward compatible).
+Label smoothing parameter `label_smoothing` (default 0.1) replaces hard targets with class-conditional soft targets. The smoothing mass ε is distributed proportionally to the class weights rather than uniformly:
+
+```
+smooth_dist[c] = class_weight[c] / sum(class_weights)
+y_target = (1 - ε) * one_hot(label) + ε * smooth_dist
+loss = -sum(y_target * log_softmax(logits)) * class_weight[label] / mean(class_weight[labels])
+```
+
+This directs more smoothing probability mass toward minority classes (which have higher class weights). When `label_smoothing=0.0`, standard hard targets are used (backward compatible with uniform smoothing at ε=0).
 
 - MAINTAINS: Class weights are computed once from the training split before training begins and remain fixed throughout training.
-- MAINTAINS: Label smoothing is applied via PyTorch's built-in `CrossEntropyLoss(label_smoothing=...)` parameter. No custom loss function is needed.
+- MAINTAINS: The smooth distribution is derived from the same class weights used for loss weighting. No additional hyperparameters are introduced.
 
 > **Given** a training set with 3 families: `apply` (5000), `intros` (4000), `simpl` (1000), alpha=0.5
 > **When** class weights are computed (total=10000, num_classes=3)
 > **Then** weight[apply] = (10000 / (3 * 5000))^0.5 ≈ 0.816, weight[simpl] = (10000 / (3 * 1000))^0.5 ≈ 1.826
 
-> **Given** `label_smoothing=0.1` and `num_classes=30`
-> **When** cross-entropy loss is constructed
-> **Then** `CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)` is used
+> **Given** `label_smoothing=0.1`, `num_classes=3`, and class weights [0.816, 1.0, 1.826]
+> **When** soft targets are computed for a sample with true class 0
+> **Then** smooth_dist ≈ [0.224, 0.275, 0.501], y_target ≈ [0.9 + 0.1*0.224, 0.1*0.275, 0.1*0.501] = [0.922, 0.027, 0.050]
 
 #### Optimizer: SAM-AdamW
 
@@ -720,9 +724,9 @@ Automated hyperparameter optimization using Optuna to maximize validation accura
 
 | Parameter | Sampling type | Range | Default |
 |-----------|--------------|-------|---------|
-| `num_hidden_layers` | Categorical | {4, 6, 8, 12} | 6 |
+| `num_hidden_layers` | Categorical | {4, 6, 12} | 6 |
 | `learning_rate` | Log-uniform | [1e-6, 1e-4] | 2e-5 |
-| `batch_size` | Categorical | {16, 32, 64} | 16 |
+| `batch_size` | Categorical | {16, 32} | 16 |
 | `weight_decay` | Log-uniform | [1e-4, 1e-1] | 1e-2 |
 | `class_weight_alpha` | Uniform | [0.0, 1.0] | 0.5 |
 | `label_smoothing` | Uniform | [0.0, 0.3] | 0.1 |
