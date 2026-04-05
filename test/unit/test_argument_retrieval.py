@@ -308,3 +308,46 @@ class TestArgumentRetriever:
             "Poule.pipeline.search.search_by_type", return_value=[]
         ):
             assert retriever.retrieve("mythical_tactic", "P x", []) == []
+
+
+# ---------------------------------------------------------------------------
+# 4. set_retriever_context wiring (spec §8.4)
+# ---------------------------------------------------------------------------
+
+
+class TestSetRetrieverContext:
+    """spec §8.4: set_retriever_context wires the pipeline context."""
+
+    def test_set_retriever_context_enables_retrieval(self):
+        """spec §8.4: after set_retriever_context, retriever has a context."""
+        import Poule.tactics.suggest as suggest_mod
+
+        # Reset singleton state
+        suggest_mod._retriever = None
+        suggest_mod._retriever_checked = False
+
+        ctx = MagicMock()
+        suggest_mod.set_retriever_context(ctx)
+
+        retriever = suggest_mod._get_retriever()
+        assert retriever is not None
+        assert retriever._ctx is ctx
+
+        # Clean up
+        suggest_mod._retriever = None
+        suggest_mod._retriever_checked = False
+
+    def test_get_retriever_without_context_has_none_ctx(self):
+        """spec §8.4: without set_retriever_context, retriever has None context."""
+        import Poule.tactics.suggest as suggest_mod
+
+        suggest_mod._retriever = None
+        suggest_mod._retriever_checked = False
+
+        retriever = suggest_mod._get_retriever()
+        assert retriever is not None
+        assert retriever._ctx is None
+
+        # Clean up
+        suggest_mod._retriever = None
+        suggest_mod._retriever_checked = False

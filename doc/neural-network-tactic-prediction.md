@@ -339,7 +339,7 @@ The model achieves 70.2% val_acc@5 but only 46.6% test_acc@5 — a 24 percentage
 | Phase 1: Emit tactic records | Small | **Done** — 140K steps extracted, validated |
 | Phase 2: Tactic classifier | Medium | **Done** — model trained (4-layer CodeBERT, 96 classes), val_acc@5=70.2%, test_acc@5=46.6%; see "Training Results" for analysis and next steps |
 | Phase 3: Argument retrieval | Medium | **Done** — ArgumentRetriever routes tactic families to retrieval strategies (type_match for apply/exact, equality filter for rewrite); integrated into suggest_tactics |
-| Phase 4: MCP integration | Small | **In progress** — neural predictions and argument retrieval integrated into suggest_tactics; pending ONNX quantization and deployment |
+| Phase 4: MCP integration | Small | **Done** — TacticPredictor (ONNX), ArgumentRetriever, and suggest_tactics wired end-to-end; pipeline context connected at server startup; quantize CLI available |
 
 ## Relationship to Other Work
 

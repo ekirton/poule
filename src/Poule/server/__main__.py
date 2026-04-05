@@ -1425,6 +1425,12 @@ async def _init_context(db_path: Path, log_level: str) -> _ServerContext:
             ctx.index_ready = True
             ctx.pipeline = _PipelineFacade(pipeline_ctx)
             logger.info("Index loaded from %s", db_path)
+            # Wire pipeline context to argument retriever for tactic suggestions
+            try:
+                from Poule.tactics.suggest import set_retriever_context
+                set_retriever_context(pipeline_ctx)
+            except Exception:
+                logger.debug("Argument retriever setup skipped", exc_info=True)
         except IndexNotFoundError:
             logger.error("Database file not found: %s", db_path)
         except IndexVersionError as exc:
