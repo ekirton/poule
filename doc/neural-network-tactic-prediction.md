@@ -333,6 +333,16 @@ The model achieves 70.2% val_acc@5 but only 46.6% test_acc@5 — a 24 percentage
 4. **Stratified splitting.** Split by library rather than file position to ensure each split contains examples from all six libraries.
 5. **Embedding factorization.** See the section below — the 158K-token embedding dominates model size and contains mostly undertrained parameters.
 
+### Deployment and quantization
+
+The trained model is exported to FP32 ONNX for cross-platform CPU inference. The ONNX model is 574 MB with a median inference latency of **20 ms** per prediction (seq_len=128) — well under the 50ms requirement.
+
+**Why not INT8 quantization.** The original plan was to apply dynamic INT8 quantization via ONNX Runtime, targeting a ~150 MB model. This failed due to a toolchain incompatibility: PyTorch >= 2.6 defaults to the dynamo-based ONNX exporter, which produces graph structures that ONNX Runtime's shape inference cannot process. The error (`InferenceError: Inferred shape and existing shape differ in dimension 0: (768) vs (96)`) occurs at the classifier head boundary. The legacy TorchScript-based exporter is also incompatible because the `transformers` library (v5+) uses masking utilities that cannot be JIT-traced.
+
+**Why it doesn't matter.** INT8 quantization primarily benefits the transformer layers (matrix multiplications), which are only 28M of the model's 150M parameters (19%). The embedding layer — 121M parameters, 81% of the model — is a gather operation that INT8 does not accelerate. The size reduction from INT8 would be from 601 MB to ~150 MB, but the latency improvement would be modest (the transformer layers already run in ~8 ms of the 20 ms total). The model meets the <50ms latency target without quantization.
+
+**The real size problem is the embedding.** Embedding factorization (see below) would reduce the model from 601 MB to ~197 MB in FP32 — a larger reduction than INT8 alone — by addressing the root cause: 158K tokens that cannot fill a 768-dimensional space. If both embedding factorization and INT8 quantization were applied (once the toolchain issue is resolved), the model would be ~50 MB.
+
 ### Embedding factorization
 
 The model has 150M parameters, but 121M (81%) are in the token embedding matrix (158K tokens × 768 dimensions). Most of these tokens are rare Coq identifiers that appear in very few training examples — they cannot learn meaningful 768-dimensional representations, and their embeddings are effectively noise. This wastes both model capacity and disk/memory at inference time.
