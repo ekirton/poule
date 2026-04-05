@@ -96,13 +96,12 @@ class WeightConverter:
         mlx_checkpoint_dir = Path(mlx_checkpoint_dir)
         output_path = Path(output_path)
 
-        # Check required files
+        # Check required files (label_map.json is only required for classifiers)
         required_files = [
             "model.safetensors",
             "config.json",
             "hyperparams.json",
             "vocabulary_path.txt",
-            "label_map.json",
         ]
         missing = [
             f for f in required_files
@@ -122,17 +121,28 @@ class WeightConverter:
         vocabulary_path = (
             (mlx_checkpoint_dir / "vocabulary_path.txt").read_text().strip()
         )
-        label_map = json.loads(
-            (mlx_checkpoint_dir / "label_map.json").read_text()
-        )
 
-        best_accuracy = 0.0
-        accuracy_path = mlx_checkpoint_dir / "best_accuracy_5.txt"
-        if accuracy_path.exists():
-            best_accuracy = float(accuracy_path.read_text().strip())
+        # Detect model type: classifier has num_classes, bi-encoder does not
+        is_biencoder = "num_classes" not in config
+
+        label_map = {}
+        label_map_path = mlx_checkpoint_dir / "label_map.json"
+        if label_map_path.exists():
+            label_map = json.loads(label_map_path.read_text())
+
+        # Load best metric
+        best_metric = 0.0
+        if is_biencoder:
+            recall_path = mlx_checkpoint_dir / "best_recall_32.txt"
+            if recall_path.exists():
+                best_metric = float(recall_path.read_text().strip())
+        else:
+            accuracy_path = mlx_checkpoint_dir / "best_accuracy_5.txt"
+            if accuracy_path.exists():
+                best_metric = float(accuracy_path.read_text().strip())
 
         num_layers = config.get("num_layers", 12)
-        num_classes = config["num_classes"]
+        num_classes = config.get("num_classes")
         vocab_size = config["vocab_size"]
         hidden_size = config.get("hidden_size", 768)
         num_heads = config.get("num_heads", 12)
@@ -169,21 +179,27 @@ class WeightConverter:
                 pt_state_dict[mlx_name] = torch_tensor
 
         # Validate: build both models, feed random input, check label agreement
-        WeightConverter._validate_conversion(
-            mlx_weights, config, pt_state_dict, num_classes, label_map,
-        )
+        # (skip for bi-encoder — validation requires different model type)
+        if not is_biencoder:
+            WeightConverter._validate_conversion(
+                mlx_weights, config, pt_state_dict, num_classes, label_map,
+            )
 
         # Save as PyTorch checkpoint
         checkpoint = {
             "model_state_dict": pt_state_dict,
-            "num_classes": num_classes,
             "num_hidden_layers": num_layers,
             "embedding_dim": embedding_dim,
-            "label_map": label_map,
-            "best_accuracy_5": best_accuracy,
             "hyperparams": hyperparams,
             "vocabulary_path": vocabulary_path,
+            "epoch": 0,
         }
+        if is_biencoder:
+            checkpoint["best_recall_32"] = best_metric
+        else:
+            checkpoint["num_classes"] = num_classes
+            checkpoint["label_map"] = label_map
+            checkpoint["best_accuracy_5"] = best_metric
 
         torch.save(checkpoint, str(output_path))
         logger.info(f"Converted MLX checkpoint to PyTorch: {output_path}")

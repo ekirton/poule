@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from Poule.neural.training.data import TacticDataset
+from Poule.neural.training.data import TacticDataset, TrainingDataset
 from Poule.neural.training.errors import (
     BackendNotAvailableError,
     InsufficientDataError,
@@ -48,22 +48,44 @@ class MLXTrainer:
 
     def train(
         self,
+        dataset: TacticDataset | TrainingDataset,
+        output_dir: Path,
+        vocabulary_path: Path,
+        hyperparams: dict[str, Any] | None = None,
+        epoch_callback: Callable[[int, float], None] | None = None,
+    ) -> None:
+        """Train a model using MLX.
+
+        Dispatches between classifier (TacticDataset) and bi-encoder
+        (TrainingDataset) based on the dataset type.
+
+        Args:
+            dataset: TacticDataset or TrainingDataset.
+            output_dir: Directory to save MLX checkpoint.
+            vocabulary_path: Path to closed vocabulary JSON.
+            hyperparams: Override default hyperparameters.
+            epoch_callback: Called after each epoch with (epoch, val_metric).
+        """
+        self._check_platform()
+
+        if isinstance(dataset, TrainingDataset):
+            return self._train_biencoder(
+                dataset, output_dir, vocabulary_path, hyperparams, epoch_callback,
+            )
+
+        self._train_classifier(
+            dataset, output_dir, vocabulary_path, hyperparams, epoch_callback,
+        )
+
+    def _train_classifier(
+        self,
         dataset: TacticDataset,
         output_dir: Path,
         vocabulary_path: Path,
         hyperparams: dict[str, Any] | None = None,
         epoch_callback: Callable[[int, float], None] | None = None,
     ) -> None:
-        """Train a tactic classifier model using MLX.
-
-        Args:
-            dataset: TacticDataset with train/val/test splits and label metadata.
-            output_dir: Directory to save MLX checkpoint.
-            vocabulary_path: Path to closed vocabulary JSON.
-            hyperparams: Override default hyperparameters.
-            epoch_callback: Called after each epoch with (epoch, val_accuracy@5).
-        """
-        self._check_platform()
+        """Train a tactic classifier model using MLX."""
 
         import mlx.core as mx
         import mlx.nn as nn
@@ -364,3 +386,198 @@ class MLXTrainer:
         (output_dir / "label_map.json").write_text(
             json.dumps(label_map, indent=2)
         )
+
+    def _train_biencoder(
+        self,
+        dataset: TrainingDataset,
+        output_dir: Path,
+        vocabulary_path: Path,
+        hyperparams: dict[str, Any] | None = None,
+        epoch_callback: Callable[[int, float], None] | None = None,
+    ) -> None:
+        """Train a bi-encoder premise retrieval model using MLX."""
+        import mlx.core as mx
+        import mlx.nn as nn
+        import mlx.optimizers as optim
+
+        from Poule.neural.training.mlx_backend.loss import masked_contrastive_loss_mlx
+        from Poule.neural.training.mlx_backend.model import MLXBiEncoder
+        from Poule.neural.training.vocabulary import CoqTokenizer
+
+        hp = dict(DEFAULT_HYPERPARAMS)
+        if hyperparams:
+            hp.update(hyperparams)
+
+        batch_size = hp["batch_size"]
+        lr = hp["learning_rate"]
+        weight_decay = hp["weight_decay"]
+        max_seq_length = hp["max_seq_length"]
+        max_epochs = hp["max_epochs"]
+        patience = hp["early_stopping_patience"]
+        temperature = hp.get("temperature", 0.05)
+
+        tokenizer = CoqTokenizer(str(vocabulary_path))
+
+        model = MLXBiEncoder(
+            vocab_size=tokenizer.vocab_size,
+            num_layers=hp.get("num_hidden_layers", 6),
+        )
+        mx.eval(model.parameters())
+
+        optimizer = optim.AdamW(learning_rate=lr, weight_decay=weight_decay)
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        early_stopping = EarlyStoppingTracker(patience)
+        best_recall = -1.0
+        best_epoch = 0
+
+        # Build premise corpus index for batch sampling
+        premise_names = list(dataset.premise_corpus.keys())
+        premise_texts = [dataset.premise_corpus[n] for n in premise_names]
+        premise_name_to_idx = {n: i for i, n in enumerate(premise_names)}
+
+        # Pre-tokenize premises
+        def _tokenize_batch(texts):
+            result = tokenizer.encode_batch(texts, max_length=max_seq_length)
+            ids = mx.array(np.array(result["input_ids"], dtype=np.int32))
+            mask = mx.array(np.array(result["attention_mask"], dtype=np.int32))
+            return ids, mask
+
+        premise_ids, premise_mask = _tokenize_batch(premise_texts)
+
+        train_pairs = dataset.train
+        n_train = len(train_pairs)
+
+        for epoch in range(1, max_epochs + 1):
+            epoch_loss = 0.0
+            num_batches = 0
+
+            indices = list(range(n_train))
+            random.shuffle(indices)
+
+            for start in range(0, n_train, batch_size):
+                batch_idx = indices[start:start + batch_size]
+                batch = [train_pairs[i] for i in batch_idx]
+
+                state_texts = [s for s, _ in batch]
+                s_ids, s_mask = _tokenize_batch(state_texts)
+
+                # Build positive_indices for this batch
+                positive_indices = []
+                for _, prem_names in batch:
+                    pos = [premise_name_to_idx[n] for n in prem_names
+                           if n in premise_name_to_idx]
+                    positive_indices.append(pos)
+
+                # Forward + backward
+                def loss_fn(model):
+                    state_embs = model(s_ids, s_mask)
+                    premise_embs = model(premise_ids, premise_mask)
+                    return masked_contrastive_loss_mlx(
+                        state_embs, premise_embs, positive_indices, temperature,
+                    )
+
+                loss, grads = nn.value_and_grad(model, loss_fn)(model)
+                optimizer.update(model, grads)
+                mx.eval(model.parameters(), optimizer.state, loss)
+
+                epoch_loss += float(loss)
+                num_batches += 1
+
+            avg_loss = epoch_loss / max(num_batches, 1)
+
+            # Validation: recall@32
+            val_recall = self._compute_recall_at_k(
+                model, dataset.val, premise_ids, premise_mask,
+                premise_name_to_idx, tokenizer, max_seq_length, k=32,
+            )
+
+            print(f"Epoch {epoch}: loss={avg_loss:.4f}, val_recall@32={val_recall:.4f}")
+
+            if epoch_callback is not None:
+                epoch_callback(epoch, val_recall)
+
+            if val_recall > best_recall:
+                best_recall = val_recall
+                best_epoch = epoch
+                self._save_biencoder_checkpoint(
+                    model, output_dir, hp, vocabulary_path, best_recall,
+                )
+
+            if early_stopping.should_stop(val_recall):
+                print(f"Early stopping at epoch {epoch} (best: epoch {best_epoch})")
+                break
+
+    def _compute_recall_at_k(
+        self,
+        model,
+        pairs: list[tuple[str, list[str]]],
+        premise_ids,
+        premise_mask,
+        premise_name_to_idx: dict[str, int],
+        tokenizer,
+        max_seq_length: int,
+        k: int = 32,
+    ) -> float:
+        """Compute Recall@k on the validation set."""
+        import mlx.core as mx
+
+        if not pairs:
+            return 0.0
+
+        # Encode all premises once
+        premise_embs = model(premise_ids, premise_mask)
+        mx.eval(premise_embs)
+
+        hits = 0
+        total_positives = 0
+        for state_text, prem_names in pairs:
+            result = tokenizer.encode_batch([state_text], max_length=max_seq_length)
+            s_ids = mx.array(np.array(result["input_ids"], dtype=np.int32))
+            s_mask = mx.array(np.array(result["attention_mask"], dtype=np.int32))
+            state_emb = model(s_ids, s_mask)
+            mx.eval(state_emb)
+
+            # Cosine similarity (already L2 normalized)
+            sims = np.array(state_emb @ premise_embs.T)[0]
+            top_k = set(np.argsort(sims)[-k:])
+
+            for n in prem_names:
+                if n in premise_name_to_idx:
+                    total_positives += 1
+                    if premise_name_to_idx[n] in top_k:
+                        hits += 1
+
+        return hits / max(total_positives, 1)
+
+    def _save_biencoder_checkpoint(
+        self,
+        model,
+        output_dir: Path,
+        hyperparams: dict,
+        vocabulary_path: Path,
+        best_recall: float,
+    ) -> None:
+        """Save MLX bi-encoder checkpoint."""
+        import mlx.core as mx
+        import mlx.nn as nn
+
+        params = dict(nn.utils.tree_flatten(model.parameters()))
+        mx.save_safetensors(str(output_dir / "model.safetensors"), params)
+
+        config = {
+            "vocab_size": model.embedding.weight.shape[0],
+            "num_layers": len(model.layers),
+            "hidden_size": model.hidden_size,
+            "num_heads": model.layers[0].attention.num_heads
+            if hasattr(model.layers[0].attention, 'num_heads')
+            else 12,
+        }
+        (output_dir / "config.json").write_text(json.dumps(config, indent=2))
+        (output_dir / "hyperparams.json").write_text(
+            json.dumps(hyperparams, indent=2)
+        )
+        (output_dir / "vocabulary_path.txt").write_text(str(vocabulary_path))
+        (output_dir / "best_recall_32.txt").write_text(str(best_recall))

@@ -420,7 +420,8 @@ class TestWeightConverterConversion:
         mlx_dir.mkdir()
 
         # Save MLX checkpoint
-        mx.save_safetensors(str(mlx_dir / "model.safetensors"), dict(model.parameters()))
+        import mlx.nn as mlx_nn
+        mx.save_safetensors(str(mlx_dir / "model.safetensors"), dict(mlx_nn.utils.tree_flatten(model.parameters())))
         (mlx_dir / "config.json").write_text(json.dumps({
             "vocab_size": 50,
             "num_layers": 1,
@@ -455,7 +456,8 @@ class TestWeightConverterConversion:
         mlx_dir = tmp_path / "mlx_ckpt"
         mlx_dir.mkdir()
 
-        mx.save_safetensors(str(mlx_dir / "model.safetensors"), dict(model.parameters()))
+        import mlx.nn as mlx_nn
+        mx.save_safetensors(str(mlx_dir / "model.safetensors"), dict(mlx_nn.utils.tree_flatten(model.parameters())))
         (mlx_dir / "config.json").write_text(json.dumps({
             "vocab_size": 50, "num_layers": 1, "hidden_size": 32, "num_heads": 4,
         }))

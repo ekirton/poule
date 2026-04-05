@@ -88,6 +88,22 @@ def serialize_goals(goals: list[dict]) -> str:
 
 
 @dataclass
+class TrainingDataset:
+    """Holds train/val/test splits of (proof_state_text, premise_names) pairs
+    for bi-encoder premise retrieval training."""
+
+    train: list[tuple[str, list[str]]]
+    val: list[tuple[str, list[str]]]
+    test: list[tuple[str, list[str]]]
+    premise_corpus: dict[str, str]
+    train_files: list[str] = field(default_factory=list)
+    val_files: list[str] = field(default_factory=list)
+    test_files: list[str] = field(default_factory=list)
+    file_deps: dict[str, list[str]] = field(default_factory=dict)
+    file_premises: dict[str, list[str]] = field(default_factory=dict)
+
+
+@dataclass
 class TacticDataset:
     """Holds train/val/test splits of (proof_state_text, label_index) pairs."""
 
