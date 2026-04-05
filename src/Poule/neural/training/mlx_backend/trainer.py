@@ -94,6 +94,7 @@ class MLXTrainer:
         from Poule.neural.training.mlx_backend.loss import (
             cross_entropy_loss,
             hierarchical_loss_mlx,
+            precompute_category_indices,
         )
         from Poule.neural.training.mlx_backend.model import MLXTacticClassifier
         from Poule.neural.training.vocabulary import CoqTokenizer
@@ -247,6 +248,17 @@ class MLXTrainer:
         import gc; gc.collect()
 
         n_train = len(train_pairs)
+
+        # Pre-compute per-category sample indices for the full training set.
+        # These map global positions -> per-category indices, avoiding
+        # numpy round-trips inside the loss function on every micro-batch.
+        if is_hierarchical:
+            global_cat_indices = precompute_category_indices(
+                all_cat_labels, len(dataset.category_names),
+            )
+            # Convert global indices to numpy for fast batch slicing
+            global_cat_indices_np = [np.array(idx) for idx in global_cat_indices]
+
         # Pre-compute batch start indices for length-bucketed batching.
         # Data is sorted by length; we shuffle batch ORDER each epoch
         # so the model sees batches in random order while keeping
@@ -278,6 +290,15 @@ class MLXTrainer:
                     cat_labels = all_cat_labels[batch_start:end]
                     within_labels = all_within_labels[batch_start:end]
 
+                    # Slice pre-computed category indices to this batch.
+                    # Global indices are positions in the full training set;
+                    # we select those within [batch_start, end) and remap
+                    # to batch-local positions (0..batch_size-1).
+                    batch_cat_idx = []
+                    for cat_global in global_cat_indices_np:
+                        in_batch = cat_global[(cat_global >= batch_start) & (cat_global < end)]
+                        batch_cat_idx.append(mx.array(in_batch - batch_start))
+
                     def loss_fn(model):
                         cat_logits, within_logits = model(s_ids, s_mask)
                         return hierarchical_loss_mlx(
@@ -285,6 +306,7 @@ class MLXTrainer:
                             cat_labels, within_labels,
                             category_weights, per_cat_weights,
                             dataset.category_names, lambda_within,
+                            batch_cat_indices=batch_cat_idx,
                         )
                 else:
                     labels = all_labels[batch_start:end]
