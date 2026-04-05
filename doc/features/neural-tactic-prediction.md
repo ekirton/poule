@@ -12,7 +12,7 @@ Meanwhile, the extraction pipeline captures ~105,000 (proof_state, tactic) pairs
 
 ## Solution
 
-An encoder-based classifier predicts the tactic family from a serialized proof state. The model uses a CodeBERT encoder with a closed-vocabulary tokenizer (the same tokenizer used elsewhere in the project) and a classification head mapping to ~30 tactic families. Training uses class-weighted cross-entropy to handle the long-tailed tactic distribution.
+A hierarchical encoder-based classifier predicts the tactic family from a serialized proof state. The model uses a CodeBERT encoder with a closed-vocabulary tokenizer and a two-level classification hierarchy: 8 tactic categories (introduction, elimination, rewriting, hypothesis management, automation, arithmetic, contradiction, ssreflect) with ~65 within-category tactic families. Training uses hierarchical class-weighted cross-entropy at both category and within-category levels. Inference produces P(tactic) = P(category) × P(tactic|category) via the product rule.
 
 Neural predictions are integrated into the existing `suggest_tactics` MCP tool:
 - When a trained model is available, neural predictions are returned alongside rule-based suggestions, ranked by model confidence
@@ -33,9 +33,9 @@ The original plan was to train a neural premise retrieval model. This failed: on
 
 Tactic prediction reuses the same extraction infrastructure with 30x more data. Every proof step has a tactic, regardless of whether premises are known. Research (Tactician, Proverbot9001, CoqHammer) confirms that tactic prediction works well for Coq without per-step premise annotations.
 
-### Why ~30 tactic families
+### Why 8 categories with ~65 tactic families
 
-Coq has 60-80 distinct built-in tactics, but the distribution is heavily long-tailed. A small number of families (`intros`, `apply`, `rewrite`, `simpl`, `auto`, `destruct`, `induction`, `exact`, `unfold`) account for the majority of proof steps. Grouping into ~30 families balances granularity (specific enough to be useful) against learnability (enough training examples per class). Rare tactics are grouped into an "other" class.
+The flat 96-class classifier achieves only 46.6% test accuracy@5 with 86 of 96 classes showing zero recall. The root cause is extreme class imbalance (IR = 26,950:1). Hierarchical decomposition into 8 categories drops cross-category imbalance to ~6:1 and within-category imbalance to at most ~14:1. Every tactic maps to a known category — the "other" catch-all is eliminated, and proof structure tokens (bullets, braces) are excluded from training entirely.
 
 ### Why CPU-only inference
 

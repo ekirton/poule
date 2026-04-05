@@ -73,6 +73,13 @@ def normalize_tactic_family(tactic_text: str) -> str:
     if not first_token:
         return "other"
 
+    # Strip SSReflect '/' suffix: apply/eqp -> apply, case/andp -> case
+    slash_idx = first_token.find("/")
+    if slash_idx > 0:
+        first_token = first_token[:slash_idx]
+    if not first_token:
+        return "other"
+
     # Lowercase
     family = first_token.lower()
 

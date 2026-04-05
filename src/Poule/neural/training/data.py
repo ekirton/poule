@@ -26,10 +26,6 @@ _ALIASES: dict[str, str] = {
     "now": "auto",  # 'now tac' wraps tac + auto
 }
 
-# Minimum number of occurrences for a tactic family to get its own class.
-# Families below this threshold are grouped into "other".
-_MIN_FAMILY_COUNT = 50
-
 
 def extract_tactic_family(tactic_text: str) -> str:
     """Extract the tactic family name from raw tactic text.
@@ -58,9 +54,17 @@ def extract_tactic_family(tactic_text: str) -> str:
     # Strip trailing punctuation
     first_token = first_token.rstrip(".,;:")
 
-    # Strip SSReflect intro pattern operator: move=> → move
+    # Strip SSReflect intro pattern operator: move=> -> move
     if first_token.endswith("=>"):
         first_token = first_token[:-2]
+
+    # Strip SSReflect '/' suffix: apply/eqp -> apply, case/andp -> case
+    slash_idx = first_token.find("/")
+    if slash_idx > 0:
+        first_token = first_token[:slash_idx]
+
+    if not first_token:
+        return "other"
 
     # Lowercase
     family = first_token.lower()
@@ -70,7 +74,7 @@ def extract_tactic_family(tactic_text: str) -> str:
 
     # Handle SSReflect compound: move=>/rewrite/apply with modifiers
     if family in ("move", "case", "elim", "have", "suff", "wlog"):
-        # These are SSReflect tactics — keep as-is
+        # These are SSReflect tactics -- keep as-is
         pass
 
     return family
@@ -105,21 +109,42 @@ class TrainingDataset:
 
 @dataclass
 class TacticDataset:
-    """Holds train/val/test splits of (proof_state_text, label_index) pairs."""
+    """Holds train/val/test splits of (proof_state_text, category_idx, within_idx) triples.
 
-    train_pairs: list[tuple[str, int]]
-    val_pairs: list[tuple[str, int]]
-    test_pairs: list[tuple[str, int]]
+    Hierarchical classification: each sample has a category label and a
+    within-category tactic label.
+    """
+
+    train_pairs: list[tuple[str, int, int]]
+    val_pairs: list[tuple[str, int, int]]
+    test_pairs: list[tuple[str, int, int]]
     label_map: dict[str, int]
     label_names: list[str]
     family_counts: dict[str, int]
     train_files: list[str] = field(default_factory=list)
     val_files: list[str] = field(default_factory=list)
     test_files: list[str] = field(default_factory=list)
+    # Hierarchical fields
+    category_names: list[str] = field(default_factory=list)
+    per_category_label_maps: dict[str, dict[str, int]] = field(default_factory=dict)
+    per_category_label_names: dict[str, list[str]] = field(default_factory=dict)
+    per_category_counts: dict[str, dict[str, int]] = field(default_factory=dict)
 
     @property
     def num_classes(self) -> int:
         return len(self.label_names)
+
+    @property
+    def num_categories(self) -> int:
+        return len(self.category_names)
+
+    @property
+    def per_category_sizes(self) -> dict[str, int]:
+        """Number of tactic families per category."""
+        return {
+            cat: len(names)
+            for cat, names in self.per_category_label_names.items()
+        }
 
 
 @dataclass
@@ -148,11 +173,30 @@ class SplitReport:
         """Generate a split diagnostic report from a populated dataset."""
 
         def _family_counter(
-            pairs: list[tuple[str, int]], label_names: list[str],
+            pairs, label_names: list[str],
         ) -> Counter:
             c: Counter[str] = Counter()
-            for _, label_idx in pairs:
-                c[label_names[label_idx]] += 1
+            for item in pairs:
+                if len(item) == 3 and dataset.category_names:
+                    # Hierarchical triple: (state, category_idx, within_idx)
+                    cat_idx = item[1]
+                    if cat_idx < len(dataset.category_names):
+                        cat_name = dataset.category_names[cat_idx]
+                        within_idx = item[2]
+                        within_names = dataset.per_category_label_names.get(cat_name, [])
+                        if within_idx < len(within_names):
+                            c[within_names[within_idx]] += 1
+                        else:
+                            c[cat_name] += 1
+                    else:
+                        c["unknown"] += 1
+                elif len(item) >= 2:
+                    # Flat pair: (state, label_idx)
+                    label_idx = item[1]
+                    if label_idx < len(label_names):
+                        c[label_names[label_idx]] += 1
+                    else:
+                        c["unknown"] += 1
             return c
 
         train_counter = _family_counter(dataset.train_pairs, dataset.label_names)
@@ -223,22 +267,47 @@ class TrainingDataLoader:
     @staticmethod
     def load(
         jsonl_paths: list[Path],
-        min_family_count: int = _MIN_FAMILY_COUNT,
     ) -> TacticDataset:
         """Load training steps from compact training data JSONL files.
 
-        spec §4.1: Reads "s" records, extracts tactic families,
-        groups by source_file, applies deterministic file-level split
-        (position % 10).
+        Hierarchical labels: each sample is a triple
+        (proof_state_text, category_idx, within_category_idx).
+
+        Proof structure tokens are excluded. Every tactic maps to a
+        known category -- there is no "other" catch-all.
         """
-        # Phase 1: Read all steps and count families
-        file_steps: dict[str, list[tuple[str, str]]] = {}  # file -> [(state, family)]
+        from Poule.neural.training.taxonomy import (
+            CATEGORY_NAMES,
+            EXCLUDED_TOKENS,
+            TACTIC_CATEGORIES,
+            TACTIC_TO_CATEGORY,
+        )
+
+        # Build per-category label maps
+        per_category_label_maps: dict[str, dict[str, int]] = {}
+        per_category_label_names: dict[str, list[str]] = {}
+        for cat in CATEGORY_NAMES:
+            tactics = TACTIC_CATEGORIES[cat]
+            per_category_label_names[cat] = list(tactics)
+            per_category_label_maps[cat] = {t: i for i, t in enumerate(tactics)}
+
+        category_index = {cat: i for i, cat in enumerate(CATEGORY_NAMES)}
+
+        # Build a flat label map (for backward compat / reporting)
+        flat_label_names: list[str] = []
+        flat_label_map: dict[str, int] = {}
+        for cat in CATEGORY_NAMES:
+            for tac in TACTIC_CATEGORIES[cat]:
+                flat_label_map[tac] = len(flat_label_names)
+                flat_label_names.append(tac)
+
+        # Phase 1: Read all steps
+        file_steps: dict[str, list[tuple[str, str]]] = {}
         raw_family_counts: Counter[str] = Counter()
 
         for path in jsonl_paths:
             with open(path, encoding="utf-8") as f:
                 for line in f:
-                    # Fast pre-filter: only JSON-parse "s" records
                     if '"t":"s"' not in line[:25] and '"t": "s"' not in line[:25]:
                         continue
                     try:
@@ -259,6 +328,15 @@ class TrainingDataLoader:
                         state_text = state_text[:_MAX_STMT]
 
                     family = extract_tactic_family(tactic_text)
+
+                    # Skip excluded tokens (proof structure)
+                    if family in EXCLUDED_TOKENS:
+                        continue
+
+                    # Skip tactics not in the taxonomy
+                    if family not in TACTIC_TO_CATEGORY:
+                        continue
+
                     raw_family_counts[family] += 1
 
                     if source_file not in file_steps:
@@ -272,36 +350,35 @@ class TrainingDataLoader:
         except Exception:
             pass
 
-        # Phase 2: Build label map (families with enough examples get own class)
-        label_names: list[str] = []
-        for family, count in raw_family_counts.most_common():
-            if count >= min_family_count and family != "other":
-                label_names.append(family)
-        label_names.append("other")  # Always last
-        label_map = {name: idx for idx, name in enumerate(label_names)}
+        # Build per-category counts
+        per_category_counts: dict[str, dict[str, int]] = {}
+        for cat in CATEGORY_NAMES:
+            cat_counts: dict[str, int] = {}
+            for tac in TACTIC_CATEGORIES[cat]:
+                count = raw_family_counts.get(tac, 0)
+                if count > 0:
+                    cat_counts[tac] = count
+            per_category_counts[cat] = cat_counts
 
-        # Compute final family counts after bucketing rare families into "other"
-        family_counts: dict[str, int] = Counter()
-        for family, count in raw_family_counts.items():
-            mapped = family if family in label_map else "other"
-            family_counts[mapped] += count
-
-        # Phase 3: File-level deterministic split (spec §4.1)
+        # Phase 2: File-level deterministic split (spec §4.1)
         sorted_files = sorted(file_steps.keys())
 
-        train_pairs: list[tuple[str, int]] = []
-        val_pairs: list[tuple[str, int]] = []
-        test_pairs: list[tuple[str, int]] = []
+        train_pairs: list[tuple[str, int, int]] = []
+        val_pairs: list[tuple[str, int, int]] = []
+        test_pairs: list[tuple[str, int, int]] = []
         train_files: list[str] = []
         val_files: list[str] = []
         test_files: list[str] = []
 
         for position, filepath in enumerate(sorted_files):
             steps = file_steps[filepath]
-            labeled_steps = [
-                (state, label_map.get(family, label_map["other"]))
-                for state, family in steps
-            ]
+            labeled_steps: list[tuple[str, int, int]] = []
+            for state, family in steps:
+                cat = TACTIC_TO_CATEGORY[family]
+                cat_idx = category_index[cat]
+                within_idx = per_category_label_maps[cat][family]
+                labeled_steps.append((state, cat_idx, within_idx))
+
             mod = position % 10
             if mod == 8:
                 val_pairs.extend(labeled_steps)
@@ -319,10 +396,14 @@ class TrainingDataLoader:
             train_pairs=train_pairs,
             val_pairs=val_pairs,
             test_pairs=test_pairs,
-            label_map=label_map,
-            label_names=label_names,
-            family_counts=dict(family_counts),
+            label_map=flat_label_map,
+            label_names=flat_label_names,
+            family_counts=dict(raw_family_counts),
             train_files=train_files,
             val_files=val_files,
             test_files=test_files,
+            category_names=list(CATEGORY_NAMES),
+            per_category_label_maps=per_category_label_maps,
+            per_category_label_names=per_category_label_names,
+            per_category_counts=per_category_counts,
         )

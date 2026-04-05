@@ -442,10 +442,16 @@ async def tactic_suggest(
             lines.append(goal_type)
             proof_state_text = "\n".join(lines)
 
-            predictions = predictor.predict(proof_state_text, top_k=5)
+            predictions = predictor.predict_with_category(proof_state_text, top_k=5)
             retriever = _get_retriever()
 
-            for family_name, confidence in predictions:
+            for prediction in predictions:
+                if len(prediction) == 3:
+                    family_name, pred_category, confidence = prediction
+                else:
+                    family_name, confidence = prediction[0], prediction[1]
+                    pred_category = "neural"
+
                 conf_label = (
                     "high" if confidence >= 0.3
                     else "medium" if confidence >= 0.1
@@ -458,7 +464,7 @@ async def tactic_suggest(
                         rank=0,  # assigned below
                         rationale=f"Neural prediction (confidence: {confidence:.0%})",
                         confidence=conf_label,
-                        category="neural",
+                        category=pred_category or "neural",
                         source="neural",
                     )
                 )

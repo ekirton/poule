@@ -40,28 +40,33 @@ class TransformerEncoderLayer(nn.Module):
 
 
 class MLXTacticClassifier(nn.Module):
-    """CodeBERT encoder with mean pooling and classification head.
+    """CodeBERT encoder with category head + per-category within-category heads.
 
-    Architecture: CodeBERT -> mean pooling -> Linear -> [B, num_classes] logits.
-    Architecturally identical to the PyTorch TacticClassifier.
+    Architecture: CodeBERT -> mean pooling -> category_head [B, num_categories]
+                                           -> within_heads[cat] [B, cat_size]
+    Also supports flat classification (backward compat) when per_category_sizes is None.
     """
 
     def __init__(
         self,
         vocab_size: int,
-        num_classes: int,
+        num_classes: int = 1,
         num_layers: int = 6,
         hidden_size: int = 768,
         num_heads: int = 12,
         max_seq_length: int = 514,
         embedding_dim: int = 128,
+        per_category_sizes: dict[str, int] | None = None,
+        num_categories: int = 0,
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_classes = num_classes
+        self._is_hierarchical = per_category_sizes is not None
+        self.per_category_sizes = per_category_sizes or {}
+        self.num_categories = num_categories
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
         self.position_embedding = nn.Embedding(max_seq_length, hidden_size)
-        # Embedding projection for factorized embeddings (ALBERT-style)
         if embedding_dim < hidden_size:
             self.embedding_projection = nn.Linear(
                 embedding_dim, hidden_size, bias=False,
@@ -73,18 +78,21 @@ class MLXTacticClassifier(nn.Module):
             for _ in range(num_layers)
         ]
         self.embedding_ln = nn.LayerNorm(hidden_size)
-        self.classifier = nn.Linear(hidden_size, num_classes)
 
-    def __call__(self, input_ids: mx.array, attention_mask: mx.array) -> mx.array:
-        """Classify proof states into tactic families.
+        if self._is_hierarchical:
+            self.category_head = nn.Linear(hidden_size, num_categories)
+            self.within_heads = {
+                cat: nn.Linear(hidden_size, size)
+                for cat, size in per_category_sizes.items()
+            }
+            self.classifier = None
+        else:
+            self.classifier = nn.Linear(hidden_size, num_classes)
+            self.category_head = None
+            self.within_heads = None
 
-        Args:
-            input_ids: [B, seq_len] token IDs.
-            attention_mask: [B, seq_len] with values 0 or 1.
-
-        Returns:
-            [B, num_classes] unnormalized logits.
-        """
+    def _encode(self, input_ids: mx.array, attention_mask: mx.array) -> mx.array:
+        """Shared encoder: produce pooled representation [B, hidden_size]."""
         seq_len = input_ids.shape[1]
         positions = mx.arange(seq_len)
 
@@ -94,10 +102,7 @@ class MLXTacticClassifier(nn.Module):
         x = word_embs + self.position_embedding(positions)
         x = self.embedding_ln(x)
 
-        # Create attention mask (0 = attend, -inf = ignore)
-        # MLX MultiHeadAttention expects additive mask
         if attention_mask is not None:
-            # [B, seq_len] -> [B, 1, 1, seq_len] for broadcasting
             attn_mask = mx.where(
                 attention_mask[:, None, None, :].astype(mx.bool_),
                 mx.array(0.0),
@@ -109,13 +114,29 @@ class MLXTacticClassifier(nn.Module):
         for layer in self.layers:
             x = layer(x, mask=attn_mask)
 
-        # Mean pooling over non-padding tokens
         mask_expanded = attention_mask[:, :, None].astype(mx.float32)
         summed = (x * mask_expanded).sum(axis=1)
         counts = mx.maximum(mask_expanded.sum(axis=1), mx.array(1e-9))
-        pooled = summed / counts  # [B, hidden_size]
+        return summed / counts
 
-        return self.classifier(pooled)  # [B, num_classes]
+    def __call__(self, input_ids: mx.array, attention_mask: mx.array):
+        """Classify proof states.
+
+        Returns:
+            If hierarchical: (category_logits, dict[cat -> within_logits])
+            If flat: [B, num_classes] logits
+        """
+        pooled = self._encode(input_ids, attention_mask)
+
+        if self._is_hierarchical:
+            category_logits = self.category_head(pooled)
+            within_logits = {
+                cat: head(pooled)
+                for cat, head in self.within_heads.items()
+            }
+            return category_logits, within_logits
+        else:
+            return self.classifier(pooled)
 
     def load_codebert_weights(
         self, pytorch_model_name: str = "microsoft/codebert-base"
@@ -123,8 +144,8 @@ class MLXTacticClassifier(nn.Module):
         """Load CodeBERT weights from HuggingFace, converting to MLX arrays.
 
         Converts torch.Tensor -> numpy -> mx.array and maps parameter names
-        from HuggingFace convention to MLX convention. The classification head
-        is left with its random initialization.
+        from HuggingFace convention to MLX convention. Classification heads
+        (category_head, within_heads, or classifier) are left with random init.
         """
         try:
             from transformers import AutoModel

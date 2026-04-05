@@ -41,14 +41,16 @@ def _mlx_available() -> bool:
 logger = logging.getLogger(__name__)
 
 # spec §4.8: tunable hyperparameters with sampling ranges
+# Updated for hierarchical classification (8-dim search space)
 TUNABLE_HYPERPARAMS: dict[str, dict[str, Any]] = {
-    "num_hidden_layers": {"choices": [4, 6, 12]},
+    "num_hidden_layers": {"choices": [4, 6, 8]},
     "learning_rate": {"low": 1e-6, "high": 1e-4, "log": True},
-    "batch_size": {"choices": [16, 32]},
+    "batch_size": {"choices": [16, 32, 64]},
     "weight_decay": {"low": 1e-4, "high": 1e-1, "log": True},
     "class_weight_alpha": {"low": 0.0, "high": 1.0},
-    "label_smoothing": {"low": 0.0, "high": 0.3},
+    "label_smoothing": {"low": 0.0, "high": 0.2},
     "sam_rho": {"low": 0.01, "high": 0.2, "log": True},
+    "lambda_within": {"low": 0.3, "high": 3.0, "log": True},
 }
 
 
@@ -173,6 +175,12 @@ class HyperparameterTuner:
                     TUNABLE_HYPERPARAMS["sam_rho"]["low"],
                     TUNABLE_HYPERPARAMS["sam_rho"]["high"],
                     log=TUNABLE_HYPERPARAMS["sam_rho"].get("log", False),
+                ),
+                "lambda_within": trial.suggest_float(
+                    "lambda_within",
+                    TUNABLE_HYPERPARAMS["lambda_within"]["low"],
+                    TUNABLE_HYPERPARAMS["lambda_within"]["high"],
+                    log=TUNABLE_HYPERPARAMS["lambda_within"].get("log", False),
                 ),
             }
 

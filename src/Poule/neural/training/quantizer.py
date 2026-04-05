@@ -3,6 +3,9 @@
 Implements spec §4.6: Export to ONNX (opset 17+), apply dynamic INT8
 quantization, validate label agreement >= 98% across 100 samples.
 Also writes tactic-labels.json alongside the ONNX model.
+
+For hierarchical models, the ONNX export wraps the model in a
+product-rule inference layer that outputs flat tactic logits.
 """
 
 from __future__ import annotations
@@ -14,6 +17,37 @@ from pathlib import Path
 from Poule.neural.training.errors import CheckpointNotFoundError, QuantizationError
 
 
+class _FlatInferenceWrapper:
+    """Wraps a hierarchical model for ONNX export.
+
+    Produces flat product-rule logits: P(tactic) = P(category) * P(tactic|category).
+    """
+
+    def __init__(self, model):
+        import torch
+        import torch.nn as nn
+
+        self.model = model
+
+        class Wrapper(nn.Module):
+            def __init__(self, inner):
+                super().__init__()
+                self.inner = inner
+
+            def forward(self, input_ids, attention_mask):
+                cat_logits, within_logits = self.inner(input_ids, attention_mask)
+                cat_probs = torch.softmax(cat_logits, dim=-1)
+                all_scores = []
+                for cat_name, head in self.inner.within_heads.items():
+                    cat_idx = list(self.inner.within_heads.keys()).index(cat_name)
+                    within_probs = torch.softmax(within_logits[cat_name], dim=-1)
+                    product = cat_probs[:, cat_idx:cat_idx+1] * within_probs
+                    all_scores.append(product)
+                return torch.cat(all_scores, dim=-1)
+
+        self.wrapper = Wrapper(model)
+
+
 class ModelQuantizer:
     """Exports a PyTorch checkpoint to INT8-quantized ONNX."""
 
@@ -21,13 +55,8 @@ class ModelQuantizer:
     def quantize(checkpoint_path: Path, output_path: Path) -> None:
         """Convert a trained checkpoint to INT8-quantized ONNX.
 
-        Steps:
-        1. Load checkpoint and reconstruct TacticClassifier
-        2. Export to ONNX (opset 17+), output shape [B, num_classes]
-        3. Apply dynamic INT8 quantization via ONNX Runtime
-        4. Validate: 100 random inputs, assert label agreement >= 98%
-        5. Write quantized ONNX to output_path
-        6. Write tactic-labels.json alongside the ONNX model
+        Handles both hierarchical and flat model formats. For hierarchical
+        models, wraps in a product-rule inference layer producing flat logits.
 
         Args:
             checkpoint_path: Path to a trained PyTorch checkpoint.
@@ -47,7 +76,7 @@ class ModelQuantizer:
         import torch
         from onnxruntime.quantization import QuantType, quantize_dynamic
 
-        from Poule.neural.training.model import TacticClassifier
+        from Poule.neural.training.model import HierarchicalTacticClassifier
 
         # Load checkpoint
         checkpoint = torch.load(
@@ -57,27 +86,32 @@ class ModelQuantizer:
         max_seq_length = hp.get("max_seq_length", 512)
         vocab_path_str = checkpoint.get("vocabulary_path")
         label_map = checkpoint.get("label_map", {})
-        num_classes = len(label_map) if label_map else hp.get("num_classes", 30)
+        per_category_sizes = checkpoint.get("per_category_sizes")
+        is_hierarchical = per_category_sizes is not None
 
         # Reconstruct tokenizer
         if vocab_path_str and Path(vocab_path_str).exists():
             from Poule.neural.training.vocabulary import CoqTokenizer
-
             tokenizer = CoqTokenizer(Path(vocab_path_str))
         else:
             from transformers import AutoTokenizer
-
             tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
 
-        # Reconstruct model (from_checkpoint handles num_hidden_layers)
-        model = TacticClassifier.from_checkpoint(checkpoint)
+        # Reconstruct model
+        model = HierarchicalTacticClassifier.from_checkpoint(checkpoint)
         model.eval()
+
+        # Wrap hierarchical model for flat ONNX output
+        if is_hierarchical:
+            wrapper = _FlatInferenceWrapper(model)
+            export_model = wrapper.wrapper
+        else:
+            export_model = model
 
         # Step 1: Export to ONNX
         with tempfile.TemporaryDirectory() as tmpdir:
             fp32_onnx_path = Path(tmpdir) / "model_fp32.onnx"
 
-            # Create dummy inputs
             from Poule.neural.training.vocabulary import CoqTokenizer
 
             if isinstance(tokenizer, CoqTokenizer):
@@ -98,7 +132,7 @@ class ModelQuantizer:
                 dummy_attention_mask = dummy_tokens["attention_mask"]
 
             torch.onnx.export(
-                model,
+                export_model,
                 (dummy_input_ids, dummy_attention_mask),
                 str(fp32_onnx_path),
                 opset_version=17,
@@ -111,8 +145,6 @@ class ModelQuantizer:
                 },
             )
 
-            # The dynamo exporter may write an external .data file for
-            # large models (>2GB). Convert to a single self-contained file.
             import onnx
 
             onnx_model = onnx.load(str(fp32_onnx_path), load_external_data=True)
@@ -123,11 +155,7 @@ class ModelQuantizer:
             )
             del onnx_model
 
-            # Step 2: Apply dynamic INT8 quantization.
-            # The dynamo-based ONNX exporter (torch >= 2.6) produces
-            # graphs that ORT's shape inference cannot handle. Fall back
-            # to FP32 ONNX when quantization fails — the 4-layer model
-            # already meets the <50ms latency target without INT8.
+            # Step 2: Apply dynamic INT8 quantization
             try:
                 quantize_dynamic(
                     model_input=str(single_path),
@@ -138,7 +166,7 @@ class ModelQuantizer:
                 import shutil
                 shutil.copy2(str(single_path), str(output_path))
 
-            # Step 3: Validate quantization quality via label agreement
+            # Step 3: Validate quantization quality
             fp32_session = ort.InferenceSession(
                 str(fp32_onnx_path),
                 providers=["CPUExecutionProvider"],
@@ -180,7 +208,19 @@ class ModelQuantizer:
                 )
 
         # Step 4: Write tactic-labels.json
-        label_names = sorted(label_map.keys(), key=lambda k: label_map[k])
+        if is_hierarchical:
+            # Hierarchical format
+            category_names = checkpoint.get("category_names", [])
+            per_cat_label_names = checkpoint.get("per_category_label_names", {})
+            labels_data = {
+                "categories": category_names,
+                "per_category": per_cat_label_names,
+            }
+        else:
+            # Flat format (backward compat)
+            label_names = sorted(label_map.keys(), key=lambda k: label_map[k])
+            labels_data = label_names
+
         labels_path = output_path.parent / "tactic-labels.json"
         with open(labels_path, "w") as f:
-            json.dump(label_names, f, indent=2)
+            json.dump(labels_data, f, indent=2)

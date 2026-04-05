@@ -206,12 +206,50 @@ The data loader:
 The tactic family is extracted from the raw tactic text:
 1. Strip whitespace
 2. Handle SSReflect: strip `by` prefix if present
-3. Take the first whitespace-delimited token
-4. Normalize: lowercase, strip trailing punctuation
-5. Map aliases (`intro` -> `intros`, etc.)
-6. If the family appears fewer than N times in the dataset, map to `other`
+3. Strip `/`-suffix for SSReflect compounds (`apply/eqp` → `apply`)
+4. Take the first whitespace-delimited token
+5. Normalize: lowercase, strip trailing punctuation
+6. Map aliases (`intro` -> `intros`, etc.)
+7. Map to a canonical category via `taxonomy.py`
 
-Target: ~30 families covering >95% of proof steps.
+### Hierarchical Tactic Taxonomy
+
+Every tactic maps to exactly one of 8 categories via a canonical taxonomy (`taxonomy.py`). The "other" catch-all class is eliminated. Proof structure tokens (`-`, `+`, `*`, `{`, `}`) are excluded from training.
+
+| Category | Example tactics | Estimated % |
+|----------|----------------|----------:|
+| Rewriting | rewrite, simpl, unfold, reflexivity | 25.8% |
+| Hypothesis Management | apply, have, assert, specialize | 22.5% |
+| Introduction | intros, split, left, right, exact | 12.2% |
+| Elimination | destruct, induction, case, inversion | 7.0% |
+| Automation | auto, eauto, trivial, tauto | 4.1% |
+| SSReflect | move, suff, wlog, congr | 3.9% |
+| Arithmetic | lia, omega, ring, field | 1-2% |
+| Contradiction | exfalso, absurd, contradiction | <1% |
+
+Cross-category IR drops from 26,950:1 to ~6:1. Within-category IR is at most ~14:1.
+
+### Hierarchical Architecture
+
+```
+Encoder (shared, factored embeddings D=128, CodeBERT) → representation z [B, 768]
+    ↓
+Category Head: nn.Linear(768, 8) → category logits [B, 8]
+    ↓
+Per-Category Heads (8 heads):
+    introduction_head:    nn.Linear(768, N_introduction)
+    elimination_head:     nn.Linear(768, N_elimination)
+    rewriting_head:       nn.Linear(768, N_rewriting)
+    hypothesis_mgmt_head: nn.Linear(768, N_hypothesis_mgmt)
+    automation_head:      nn.Linear(768, N_automation)
+    arithmetic_head:      nn.Linear(768, N_arithmetic)
+    contradiction_head:   nn.Linear(768, N_contradiction)
+    ssreflect_head:       nn.Linear(768, N_ssreflect)
+```
+
+Joint loss: `L = L_category + λ · L_within(active head)`, where λ balances category vs. within-category loss (default 1.0, tunable [0.3, 3.0]).
+
+Inference uses product rule: `P(tactic) = P(category) × P(tactic | category)`, returning top-k by final probability.
 
 ### Train/Validation/Test Split
 

@@ -1,9 +1,9 @@
-"""Class-conditional label smoothing cross-entropy loss.
+"""Class-conditional label smoothing cross-entropy loss and hierarchical loss.
 
 Distributes smoothing mass proportionally to class weights rather than
 uniformly, directing more probability mass toward minority classes.
 
-Reference: Shwartz-Ziv et al. (2023), NeurIPS — class-conditional smoothing
+Reference: Shwartz-Ziv et al. (2023), NeurIPS -- class-conditional smoothing
 prevents overfitting on underrepresented groups.
 """
 
@@ -21,12 +21,12 @@ def _smooth_targets(
     """Build class-conditional soft targets.
 
     smooth_dist[c] = class_weight[c] / sum(class_weights)
-    y = (1 - ε) * one_hot(label) + ε * smooth_dist
+    y = (1 - e) * one_hot(label) + e * smooth_dist
 
     Args:
         labels: [B] integer class labels.
         class_weights: [num_classes] per-class weights.
-        label_smoothing: smoothing parameter ε in [0, 1).
+        label_smoothing: smoothing parameter e in [0, 1).
 
     Returns:
         [B, num_classes] soft target distribution.
@@ -49,7 +49,7 @@ def class_conditional_cross_entropy(
         logits: [B, num_classes] unnormalized logits.
         labels: [B] integer class labels.
         class_weights: [num_classes] per-class inverse-frequency weights.
-        label_smoothing: smoothing parameter ε in [0, 1).
+        label_smoothing: smoothing parameter e in [0, 1).
 
     Returns:
         Scalar loss (weighted mean over batch).
@@ -60,3 +60,64 @@ def class_conditional_cross_entropy(
 
     sample_weights = class_weights[labels]  # [B]
     return (per_sample_loss * sample_weights).sum() / sample_weights.sum()
+
+
+def hierarchical_loss(
+    category_logits: torch.Tensor,
+    within_logits: dict[str, torch.Tensor],
+    category_labels: torch.Tensor,
+    within_labels: torch.Tensor,
+    category_weights: torch.Tensor,
+    per_category_weights: dict[str, torch.Tensor],
+    category_names: list[str],
+    label_smoothing: float,
+    lambda_within: float = 1.0,
+) -> torch.Tensor:
+    """Hierarchical loss: L = L_category + lambda * L_within(active head).
+
+    Only the head corresponding to the true category receives gradients
+    for L_within.
+
+    Args:
+        category_logits: [B, num_categories] from category head.
+        within_logits: dict[cat_name -> [B, cat_size]] from within-category heads.
+        category_labels: [B] true category indices.
+        within_labels: [B] true within-category tactic indices.
+        category_weights: [num_categories] inverse-frequency weights for categories.
+        per_category_weights: dict[cat_name -> [cat_size]] per-category class weights.
+        category_names: ordered list of category names (index -> name).
+        label_smoothing: smoothing parameter.
+        lambda_within: balancing weight for within-category loss.
+
+    Returns:
+        Scalar combined loss.
+    """
+    # Category loss
+    l_category = class_conditional_cross_entropy(
+        category_logits, category_labels, category_weights, label_smoothing,
+    )
+
+    # Within-category loss: gather samples per true category
+    l_within = torch.tensor(0.0, device=category_logits.device)
+    total_within_weight = 0.0
+
+    for cat_idx, cat_name in enumerate(category_names):
+        mask = category_labels == cat_idx
+        if not mask.any():
+            continue
+
+        cat_within_labels = within_labels[mask]
+        cat_logits = within_logits[cat_name][mask]
+        cat_weights = per_category_weights[cat_name]
+
+        cat_loss = class_conditional_cross_entropy(
+            cat_logits, cat_within_labels, cat_weights, label_smoothing,
+        )
+        n = mask.sum().item()
+        l_within = l_within + cat_loss * n
+        total_within_weight += n
+
+    if total_within_weight > 0:
+        l_within = l_within / total_within_weight
+
+    return l_category + lambda_within * l_within

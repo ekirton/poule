@@ -1,7 +1,8 @@
 """Inference for the quantized tactic prediction model.
 
 Loads an INT8-quantized ONNX tactic classifier and predicts tactic families
-from Coq proof state text.
+from Coq proof state text. Supports both hierarchical (product-rule) and
+flat (legacy) label formats.
 
 See specification/neural-training.md §8.1.
 """
@@ -63,9 +64,29 @@ class TacticPredictor:
             str(model_path),
             providers=["CPUExecutionProvider"],
         )
-        self._labels: list[str] = json.loads(
-            labels_path.read_text(encoding="utf-8")
-        )
+
+        labels_data = json.loads(labels_path.read_text(encoding="utf-8"))
+
+        # Detect hierarchical vs flat label format
+        if isinstance(labels_data, dict) and "categories" in labels_data:
+            self._is_hierarchical = True
+            self._categories = labels_data["categories"]
+            self._per_category = labels_data["per_category"]
+            # Build flat label list in order matching ONNX output
+            self._labels = []
+            self._label_categories = []
+            for cat in self._categories:
+                tactics = self._per_category.get(cat, [])
+                for tac in tactics:
+                    self._labels.append(tac)
+                    self._label_categories.append(cat)
+        else:
+            self._is_hierarchical = False
+            self._labels = labels_data
+            self._categories = []
+            self._per_category = {}
+            self._label_categories = []
+
         self._tokenizer = CoqTokenizer(vocabulary_path)
 
     def predict(
@@ -82,16 +103,15 @@ class TacticPredictor:
             proof_state_text, max_length=512
         )
 
-        # ONNX expects [batch, seq_len] int64 arrays
         ids_arr = np.array([input_ids], dtype=np.int64)
         mask_arr = np.array([attention_mask], dtype=np.int64)
 
         logits = self._session.run(
             None,
             {"input_ids": ids_arr, "attention_mask": mask_arr},
-        )[0]  # shape [1, num_classes]
+        )[0]  # shape [1, total_tactics]
 
-        # Softmax
+        # Softmax (the ONNX model already applies product rule for hierarchical)
         logits = logits[0]
         exp_logits = np.exp(logits - np.max(logits))
         probs = exp_logits / exp_logits.sum()
@@ -100,10 +120,50 @@ class TacticPredictor:
         k = min(top_k, len(self._labels))
         top_indices = np.argsort(probs)[::-1][:k]
 
-        return [
-            (self._labels[int(i)], float(probs[i]))
-            for i in top_indices
-        ]
+        results = []
+        for i in top_indices:
+            name = self._labels[int(i)]
+            confidence = float(probs[i])
+            results.append((name, confidence))
+
+        return results
+
+    def predict_with_category(
+        self, proof_state_text: str, top_k: int = 5,
+    ) -> list[tuple[str, str, float]]:
+        """Predict tactic families with category metadata.
+
+        Returns a list of (family_name, category_name, confidence) tuples.
+        Only available for hierarchical models; falls back to ("", ) for flat.
+        """
+        import numpy as np
+
+        input_ids, attention_mask = self._tokenizer.encode(
+            proof_state_text, max_length=512
+        )
+        ids_arr = np.array([input_ids], dtype=np.int64)
+        mask_arr = np.array([attention_mask], dtype=np.int64)
+
+        logits = self._session.run(
+            None,
+            {"input_ids": ids_arr, "attention_mask": mask_arr},
+        )[0][0]
+
+        exp_logits = np.exp(logits - np.max(logits))
+        probs = exp_logits / exp_logits.sum()
+
+        k = min(top_k, len(self._labels))
+        top_indices = np.argsort(probs)[::-1][:k]
+
+        results = []
+        for i in top_indices:
+            idx = int(i)
+            name = self._labels[idx]
+            cat = self._label_categories[idx] if self._label_categories else ""
+            confidence = float(probs[idx])
+            results.append((name, cat, confidence))
+
+        return results
 
     @staticmethod
     def is_available() -> bool:

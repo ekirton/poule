@@ -47,6 +47,65 @@ def cross_entropy_loss(
         return mx.mean(nll)
 
 
+def hierarchical_loss_mlx(
+    category_logits: mx.array,
+    within_logits: dict[str, mx.array],
+    category_labels: mx.array,
+    within_labels: mx.array,
+    category_weights: mx.array,
+    per_category_weights: dict[str, mx.array],
+    category_names: list[str],
+    lambda_within: float = 1.0,
+) -> mx.array:
+    """Hierarchical loss: L = L_category + lambda * L_within(active head).
+
+    Args:
+        category_logits: [B, num_categories]
+        within_logits: dict[cat_name -> [B, cat_size]]
+        category_labels: [B] true category indices
+        within_labels: [B] true within-category indices
+        category_weights: [num_categories] class weights
+        per_category_weights: dict[cat_name -> [cat_size]] per-category weights
+        category_names: ordered category names
+        lambda_within: balancing weight
+
+    Returns:
+        Scalar combined loss.
+    """
+    l_category = cross_entropy_loss(category_logits, category_labels, category_weights)
+
+    # MLX doesn't support boolean indexing, so use mx.where to gather
+    # samples per category and compute weighted within-category loss.
+    import numpy as np
+
+    B = category_logits.shape[0]
+    cat_labels_np = np.array(category_labels)
+    within_labels_np = np.array(within_labels)
+
+    l_within = mx.array(0.0)
+    total_weight = 0.0
+
+    for cat_idx, cat_name in enumerate(category_names):
+        indices = np.where(cat_labels_np == cat_idx)[0]
+        n = len(indices)
+        if n == 0:
+            continue
+
+        idx = mx.array(indices)
+        cat_within_labels = within_labels[idx]
+        cat_logits = within_logits[cat_name][idx]
+        cat_weights = per_category_weights[cat_name]
+
+        cat_loss = cross_entropy_loss(cat_logits, cat_within_labels, cat_weights)
+        l_within = l_within + cat_loss * n
+        total_weight += n
+
+    if total_weight > 0:
+        l_within = l_within / total_weight
+
+    return l_category + lambda_within * l_within
+
+
 def masked_contrastive_loss_mlx(
     state_embs: mx.array,
     premise_embs: mx.array,

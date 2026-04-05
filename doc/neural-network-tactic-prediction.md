@@ -2,7 +2,9 @@
 
 ## Status
 
-**Active development.** Replaces the abandoned neural premise selection approach (see [neural-network-search.md](neural-network-search.md) for why that failed). The extraction pipeline captures 140,358 (proof_state, tactic) steps across 136,936 unique states — 40x more training data than was available for premise retrieval.
+**Active development — hierarchical decomposition.** Replaces the abandoned neural premise selection approach (see [neural-network-search.md](neural-network-search.md) for why that failed). The extraction pipeline captures 140,358 (proof_state, tactic) steps across 136,936 unique states — 40x more training data than was available for premise retrieval.
+
+The flat 96-class classifier achieved 46.6% test_acc@5 with 86 of 96 classes showing zero recall. A hierarchical decomposition (8 categories × ~65 within-category tactics) replaces the flat approach. See [hierarchical design](#hierarchical-tactic-decomposition) below.
 
 ## Problem
 
@@ -380,6 +382,60 @@ A 3× parameter reduction without quantization. Combined with INT8 quantization 
 - Adds one small matrix multiply per forward pass (128 × 768 = 98K operations — negligible compared to attention)
 - If D is too small, frequent tokens lose expressiveness. D=128–256 is the typical sweet spot; D=128 is the ALBERT default for H=768
 - The CodeBERT pretrained weights for attention layers and FFN are unaffected — only the embedding input path changes
+
+## Hierarchical Tactic Decomposition
+
+The flat 96-class classifier failed due to extreme class imbalance (IR = 26,950:1) across too many classes, with 86 of 96 classes showing zero test recall. The hierarchical approach decomposes the problem into two levels:
+
+### Category taxonomy
+
+Eight categories derived from the Coq tactic reference:
+
+| Category | Tactics | Training samples |
+|----------|---------|----------------:|
+| Rewriting | rewrite, simpl, unfold, reflexivity, ... (12) | 38,303 |
+| Hypothesis Management | apply, have, assert, specialize, ... (14) | 38,632 |
+| Introduction | intros, split, left, right, exact, ... (10) | 18,776 |
+| Elimination | destruct, induction, case, inversion, ... (7) | 11,780 |
+| Automation | auto, eauto, trivial, tauto, ... (10) | 7,009 |
+| SSReflect | move, suff, wlog, congr, unlock (5) | 6,005 |
+| Arithmetic | lia, omega, ring, field (4) | 864 |
+| Contradiction | exfalso, absurd, contradiction (3) | 146 |
+
+Key changes from the flat approach:
+- **"other" class eliminated.** Every tactic maps to a known category. The `_MIN_FAMILY_COUNT` threshold and frequency-based collapsing are removed.
+- **SSReflect compounds normalized.** `apply/eqp` -> `apply`, `case/andp` -> `case` via `/`-suffix stripping.
+- **Proof structure tokens excluded.** `-`, `+`, `*`, `{`, `}` are filtered at data loading time.
+
+### Architecture
+
+```
+Encoder (shared, factored D=128, CodeBERT) -> z [B, 768]
+  |
+  +-> Category Head: Linear(768, 8) -> P(category)
+  |
+  +-> Per-Category Heads (8): Linear(768, N_cat) -> P(tactic|category)
+
+Inference: P(tactic) = P(category) * P(tactic|category)
+```
+
+Joint loss: `L = L_category + lambda * L_within(active head)`, where lambda balances category vs. within-category loss (default 1.0, tunable [0.3, 3.0]).
+
+### Updated HPO search space
+
+| Hyperparameter | Range | Change from flat model |
+|---|---|---|
+| `num_hidden_layers` | {4, 6, 8} | Drop 12, add 8 |
+| `batch_size` | {16, 32, 64} | Restore 64 |
+| `label_smoothing` | [0.0, 0.2] | Narrow from [0.0, 0.3] |
+| `lambda_within` | [0.3, 3.0] | **New** |
+| Others | Unchanged | |
+
+### Success criteria
+
+- Overall test accuracy@5 exceeds 46.6% (flat model baseline)
+- Fewer than 20 dead tactic families (down from 86)
+- Category accuracy@1 exceeds 80%
 
 ## Implementation Scope
 

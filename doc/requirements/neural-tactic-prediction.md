@@ -61,9 +61,11 @@ Cross-references:
 
 | ID | Requirement |
 |----|-------------|
-| R6-P0-1 | Train a tactic family classifier on `(proof_state, tactic_text)` pairs extracted by the Training Data Extraction pipeline |
-| R6-P0-2 | Support a tactic family vocabulary of ~30 families covering >95% of extracted proof steps |
-| R6-P0-3 | Handle class imbalance via weighted cross-entropy loss with inverse-frequency class weights |
+| R6-P0-1 | Train a hierarchical tactic classifier on `(proof_state, tactic_text)` pairs extracted by the Training Data Extraction pipeline, predicting both tactic category and specific tactic family |
+| R6-P0-2 | Classify tactics into 8 categories (introduction, elimination, rewriting, hypothesis management, automation, arithmetic, contradiction, ssreflect) with ~65 within-category tactic families, covering >99% of extracted proof steps |
+| R6-P0-3 | Handle class imbalance via hierarchical weighted cross-entropy loss with inverse-frequency class weights at both category and within-category levels |
+| R6-P0-16 | Exclude proof structure tokens (`-`, `+`, `*`, `{`, `}`) from training — they are not tactics and are trivially predictable from subgoal count |
+| R6-P0-17 | Eliminate the "other" catch-all class — every tactic maps to a known category via a canonical taxonomy |
 | R6-P0-4 | Integrate neural predictions into the existing `suggest_tactics` MCP tool, ranking neural predictions above rule-based fallbacks |
 | R6-P0-5 | Inference latency < 50ms per proof state on CPU without GPU |
 | R6-P0-6 | Support INT8 quantized inference for the classifier model on CPU |
@@ -82,7 +84,7 @@ Cross-references:
 | ID | Requirement |
 |----|-------------|
 | R6-P1-1 | Provide a training data validation step that checks extracted `(proof_state, tactic_text)` pairs for completeness, tactic family distribution, and class imbalance before training |
-| R6-P1-7 | Provide a CLI command to collapse per-library training data into a single merged file with normalized tactic families, merging rare and malformed families into their parent tactic or an "other" class, so that the collapsed output can be regenerated with different parameters without modifying the original extraction output |
+| R6-P1-7 | Provide a CLI command to collapse per-library training data into a single merged file with normalized tactic families mapped to the canonical taxonomy, so that the collapsed output can be regenerated with different parameters without modifying the original extraction output |
 | R6-P1-2 | Report training metrics (loss curves, validation accuracy@k) during and after training |
 | R6-P1-3 | Provide automated hyperparameter optimization that searches over training hyperparameters (learning rate, batch size, class weight exponent) to maximize validation accuracy@5, with early pruning |
 | R6-P1-4 | Normalize SSReflect compound tactics for classification: handle `move=>`, `apply/`, `rewrite !term`, and other SSReflect-specific syntax |

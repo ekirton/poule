@@ -91,7 +91,10 @@ class MLXTrainer:
         import mlx.nn as nn
         import mlx.optimizers as optim
 
-        from Poule.neural.training.mlx_backend.loss import cross_entropy_loss
+        from Poule.neural.training.mlx_backend.loss import (
+            cross_entropy_loss,
+            hierarchical_loss_mlx,
+        )
         from Poule.neural.training.mlx_backend.model import MLXTacticClassifier
         from Poule.neural.training.vocabulary import CoqTokenizer
 
@@ -107,6 +110,7 @@ class MLXTrainer:
         max_epochs = hp["max_epochs"]
         patience = hp["early_stopping_patience"]
         class_weight_alpha = hp.get("class_weight_alpha", 0.5)
+        lambda_within = hp.get("lambda_within", 1.0)
 
         train_pairs = dataset.train_pairs
         if len(train_pairs) < 1000:
@@ -115,18 +119,34 @@ class MLXTrainer:
             )
 
         num_classes = dataset.num_classes
+        is_hierarchical = (
+            hasattr(dataset, "category_names")
+            and len(dataset.category_names) > 0
+        )
 
         # Load tokenizer
         tokenizer = CoqTokenizer(str(vocabulary_path))
 
         num_hidden_layers = hp.get("num_hidden_layers", 6)
         embedding_dim = hp.get("embedding_dim", 128)
-        model = MLXTacticClassifier(
-            vocab_size=tokenizer.vocab_size,
-            num_classes=num_classes,
-            num_layers=num_hidden_layers,
-            embedding_dim=embedding_dim,
-        )
+
+        if is_hierarchical:
+            per_category_sizes = dataset.per_category_sizes
+            num_categories = dataset.num_categories
+            model = MLXTacticClassifier(
+                vocab_size=tokenizer.vocab_size,
+                num_layers=num_hidden_layers,
+                embedding_dim=embedding_dim,
+                per_category_sizes=per_category_sizes,
+                num_categories=num_categories,
+            )
+        else:
+            model = MLXTacticClassifier(
+                vocab_size=tokenizer.vocab_size,
+                num_classes=num_classes,
+                num_layers=num_hidden_layers,
+                embedding_dim=embedding_dim,
+            )
         mx.eval(model.parameters())
 
         # Initialize with pre-trained CodeBERT weights for transfer learning
@@ -135,10 +155,30 @@ class MLXTrainer:
         mx.eval(model.parameters())
 
         # Compute class weights (inverse-frequency)
-        class_weights = self._compute_class_weights(
-            dataset.family_counts, dataset.label_map, num_classes,
-            alpha=class_weight_alpha,
-        )
+        if is_hierarchical:
+            # Category-level weights
+            cat_counts = {}
+            for cat in dataset.category_names:
+                cat_counts[cat] = sum(dataset.per_category_counts.get(cat, {}).values())
+            cat_label_map = {cat: i for i, cat in enumerate(dataset.category_names)}
+            category_weights = self._compute_class_weights(
+                cat_counts, cat_label_map, num_categories, alpha=class_weight_alpha,
+            )
+            # Per-category within-class weights
+            per_cat_weights = {}
+            for cat in dataset.category_names:
+                cat_family_counts = dataset.per_category_counts.get(cat, {})
+                cat_lm = dataset.per_category_label_maps[cat]
+                n_cat = len(dataset.per_category_label_names[cat])
+                per_cat_weights[cat] = self._compute_class_weights(
+                    cat_family_counts, cat_lm, n_cat, alpha=class_weight_alpha,
+                )
+            class_weights = None  # not used for hierarchical
+        else:
+            class_weights = self._compute_class_weights(
+                dataset.family_counts, dataset.label_map, num_classes,
+                alpha=class_weight_alpha,
+            )
 
         # Optimizer
         optimizer = optim.AdamW(learning_rate=lr, weight_decay=weight_decay)
@@ -168,12 +208,20 @@ class MLXTrainer:
         all_ids_np = np.zeros((len(train_pairs), max_seq_length), dtype=np.int32)
         all_mask_np = np.zeros((len(train_pairs), max_seq_length), dtype=np.int32)
         all_label_np = np.zeros(len(train_pairs), dtype=np.int32)
+        all_cat_label_np = np.zeros(len(train_pairs), dtype=np.int32)
+        all_within_label_np = np.zeros(len(train_pairs), dtype=np.int32)
         all_lengths = np.zeros(len(train_pairs), dtype=np.int32)
-        for i, (text, label) in enumerate(train_pairs):
+        for i, item in enumerate(train_pairs):
+            if is_hierarchical:
+                text, cat_idx, within_idx = item
+                all_cat_label_np[i] = cat_idx
+                all_within_label_np[i] = within_idx
+            else:
+                text = item[0]
+                all_label_np[i] = item[1]
             ids, mask = tokenizer.encode(text, max_length=max_seq_length)
             all_ids_np[i] = ids
             all_mask_np[i] = mask
-            all_label_np[i] = label
             all_lengths[i] = sum(mask)
         # Sort by length for efficient length-bucketed batching
         sort_idx = np.argsort(all_lengths)
@@ -184,7 +232,9 @@ class MLXTrainer:
         all_ids = mx.array(all_ids_np)
         all_masks = mx.array(all_mask_np)
         all_labels = mx.array(all_label_np)
-        del all_ids_np, all_mask_np, all_label_np
+        all_cat_labels = mx.array(all_cat_label_np)
+        all_within_labels = mx.array(all_within_label_np)
+        del all_ids_np, all_mask_np, all_label_np, all_cat_label_np, all_within_label_np
         print(
             f"Pre-tokenized {len(train_pairs)} samples "
             f"(lengths: median={int(np.median(all_lengths))}, "
@@ -213,7 +263,6 @@ class MLXTrainer:
                 end = min(batch_start + micro_batch_size, n_train)
                 s_ids_full = all_ids[batch_start:end]
                 s_mask_full = all_masks[batch_start:end]
-                labels = all_labels[batch_start:end]
 
                 # Trim to actual max sequence length in this batch to
                 # reduce attention cost (O(n²)) for short-sequence batches.
@@ -221,10 +270,24 @@ class MLXTrainer:
                 s_ids = s_ids_full[:, :actual_max]
                 s_mask = s_mask_full[:, :actual_max]
 
-                # Forward + backward
-                def loss_fn(model):
-                    logits = model(s_ids, s_mask)
-                    return cross_entropy_loss(logits, labels, class_weights)
+                if is_hierarchical:
+                    cat_labels = all_cat_labels[batch_start:end]
+                    within_labels = all_within_labels[batch_start:end]
+
+                    def loss_fn(model):
+                        cat_logits, within_logits = model(s_ids, s_mask)
+                        return hierarchical_loss_mlx(
+                            cat_logits, within_logits,
+                            cat_labels, within_labels,
+                            category_weights, per_cat_weights,
+                            dataset.category_names, lambda_within,
+                        )
+                else:
+                    labels = all_labels[batch_start:end]
+
+                    def loss_fn(model):
+                        logits = model(s_ids, s_mask)
+                        return cross_entropy_loss(logits, labels, class_weights)
 
                 loss, grads = nn.value_and_grad(model, loss_fn)(model)
                 optimizer.update(model, grads)
@@ -236,9 +299,15 @@ class MLXTrainer:
             avg_loss = epoch_loss / max(num_batches, 1)
 
             # Validation: accuracy@5
-            val_accuracy = self._compute_accuracy_at_k(
-                model, dataset.val_pairs, tokenizer, max_seq_length, k=5
-            )
+            if is_hierarchical:
+                val_accuracy = self._compute_hierarchical_accuracy_at_k(
+                    model, dataset.val_pairs, tokenizer, max_seq_length,
+                    dataset.category_names, dataset.per_category_label_names, k=5,
+                )
+            else:
+                val_accuracy = self._compute_accuracy_at_k(
+                    model, dataset.val_pairs, tokenizer, max_seq_length, k=5
+                )
 
             logger.info(
                 f"Epoch {epoch}: loss={avg_loss:.4f}, val_acc@5={val_accuracy:.4f}"
@@ -261,6 +330,7 @@ class MLXTrainer:
                 self._save_checkpoint(
                     model, output_dir, hp, vocabulary_path,
                     best_accuracy, dataset.label_map,
+                    dataset=dataset if is_hierarchical else None,
                 )
 
             if early_stopping.should_stop(val_accuracy):
@@ -328,6 +398,62 @@ class MLXTrainer:
 
         return hits / len(pairs)
 
+    def _compute_hierarchical_accuracy_at_k(
+        self,
+        model,
+        pairs: list[tuple[str, int, int]],
+        tokenizer,
+        max_seq_length: int,
+        category_names: list[str],
+        per_category_label_names: dict[str, list[str]],
+        k: int = 5,
+    ) -> float:
+        """Compute Accuracy@k using product rule for hierarchical model."""
+        import mlx.core as mx
+
+        if not pairs:
+            return 0.0
+
+        def _tokenize(texts):
+            result = tokenizer.encode_batch(texts, max_length=max_seq_length)
+            ids = mx.array(np.array(result["input_ids"], dtype=np.int32))
+            mask = mx.array(np.array(result["attention_mask"], dtype=np.int32))
+            return ids, mask
+
+        hits = 0
+        for start in range(0, len(pairs), self._ENCODE_CHUNK):
+            chunk = pairs[start:start + self._ENCODE_CHUNK]
+            texts = [s for s, _, _ in chunk]
+            true_cats = [c for _, c, _ in chunk]
+            true_withins = [w for _, _, w in chunk]
+
+            s_ids, s_mask = _tokenize(texts)
+            cat_logits, within_logits = model(s_ids, s_mask)
+            mx.eval(cat_logits)
+
+            cat_probs_np = np.array(mx.softmax(cat_logits, axis=-1))
+
+            all_scores = []
+            for cat_idx, cat in enumerate(category_names):
+                within_np = np.array(mx.softmax(within_logits[cat], axis=-1))
+                product = cat_probs_np[:, cat_idx:cat_idx+1] * within_np
+                all_scores.append(product)
+            all_scores_np = np.concatenate(all_scores, axis=-1)
+
+            effective_k = min(k, all_scores_np.shape[1])
+            top_k_indices = np.argsort(all_scores_np, axis=1)[:, -effective_k:]
+
+            for i in range(len(chunk)):
+                offset = sum(
+                    len(per_category_label_names.get(category_names[c], []))
+                    for c in range(true_cats[i])
+                )
+                true_flat = offset + true_withins[i]
+                if true_flat in top_k_indices[i]:
+                    hits += 1
+
+        return hits / len(pairs)
+
     @staticmethod
     def _compute_class_weights(
         family_counts: dict[str, int],
@@ -358,6 +484,7 @@ class MLXTrainer:
         vocabulary_path: Path,
         best_accuracy: float,
         label_map: dict[str, int],
+        dataset=None,
     ) -> None:
         """Save MLX checkpoint in the spec-defined directory format."""
         import mlx.core as mx
@@ -377,6 +504,14 @@ class MLXTrainer:
             else 12,
             "embedding_dim": model.embedding.weight.shape[1],
         }
+        if model._is_hierarchical:
+            config["per_category_sizes"] = dict(model.per_category_sizes)
+            config["num_categories"] = model.num_categories
+        if dataset is not None:
+            config["category_names"] = dataset.category_names
+            config["per_category_label_names"] = dict(dataset.per_category_label_names)
+            config["per_category_label_maps"] = dict(dataset.per_category_label_maps)
+
         (output_dir / "config.json").write_text(json.dumps(config, indent=2))
         (output_dir / "hyperparams.json").write_text(
             json.dumps(hyperparams, indent=2)

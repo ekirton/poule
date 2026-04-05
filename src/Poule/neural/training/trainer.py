@@ -22,16 +22,17 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_HYPERPARAMS = {
     "num_hidden_layers": 6,
-    "batch_size": 16,
+    "batch_size": 32,
     "learning_rate": 2e-5,
     "weight_decay": 1e-2,
     "max_seq_length": 256,
     "max_epochs": 20,
     "early_stopping_patience": 3,
-    "class_weight_alpha": 0.5,
+    "class_weight_alpha": 0.4,
     "label_smoothing": 0.1,
     "sam_rho": 0.05,
     "embedding_dim": 128,
+    "lambda_within": 1.0,
 }
 
 
@@ -257,6 +258,81 @@ def _compute_accuracy_at_k(model, tokenizer, pairs, max_seq_length, device, k=5)
     return hits / len(pairs)
 
 
+def _compute_hierarchical_accuracy_at_k(
+    model, tokenizer, pairs, max_seq_length, device, category_names,
+    per_category_label_names, k=5,
+):
+    """Compute Accuracy@k using product rule P(tactic) = P(cat) * P(tactic|cat).
+
+    A prediction is correct if the true (category, within_tactic) pair
+    appears in the top-k product-rule ranked predictions.
+    """
+    import torch
+
+    if not pairs:
+        return 0.0
+
+    model.eval()
+    hits = 0
+    _CHUNK = 256
+
+    # Pre-compute total number of predictions for efficient top-k
+    all_tactic_names = []
+    tactic_to_cat_within = {}
+    for cat_idx, cat in enumerate(category_names):
+        cat_tactics = per_category_label_names.get(cat, [])
+        for within_idx, tac in enumerate(cat_tactics):
+            tactic_to_cat_within[len(all_tactic_names)] = (cat_idx, within_idx)
+            all_tactic_names.append(tac)
+
+    with torch.no_grad():
+        for start in range(0, len(pairs), _CHUNK):
+            chunk = pairs[start:start + _CHUNK]
+            texts = [s for s, _, _ in chunk]
+            true_cats = [c for _, c, _ in chunk]
+            true_withins = [w for _, _, w in chunk]
+
+            tokens = _tokenize_batch(tokenizer, texts, max_seq_length)
+            cat_logits, within_logits = model(
+                tokens["input_ids"].to(device),
+                tokens["attention_mask"].to(device),
+            )
+
+            # Softmax over categories
+            cat_probs = torch.softmax(cat_logits, dim=-1)  # [B, num_cats]
+
+            # Build product-rule scores for all tactics
+            all_scores = []
+            for cat_idx, cat in enumerate(category_names):
+                cat_within_logits = within_logits[cat]
+                within_probs = torch.softmax(cat_within_logits, dim=-1)  # [B, cat_size]
+                # P(tactic) = P(cat) * P(tactic|cat)
+                product = cat_probs[:, cat_idx:cat_idx+1] * within_probs  # [B, cat_size]
+                all_scores.append(product)
+
+            # Concatenate all tactic scores: [B, total_tactics]
+            all_scores_tensor = torch.cat(all_scores, dim=-1)
+            topk_indices = torch.topk(
+                all_scores_tensor, min(k, all_scores_tensor.size(1)), dim=1,
+            ).indices  # [B, k]
+
+            for i in range(len(chunk)):
+                true_cat = true_cats[i]
+                true_within = true_withins[i]
+                # Find the flat index for the true tactic
+                offset = 0
+                for ci, cat in enumerate(category_names):
+                    if ci == true_cat:
+                        true_flat_idx = offset + true_within
+                        break
+                    offset += len(per_category_label_names.get(cat, []))
+
+                if true_flat_idx in topk_indices[i].tolist():
+                    hits += 1
+
+    return hits / len(pairs)
+
+
 # ---------------------------------------------------------------------------
 # Trainer
 # ---------------------------------------------------------------------------
@@ -322,6 +398,7 @@ class TacticClassifierTrainer:
             hp=hp,
             vocabulary_path=vocabulary_path,
             epoch_callback=epoch_callback,
+            dataset=dataset,
         )
 
     # -----------------------------------------------------------------------
@@ -340,40 +417,70 @@ class TacticClassifierTrainer:
         hp,
         vocabulary_path=None,
         epoch_callback=None,
+        dataset=None,
     ) -> Path:
-        """Core training loop."""
+        """Core training loop (hierarchical)."""
         import gc
 
         import torch
         import torch.nn as nn
 
-        from Poule.neural.training.model import TacticClassifier
+        from Poule.neural.training.model import HierarchicalTacticClassifier
 
         output_path = Path(output_path)
         device = _get_device()
-        num_classes = len(label_names)
+
+        # Detect hierarchical dataset
+        is_hierarchical = (
+            dataset is not None
+            and hasattr(dataset, "category_names")
+            and len(dataset.category_names) > 0
+        )
 
         # Build model
         from Poule.neural.training.vocabulary import CoqTokenizer
 
         num_hidden_layers = hp.get("num_hidden_layers", 6)
         embedding_dim = hp.get("embedding_dim", 128)
-        if isinstance(tokenizer, CoqTokenizer):
-            model = TacticClassifier(
-                num_classes=num_classes,
-                vocab_size=tokenizer.vocab_size,
-                num_hidden_layers=num_hidden_layers,
-                embedding_dim=embedding_dim,
-            )
-        else:
-            model = TacticClassifier(
-                num_classes=num_classes,
-                num_hidden_layers=num_hidden_layers,
-                embedding_dim=embedding_dim,
-            )
 
-        # Free transient allocations from model loading before
-        # the optimizer doubles the memory footprint.
+        if is_hierarchical:
+            per_category_sizes = dataset.per_category_sizes
+            num_categories = dataset.num_categories
+        else:
+            per_category_sizes = None
+            num_categories = 0
+
+        if isinstance(tokenizer, CoqTokenizer):
+            if is_hierarchical:
+                model = HierarchicalTacticClassifier(
+                    per_category_sizes=per_category_sizes,
+                    num_categories=num_categories,
+                    vocab_size=tokenizer.vocab_size,
+                    num_hidden_layers=num_hidden_layers,
+                    embedding_dim=embedding_dim,
+                )
+            else:
+                model = HierarchicalTacticClassifier(
+                    num_classes=len(label_names),
+                    vocab_size=tokenizer.vocab_size,
+                    num_hidden_layers=num_hidden_layers,
+                    embedding_dim=embedding_dim,
+                )
+        else:
+            if is_hierarchical:
+                model = HierarchicalTacticClassifier(
+                    per_category_sizes=per_category_sizes,
+                    num_categories=num_categories,
+                    num_hidden_layers=num_hidden_layers,
+                    embedding_dim=embedding_dim,
+                )
+            else:
+                model = HierarchicalTacticClassifier(
+                    num_classes=len(label_names),
+                    num_hidden_layers=num_hidden_layers,
+                    embedding_dim=embedding_dim,
+                )
+
         gc.collect()
         try:
             import ctypes
@@ -383,16 +490,48 @@ class TacticClassifierTrainer:
 
         model = model.to(device)
 
-        # Class-weighted cross-entropy loss with label smoothing
         alpha = hp.get("class_weight_alpha", 0.5)
         label_smoothing = hp.get("label_smoothing", 0.1)
-        class_weights = compute_class_weights(
-            family_counts, label_map, num_classes, alpha=alpha,
-        ).to(device)
-        from Poule.neural.training.loss import class_conditional_cross_entropy
-        criterion = lambda logits, labels: class_conditional_cross_entropy(
-            logits, labels, class_weights, label_smoothing,
-        )
+        lambda_within = hp.get("lambda_within", 1.0)
+
+        if is_hierarchical:
+            from Poule.neural.training.loss import hierarchical_loss
+            from Poule.neural.training.taxonomy import CATEGORY_NAMES
+
+            # Compute category-level class weights
+            cat_counts = {}
+            for cat in dataset.category_names:
+                cat_counts[cat] = sum(dataset.per_category_counts.get(cat, {}).values())
+            cat_label_map = {cat: i for i, cat in enumerate(dataset.category_names)}
+            category_weights = compute_class_weights(
+                cat_counts, cat_label_map, num_categories, alpha=alpha,
+            ).to(device)
+
+            # Per-category within-class weights
+            per_cat_weights = {}
+            for cat in dataset.category_names:
+                cat_family_counts = dataset.per_category_counts.get(cat, {})
+                cat_label_map_inner = dataset.per_category_label_maps[cat]
+                n_cat_classes = len(dataset.per_category_label_names[cat])
+                per_cat_weights[cat] = compute_class_weights(
+                    cat_family_counts, cat_label_map_inner, n_cat_classes, alpha=alpha,
+                ).to(device)
+
+            def criterion(cat_logits, within_logits, cat_labels, within_labels):
+                return hierarchical_loss(
+                    cat_logits, within_logits, cat_labels, within_labels,
+                    category_weights, per_cat_weights, dataset.category_names,
+                    label_smoothing, lambda_within,
+                )
+        else:
+            num_classes = len(label_names)
+            class_weights = compute_class_weights(
+                family_counts, label_map, num_classes, alpha=alpha,
+            ).to(device)
+            from Poule.neural.training.loss import class_conditional_cross_entropy
+            criterion = lambda logits, labels: class_conditional_cross_entropy(
+                logits, labels, class_weights, label_smoothing,
+            )
 
         # Optimizer: SAM-AdamW or plain AdamW
         sam_rho = hp.get("sam_rho", 0.05)
@@ -446,11 +585,21 @@ class TacticClassifierTrainer:
                     logger.info("  batch %d/%d", batch_idx, total_batches)
 
                 texts = [train_pairs[i][0] for i in batch_indices]
-                labels = torch.tensor(
-                    [train_pairs[i][1] for i in batch_indices],
-                    dtype=torch.long,
-                    device=device,
-                )
+
+                if is_hierarchical:
+                    cat_labels = torch.tensor(
+                        [train_pairs[i][1] for i in batch_indices],
+                        dtype=torch.long, device=device,
+                    )
+                    within_labels = torch.tensor(
+                        [train_pairs[i][2] for i in batch_indices],
+                        dtype=torch.long, device=device,
+                    )
+                else:
+                    labels = torch.tensor(
+                        [train_pairs[i][1] for i in batch_indices],
+                        dtype=torch.long, device=device,
+                    )
 
                 tokens = _tokenize_batch(tokenizer, texts, hp["max_seq_length"])
 
@@ -458,37 +607,37 @@ class TacticClassifierTrainer:
                     input_ids = tokens["input_ids"].to(device)
                     attention_mask = tokens["attention_mask"].to(device)
 
+                    def _compute_loss():
+                        if is_hierarchical:
+                            cat_logits, within_logits = model(input_ids, attention_mask)
+                            return criterion(cat_logits, within_logits, cat_labels, within_labels)
+                        else:
+                            logits = model(input_ids, attention_mask)
+                            return criterion(logits, labels)
+
                     if use_sam and not scaler:
-                        # SAM two-step: first forward-backward, perturb,
-                        # second forward-backward, optimizer step
                         optimizer.zero_grad()
                         with autocast_ctx():
-                            logits = model(input_ids, attention_mask)
-                            loss = criterion(logits, labels)
+                            loss = _compute_loss()
                         loss.backward()
                         optimizer.first_step()
 
                         optimizer.zero_grad()
                         with autocast_ctx():
-                            logits2 = model(input_ids, attention_mask)
-                            loss2 = criterion(logits2, labels)
+                            loss2 = _compute_loss()
                         loss2.backward()
                         optimizer.second_step()
                     elif scaler:
-                        # AMP path (no SAM with AMP for simplicity)
                         optimizer.zero_grad()
                         with autocast_ctx():
-                            logits = model(input_ids, attention_mask)
-                            loss = criterion(logits, labels)
+                            loss = _compute_loss()
                         scaler.scale(loss).backward()
                         scaler.step(base_optimizer if use_sam else optimizer)
                         scaler.update()
                     else:
-                        # Plain AdamW (sam_rho == 0)
                         optimizer.zero_grad()
                         with autocast_ctx():
-                            logits = model(input_ids, attention_mask)
-                            loss = criterion(logits, labels)
+                            loss = _compute_loss()
                         loss.backward()
                         optimizer.step()
 
@@ -508,40 +657,50 @@ class TacticClassifierTrainer:
 
             val_accuracy = 0.0
             if val_pairs:
-                val_accuracy = _compute_accuracy_at_k(
-                    model,
-                    tokenizer,
-                    val_pairs,
-                    hp["max_seq_length"],
-                    device,
-                    k=5,
-                )
+                if is_hierarchical:
+                    val_accuracy = _compute_hierarchical_accuracy_at_k(
+                        model, tokenizer, val_pairs, hp["max_seq_length"],
+                        device, dataset.category_names,
+                        dataset.per_category_label_names, k=5,
+                    )
+                else:
+                    val_accuracy = _compute_accuracy_at_k(
+                        model, tokenizer, val_pairs, hp["max_seq_length"],
+                        device, k=5,
+                    )
 
             print(f"Epoch {epoch}: loss={avg_loss:.4f}, val_acc@5={val_accuracy:.4f}")
 
-            # Epoch callback (used by HPO tuner for pruning)
             if epoch_callback is not None:
                 epoch_callback(epoch, val_accuracy)
 
-            # Save best checkpoint
+            # Build checkpoint data
+            ckpt_data = {
+                "model_state_dict": {
+                    k: v.cpu() for k, v in model.state_dict().items()
+                },
+                "num_hidden_layers": num_hidden_layers,
+                "embedding_dim": embedding_dim,
+                "hyperparams": hp,
+                "label_map": label_map,
+                "vocabulary_path": str(vocabulary_path) if vocabulary_path else None,
+                "epoch": epoch,
+                "best_accuracy_5": val_accuracy,
+            }
+            if is_hierarchical:
+                ckpt_data["per_category_sizes"] = dataset.per_category_sizes
+                ckpt_data["num_categories"] = num_categories
+                ckpt_data["category_names"] = dataset.category_names
+                ckpt_data["per_category_label_names"] = dict(dataset.per_category_label_names)
+                ckpt_data["per_category_label_maps"] = dict(dataset.per_category_label_maps)
+                ckpt_data["num_classes"] = sum(dataset.per_category_sizes.values())
+            else:
+                ckpt_data["num_classes"] = len(label_names)
+
             if val_accuracy > best_accuracy:
                 best_accuracy = val_accuracy
-                save_checkpoint(
-                    {
-                        "model_state_dict": {
-                            k: v.cpu() for k, v in model.state_dict().items()
-                        },
-                        "num_classes": num_classes,
-                        "num_hidden_layers": num_hidden_layers,
-                        "hyperparams": hp,
-                        "label_map": label_map,
-                        "vocabulary_path": str(vocabulary_path) if vocabulary_path else None,
-                        "class_weights": class_weights.cpu(),
-                        "epoch": epoch,
-                        "best_accuracy_5": val_accuracy,
-                    },
-                    output_path,
-                )
+                ckpt_data["best_accuracy_5"] = val_accuracy
+                save_checkpoint(ckpt_data, output_path)
 
             if tracker.should_stop(val_accuracy):
                 break
@@ -550,22 +709,9 @@ class TacticClassifierTrainer:
         final_path = output_path.parent / (
             output_path.stem + ".final" + output_path.suffix
         )
-        save_checkpoint(
-            {
-                "model_state_dict": {
-                    k: v.cpu() for k, v in model.state_dict().items()
-                },
-                "num_classes": num_classes,
-                "num_hidden_layers": num_hidden_layers,
-                "hyperparams": hp,
-                "label_map": label_map,
-                "vocabulary_path": str(vocabulary_path) if vocabulary_path else None,
-                "class_weights": class_weights.cpu(),
-                "epoch": final_epoch,
-                "best_accuracy_5": best_accuracy,
-            },
-            final_path,
-        )
+        ckpt_data["epoch"] = final_epoch
+        ckpt_data["best_accuracy_5"] = best_accuracy
+        save_checkpoint(ckpt_data, final_path)
 
         return output_path
 

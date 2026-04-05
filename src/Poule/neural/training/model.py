@@ -1,7 +1,8 @@
-"""Tactic family classifier for neural tactic prediction.
+"""Hierarchical tactic family classifier for neural tactic prediction.
 
-CodeBERT encoder with mean pooling and a linear classification head,
-producing logits over a fixed set of tactic families.
+CodeBERT encoder with mean pooling, a category classification head,
+and per-category within-category heads. Produces category logits and
+per-category within-category logits.
 
 Requires: torch, transformers (training-only dependencies).
 """
@@ -24,22 +25,30 @@ def _layer_indices(num_hidden_layers: int) -> list[int]:
     return [i * 12 // num_hidden_layers for i in range(num_hidden_layers)]
 
 
-class TacticClassifier(nn.Module):
-    """CodeBERT encoder with mean pooling and classification head.
+class HierarchicalTacticClassifier(nn.Module):
+    """CodeBERT encoder with category head + per-category within-category heads.
 
-    Architecture: CodeBERT -> mean pooling -> Linear -> [B, num_classes] logits.
+    Architecture:
+        CodeBERT -> mean pooling -> category_head [B, num_categories]
+                                 -> within_heads[cat] [B, num_tactics_in_cat]
     """
 
     def __init__(
         self,
         model_name: str = "microsoft/codebert-base",
-        num_classes: int = 1,
+        per_category_sizes: dict[str, int] | None = None,
+        num_categories: int = 8,
         vocab_size: int | None = None,
         num_hidden_layers: int = 6,
         embedding_dim: int = 128,
+        # Backward compat: if num_classes is provided, create a flat classifier
+        num_classes: int | None = None,
     ):
         super().__init__()
-        self.num_classes = num_classes
+        self.num_categories = num_categories
+        self.per_category_sizes = per_category_sizes or {}
+        self._is_hierarchical = per_category_sizes is not None
+
         encoder = AutoModel.from_pretrained(model_name)
 
         # Layer dropping: select a subset of transformer layers
@@ -58,7 +67,6 @@ class TacticClassifier(nn.Module):
         if vocab_size is not None:
             old_embeddings = self.encoder.embeddings.word_embeddings
             new_embeddings = nn.Embedding(vocab_size, embedding_dim)
-            # Initialize randomly (σ=0.02), then copy overlapping tokens
             nn.init.normal_(new_embeddings.weight, mean=0.0, std=0.02)
             overlap = min(vocab_size, old_embeddings.num_embeddings)
             copy_dim = min(embedding_dim, old_embeddings.embedding_dim)
@@ -67,7 +75,6 @@ class TacticClassifier(nn.Module):
                     old_embeddings.weight[:overlap, :copy_dim]
                 )
             self.encoder.embeddings.word_embeddings = new_embeddings
-            # Free the old embedding tensor immediately
             del old_embeddings
             import gc; gc.collect()
 
@@ -79,25 +86,36 @@ class TacticClassifier(nn.Module):
         else:
             self.embedding_projection = None
 
-        self.classifier = nn.Linear(hidden_size, num_classes)
+        # Hierarchical heads
+        if self._is_hierarchical:
+            self.category_head = nn.Linear(hidden_size, num_categories)
+            self.within_heads = nn.ModuleDict({
+                cat: nn.Linear(hidden_size, size)
+                for cat, size in per_category_sizes.items()
+            })
+            # For backward compat
+            self.num_classes = sum(per_category_sizes.values())
+            self.classifier = None
+        else:
+            # Flat classifier (backward compat)
+            nc = num_classes if num_classes is not None else 1
+            self.num_classes = nc
+            self.classifier = nn.Linear(hidden_size, nc)
+            self.category_head = None
+            self.within_heads = None
 
     @classmethod
-    def from_checkpoint(cls, checkpoint: dict) -> "TacticClassifier":
-        """Instantiate a TacticClassifier from a checkpoint dict.
+    def from_checkpoint(cls, checkpoint: dict) -> "HierarchicalTacticClassifier":
+        """Instantiate from a checkpoint dict.
 
-        Builds the encoder from a RoBERTa config (no network access),
-        infers vocab_size from the embedding weight shape, reads
-        num_hidden_layers from the checkpoint (defaults to 12 for
-        backward compatibility), and loads weights with strict=False
-        to tolerate missing keys (e.g. pooler weights absent from
-        MLX-converted checkpoints).
+        Detects hierarchical vs flat format and reconstructs accordingly.
         """
         from transformers import RobertaConfig, RobertaModel
 
         state_dict = checkpoint["model_state_dict"]
-        num_classes = checkpoint["num_classes"]
         num_hidden_layers = checkpoint.get("num_hidden_layers", 12)
         embedding_dim = checkpoint.get("embedding_dim", 768)
+        per_category_sizes = checkpoint.get("per_category_sizes")
 
         emb_key = "encoder.embeddings.word_embeddings.weight"
         vocab_size = state_dict[emb_key].shape[0] if emb_key in state_dict else None
@@ -117,10 +135,9 @@ class TacticClassifier(nn.Module):
         )
         model = cls.__new__(cls)
         nn.Module.__init__(model)
-        model.num_classes = num_classes
         model.encoder = RobertaModel(config)
 
-        # Embedding factorization: resize embedding and add projection
+        # Embedding factorization
         if embedding_dim < hidden_size:
             if vocab_size is not None:
                 model.encoder.embeddings.word_embeddings = nn.Embedding(
@@ -132,38 +149,48 @@ class TacticClassifier(nn.Module):
         else:
             model.embedding_projection = None
 
-        model.classifier = nn.Linear(hidden_size, num_classes)
+        if per_category_sizes is not None:
+            # Hierarchical model
+            model._is_hierarchical = True
+            model.per_category_sizes = per_category_sizes
+            num_categories = checkpoint.get("num_categories", len(per_category_sizes))
+            model.num_categories = num_categories
+            model.category_head = nn.Linear(hidden_size, num_categories)
+            model.within_heads = nn.ModuleDict({
+                cat: nn.Linear(hidden_size, size)
+                for cat, size in per_category_sizes.items()
+            })
+            model.num_classes = sum(per_category_sizes.values())
+            model.classifier = None
+        else:
+            # Flat model (backward compat)
+            model._is_hierarchical = False
+            model.per_category_sizes = {}
+            num_classes = checkpoint.get("num_classes", 1)
+            model.num_classes = num_classes
+            model.num_categories = 0
+            model.classifier = nn.Linear(hidden_size, num_classes)
+            model.category_head = None
+            model.within_heads = None
 
         model.load_state_dict(state_dict, strict=False)
         return model
 
     @property
     def label_map(self) -> dict[str, int] | None:
-        """Return the label map if one was saved, else None."""
         return getattr(self, "_label_map", None)
 
     @label_map.setter
     def label_map(self, mapping: dict[str, int]) -> None:
         self._label_map = mapping
 
-    def forward(
-        self, input_ids: torch.Tensor, attention_mask: torch.Tensor
+    def _encode(
+        self, input_ids: torch.Tensor, attention_mask: torch.Tensor,
     ) -> torch.Tensor:
-        """Classify proof states into tactic families.
-
-        Args:
-            input_ids: [B, seq_len] token IDs.
-            attention_mask: [B, seq_len] attention mask.
-
-        Returns:
-            [B, num_classes] unnormalized logits.
-        """
-        # Apply embedding projection for factorized embeddings
+        """Shared encoder: produce pooled representation [B, hidden_size]."""
         if self.embedding_projection is not None:
             word_embs = self.encoder.embeddings.word_embeddings(input_ids)
             projected = self.embedding_projection(word_embs)
-            # Pass projected embeddings via inputs_embeds; the encoder
-            # adds position embeddings and layer norm internally.
             outputs = self.encoder(
                 inputs_embeds=projected, attention_mask=attention_mask,
             )
@@ -171,15 +198,35 @@ class TacticClassifier(nn.Module):
             outputs = self.encoder(
                 input_ids=input_ids, attention_mask=attention_mask,
             )
-        token_embs = outputs.last_hidden_state  # [B, seq_len, dim]
+        token_embs = outputs.last_hidden_state
 
         # Mean pooling over non-padding tokens
         mask = attention_mask.unsqueeze(-1).float()
         summed = (token_embs * mask).sum(dim=1)
         counts = mask.sum(dim=1).clamp(min=1e-9)
-        pooled = summed / counts  # [B, dim]
+        return summed / counts
 
-        return self.classifier(pooled)
+    def forward(
+        self, input_ids: torch.Tensor, attention_mask: torch.Tensor,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Classify proof states.
+
+        Returns:
+            If hierarchical: (category_logits [B, num_categories],
+                              dict[cat_name -> within_logits [B, cat_size]])
+            If flat: [B, num_classes] logits (backward compat)
+        """
+        pooled = self._encode(input_ids, attention_mask)
+
+        if self._is_hierarchical:
+            category_logits = self.category_head(pooled)
+            within_logits = {
+                cat: head(pooled)
+                for cat, head in self.within_heads.items()
+            }
+            return category_logits, within_logits
+        else:
+            return self.classifier(pooled)
 
     def save_checkpoint(
         self,
@@ -187,13 +234,7 @@ class TacticClassifier(nn.Module):
         label_map: dict[str, int],
         extra: dict[str, Any] | None = None,
     ) -> None:
-        """Save model weights, num_classes, and label_map to a checkpoint file.
-
-        Args:
-            path: Destination file path.
-            label_map: Mapping from tactic family name to class index.
-            extra: Optional additional metadata to include in the checkpoint.
-        """
+        """Save model weights and metadata to a checkpoint file."""
         emb_dim = self.encoder.embeddings.word_embeddings.weight.shape[1]
         checkpoint: dict[str, Any] = {
             "model_state_dict": self.state_dict(),
@@ -202,6 +243,13 @@ class TacticClassifier(nn.Module):
             "embedding_dim": emb_dim,
             "label_map": label_map,
         }
+        if self._is_hierarchical:
+            checkpoint["per_category_sizes"] = dict(self.per_category_sizes)
+            checkpoint["num_categories"] = self.num_categories
         if extra:
             checkpoint.update(extra)
         torch.save(checkpoint, path)
+
+
+# Backward compat alias
+TacticClassifier = HierarchicalTacticClassifier

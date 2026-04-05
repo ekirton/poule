@@ -157,12 +157,28 @@ def _make_tactic_dataset(
     train_files=None, val_files=None, test_files=None,
 ):
     """Create a TacticDataset with sensible defaults for testing."""
+    from Poule.neural.training.taxonomy import (
+        CATEGORY_NAMES, TACTIC_CATEGORIES, TACTIC_TO_CATEGORY,
+    )
     if label_names is None:
-        label_names = ["intros", "apply", "rewrite", "auto", "other"]
+        label_names = ["intros", "apply", "rewrite", "auto"]
     if label_map is None:
         label_map = {name: idx for idx, name in enumerate(label_names)}
     if family_counts is None:
         family_counts = {name: 100 for name in label_names}
+
+    # Build hierarchical fields from taxonomy
+    per_category_label_maps = {}
+    per_category_label_names = {}
+    per_category_counts = {}
+    for cat in CATEGORY_NAMES:
+        tactics = TACTIC_CATEGORIES[cat]
+        per_category_label_names[cat] = list(tactics)
+        per_category_label_maps[cat] = {t: i for i, t in enumerate(tactics)}
+        per_category_counts[cat] = {
+            t: family_counts.get(t, 0) for t in tactics if family_counts.get(t, 0) > 0
+        }
+
     return TacticDataset(
         train_pairs=train_pairs or [],
         val_pairs=val_pairs or [],
@@ -173,6 +189,10 @@ def _make_tactic_dataset(
         train_files=train_files or [],
         val_files=val_files or [],
         test_files=test_files or [],
+        category_names=list(CATEGORY_NAMES),
+        per_category_label_maps=per_category_label_maps,
+        per_category_label_names=per_category_label_names,
+        per_category_counts=per_category_counts,
     )
 
 
@@ -354,7 +374,7 @@ class TestFileLevelSplit:
             steps.append((f"file_{i:02d}", f"goal_{i}", "intros n."))
         _write_step_records(data_path, steps)
 
-        dataset = TrainingDataLoader.load([data_path], min_family_count=1)
+        dataset = TrainingDataLoader.load([data_path])
 
         # Files sorted: file_00..file_09; position 8->val, 9->test, 0-7->train
         assert len(dataset.train_pairs) == 8
@@ -369,7 +389,7 @@ class TestFileLevelSplit:
             steps.append((f"file_{i:03d}", f"goal_{i}", "apply H."))
         _write_step_records(data_path, steps)
 
-        dataset = TrainingDataLoader.load([data_path], min_family_count=1)
+        dataset = TrainingDataLoader.load([data_path])
 
         assert len(dataset.train_pairs) == 80
         assert len(dataset.val_pairs) == 10
@@ -385,11 +405,11 @@ class TestFileLevelSplit:
             steps.append((f"file_{i:02d}", f"state_b_{i}", "apply H."))
         _write_step_records(data_path, steps)
 
-        dataset = TrainingDataLoader.load([data_path], min_family_count=1)
+        dataset = TrainingDataLoader.load([data_path])
 
-        train_states = {s for s, _ in dataset.train_pairs}
-        val_states = {s for s, _ in dataset.val_pairs}
-        test_states = {s for s, _ in dataset.test_pairs}
+        train_states = {s for s, *_ in dataset.train_pairs}
+        val_states = {s for s, *_ in dataset.val_pairs}
+        test_states = {s for s, *_ in dataset.test_pairs}
 
         assert train_states.isdisjoint(val_states)
         assert train_states.isdisjoint(test_states)
@@ -404,8 +424,8 @@ class TestFileLevelSplit:
         ]
         _write_step_records(data_path, steps)
 
-        d1 = TrainingDataLoader.load([data_path], min_family_count=1)
-        d2 = TrainingDataLoader.load([data_path], min_family_count=1)
+        d1 = TrainingDataLoader.load([data_path])
+        d2 = TrainingDataLoader.load([data_path])
 
         assert d1.train_pairs == d2.train_pairs
         assert d1.val_pairs == d2.val_pairs
@@ -418,7 +438,7 @@ class TestFileLevelSplit:
         path_b = tmp_path / "b.jsonl"
         _write_step_records(path_b, [("FileB", "goal_b", "apply H.")])
 
-        dataset = TrainingDataLoader.load([path_a, path_b], min_family_count=1)
+        dataset = TrainingDataLoader.load([path_a, path_b])
         total = len(dataset.train_pairs) + len(dataset.val_pairs) + len(dataset.test_pairs)
         assert total == 2
 
@@ -429,10 +449,10 @@ class TestFileLevelSplit:
 
 
 class TestLabelMapConstruction:
-    """spec §4.1: Label map groups rare families into 'other'."""
+    """spec §4.1: Hierarchical label map with taxonomy-based categories."""
 
-    def test_frequent_families_get_own_class(self, tmp_path):
-        """Families with count >= min_family_count get their own class."""
+    def test_taxonomy_families_get_own_class(self, tmp_path):
+        """Families in the taxonomy get their own class."""
         data_path = tmp_path / "data.jsonl"
         steps = []
         for i in range(60):
@@ -441,37 +461,39 @@ class TestLabelMapConstruction:
             steps.append((f"file_{i:03d}", f"state_{i}", "apply H."))
         _write_step_records(data_path, steps)
 
-        dataset = TrainingDataLoader.load([data_path], min_family_count=10)
+        dataset = TrainingDataLoader.load([data_path])
 
         assert "intros" in dataset.label_map
         assert "apply" in dataset.label_map
-        assert "other" in dataset.label_map
+        # No "other" class in hierarchical model
+        assert "other" not in dataset.label_map
 
-    def test_rare_families_grouped_into_other(self, tmp_path):
-        """Families with count < min_family_count are grouped into 'other'."""
+    def test_unknown_tactics_are_excluded(self, tmp_path):
+        """Tactics not in the taxonomy are excluded (not grouped into other)."""
         data_path = tmp_path / "data.jsonl"
         steps = []
-        # 50 intros (above threshold of 10)
         for i in range(50):
             steps.append((f"file_{i:03d}", f"state_{i}", "intros n."))
-        # 2 exact (below threshold of 10)
-        steps.append(("file_990", "state_rare_1", "exact H."))
-        steps.append(("file_991", "state_rare_2", "exact I."))
+        # Unknown tactic not in taxonomy
+        steps.append(("file_990", "state_rare_1", "frobnicate H."))
         _write_step_records(data_path, steps)
 
-        dataset = TrainingDataLoader.load([data_path], min_family_count=10)
+        dataset = TrainingDataLoader.load([data_path])
 
-        assert "exact" not in dataset.label_map
-        assert "other" in dataset.label_map
+        assert "frobnicate" not in dataset.label_map
+        total = len(dataset.train_pairs) + len(dataset.val_pairs) + len(dataset.test_pairs)
+        assert total == 50  # only intros, not frobnicate
 
-    def test_other_is_always_last(self, tmp_path):
-        """'other' is always the last label name."""
+    def test_has_category_names(self, tmp_path):
+        """Dataset has category names from the taxonomy."""
         data_path = tmp_path / "data.jsonl"
         steps = [(f"file_{i:03d}", f"state_{i}", "intros.") for i in range(20)]
         _write_step_records(data_path, steps)
 
-        dataset = TrainingDataLoader.load([data_path], min_family_count=1)
-        assert dataset.label_names[-1] == "other"
+        dataset = TrainingDataLoader.load([data_path])
+        assert len(dataset.category_names) == 8
+        assert "introduction" in dataset.category_names
+        assert "rewriting" in dataset.category_names
 
     def test_skips_steps_without_tactic(self, tmp_path):
         """Steps with empty tactic text are skipped."""
@@ -480,9 +502,21 @@ class TestLabelMapConstruction:
             _write_step_record(f, "file_a", "state1", "intros n.")
             # Record with empty tactic
             f.write(json.dumps({"t": "s", "f": "file_a", "s": "state2", "c": ""}) + "\n")
-        dataset = TrainingDataLoader.load([data_path], min_family_count=1)
+        dataset = TrainingDataLoader.load([data_path])
         total = len(dataset.train_pairs) + len(dataset.val_pairs) + len(dataset.test_pairs)
         assert total == 1
+
+    def test_excluded_tokens_are_filtered(self, tmp_path):
+        """Proof structure tokens are excluded from training data."""
+        data_path = tmp_path / "data.jsonl"
+        with open(data_path, "w") as f:
+            _write_step_record(f, "file_a", "state1", "intros n.")
+            _write_step_record(f, "file_a", "state2", "-")
+            _write_step_record(f, "file_a", "state3", "+")
+            _write_step_record(f, "file_a", "state4", "{")
+        dataset = TrainingDataLoader.load([data_path])
+        total = len(dataset.train_pairs) + len(dataset.val_pairs) + len(dataset.test_pairs)
+        assert total == 1  # only intros, not bullets/braces
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -501,7 +535,7 @@ class TestLoadCompactFormat:
             ("file_a.v", "state2", "apply H."),
         ])
 
-        dataset = TrainingDataLoader.load([data_path], min_family_count=1)
+        dataset = TrainingDataLoader.load([data_path])
 
         total = len(dataset.train_pairs) + len(dataset.val_pairs) + len(dataset.test_pairs)
         assert total == 2
@@ -515,7 +549,7 @@ class TestLoadCompactFormat:
         ]
         _write_step_records(data_path, steps)
 
-        dataset = TrainingDataLoader.load([data_path], min_family_count=1)
+        dataset = TrainingDataLoader.load([data_path])
 
         # position % 10 == 8 -> val, == 9 -> test, rest -> train
         assert len(dataset.val_pairs) == 1
@@ -531,7 +565,7 @@ class TestLoadCompactFormat:
             goals=["extra_goal_state"],
         )
 
-        dataset = TrainingDataLoader.load([data_path], min_family_count=1)
+        dataset = TrainingDataLoader.load([data_path])
 
         total = len(dataset.train_pairs) + len(dataset.val_pairs) + len(dataset.test_pairs)
         assert total == 1  # only the step, not the goal
@@ -808,15 +842,16 @@ class TestTacticClassifierTrainerHyperparams:
         """spec §4.3: Verify default hyperparameter values."""
         trainer = TacticClassifierTrainer()
         assert trainer.hyperparams["num_hidden_layers"] == 6
-        assert trainer.hyperparams["batch_size"] == 16
+        assert trainer.hyperparams["batch_size"] == 32
         assert trainer.hyperparams["learning_rate"] == 2e-5
         assert trainer.hyperparams["weight_decay"] == 1e-2
         assert trainer.hyperparams["max_seq_length"] == 256
         assert trainer.hyperparams["max_epochs"] == 20
         assert trainer.hyperparams["early_stopping_patience"] == 3
-        assert trainer.hyperparams["class_weight_alpha"] == 0.5
+        assert trainer.hyperparams["class_weight_alpha"] == 0.4
         assert trainer.hyperparams["label_smoothing"] == 0.1
         assert trainer.hyperparams["sam_rho"] == 0.05
+        assert trainer.hyperparams["lambda_within"] == 1.0
 
     def test_custom_hyperparameters_override_defaults(self):
         """spec §4.3: Caller can override defaults."""
@@ -830,11 +865,12 @@ class TestTacticClassifierTrainerHyperparams:
 
     def test_default_hyperparams_constant(self):
         """DEFAULT_HYPERPARAMS matches what the trainer uses."""
-        assert DEFAULT_HYPERPARAMS["batch_size"] == 16
+        assert DEFAULT_HYPERPARAMS["batch_size"] == 32
         assert DEFAULT_HYPERPARAMS["learning_rate"] == 2e-5
         assert DEFAULT_HYPERPARAMS["early_stopping_patience"] == 3
         assert DEFAULT_HYPERPARAMS["label_smoothing"] == 0.1
         assert DEFAULT_HYPERPARAMS["sam_rho"] == 0.05
+        assert DEFAULT_HYPERPARAMS["lambda_within"] == 1.0
 
     def test_sam_rho_zero_disables_sam(self):
         """spec §4.3: When sam_rho=0.0, SAM is disabled (plain AdamW)."""
