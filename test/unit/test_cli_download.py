@@ -40,6 +40,12 @@ SAMPLE_DB_SHA256 = hashlib.sha256(SAMPLE_DB_CONTENT).hexdigest()
 SAMPLE_ONNX_CONTENT = b"fake-onnx-model-bytes"
 SAMPLE_ONNX_SHA256 = hashlib.sha256(SAMPLE_ONNX_CONTENT).hexdigest()
 
+SAMPLE_LABELS_CONTENT = b'["intros", "apply", "rewrite"]'
+SAMPLE_LABELS_SHA256 = hashlib.sha256(SAMPLE_LABELS_CONTENT).hexdigest()
+
+SAMPLE_VOCAB_CONTENT = b'{"forall": 1, "nat": 2}'
+SAMPLE_VOCAB_SHA256 = hashlib.sha256(SAMPLE_VOCAB_CONTENT).hexdigest()
+
 ALL_LIBRARIES = ["stdlib", "stdpp", "mathcomp", "flocq", "coqinterval", "coquelicot"]
 
 # Generate sample content and checksums for each library
@@ -68,13 +74,34 @@ SAMPLE_MANIFEST = {
         }
         for i, lib in enumerate(ALL_LIBRARIES)
     },
-    "onnx_model_sha256": SAMPLE_ONNX_SHA256,
     "created_at": "2026-03-18T00:00:00Z",
+}
+
+SAMPLE_MODEL_MANIFEST = {
+    "created_at": "2026-04-01T00:00:00Z",
+    "artifacts": {
+        "tactic-predictor.onnx": {
+            "sha256": SAMPLE_ONNX_SHA256,
+            "size": len(SAMPLE_ONNX_CONTENT),
+            "description": "FP32 ONNX tactic family classifier",
+        },
+        "tactic-labels.json": {
+            "sha256": SAMPLE_LABELS_SHA256,
+            "size": len(SAMPLE_LABELS_CONTENT),
+            "description": "Ordered tactic family names (index to name)",
+        },
+        "coq-vocabulary.json": {
+            "sha256": SAMPLE_VOCAB_SHA256,
+            "size": len(SAMPLE_VOCAB_CONTENT),
+            "description": "Closed-vocabulary tokenizer (token to ID)",
+        },
+    },
+    "label_count": 3,
 }
 
 
 def _make_release(tag: str = "index-v1-coq8.19") -> dict:
-    """Create a fake GitHub release dict."""
+    """Create a fake GitHub index release dict."""
     assets = [
         {
             "name": "manifest.json",
@@ -88,12 +115,32 @@ def _make_release(tag: str = "index-v1-coq8.19") -> dict:
             "browser_download_url": f"https://example.com/index-{lib}.db",
             "url": f"https://api.github.com/repos/ekirton/Poule/releases/assets/{i + 2}",
         })
-    assets.append({
-        "name": "tactic-predictor.onnx",
-        "browser_download_url": "https://example.com/model.onnx",
-        "url": f"https://api.github.com/repos/ekirton/Poule/releases/assets/{len(ALL_LIBRARIES) + 2}",
-    })
     return {"tag_name": tag, "assets": assets}
+
+
+def _make_model_release(tag: str = "tactic-model") -> dict:
+    """Create a fake GitHub model release dict."""
+    return {
+        "tag_name": tag,
+        "assets": [
+            {
+                "name": "manifest.json",
+                "browser_download_url": "https://example.com/model-manifest.json",
+            },
+            {
+                "name": "tactic-predictor.onnx",
+                "browser_download_url": "https://example.com/model.onnx",
+            },
+            {
+                "name": "tactic-labels.json",
+                "browser_download_url": "https://example.com/tactic-labels.json",
+            },
+            {
+                "name": "coq-vocabulary.json",
+                "browser_download_url": "https://example.com/coq-vocabulary.json",
+            },
+        ],
+    }
 
 
 def _mock_urlopen(url_to_content: dict):
@@ -246,12 +293,18 @@ class TestDownloadIndexCommand:
         libs_dir = tmp_path / "libraries"
         libs_dir.mkdir()
 
-        releases = [_make_release()]
+        index_release = _make_release()
+        model_release = _make_model_release()
+        releases = [index_release]
         manifest_bytes = json.dumps(SAMPLE_MANIFEST).encode()
+        model_manifest_bytes = json.dumps(SAMPLE_MODEL_MANIFEST).encode()
 
         url_map = {
             "https://example.com/manifest.json": manifest_bytes,
+            "https://example.com/model-manifest.json": model_manifest_bytes,
             "https://example.com/model.onnx": SAMPLE_ONNX_CONTENT,
+            "https://example.com/tactic-labels.json": SAMPLE_LABELS_CONTENT,
+            "https://example.com/coq-vocabulary.json": SAMPLE_VOCAB_CONTENT,
         }
         for lib in ALL_LIBRARIES:
             url_map[f"https://example.com/index-{lib}.db"] = SAMPLE_LIB_CONTENT[lib]
@@ -265,9 +318,14 @@ class TestDownloadIndexCommand:
              }) as mock_merge:
             def _routing_side_effect(req):
                 url = req.full_url if hasattr(req, "full_url") else str(req)
+                # Route GitHub API calls
                 if "api.github.com" in url:
+                    if "tags/tactic-model" in url:
+                        content = json.dumps(model_release).encode()
+                    else:
+                        content = json.dumps(releases).encode()
                     resp = MagicMock()
-                    resp.read.return_value = json.dumps(releases).encode()
+                    resp.read.return_value = content
                     resp.headers = {"Content-Length": "0"}
                     resp.__enter__ = lambda s: s
                     resp.__exit__ = lambda s, *a: None
@@ -308,29 +366,41 @@ class TestDownloadIndexCommand:
         assert result.exit_code == 0
         assert "Done" in result.output
 
-    def test_include_model_downloads_onnx(self, runner, tmp_path):
-        """§4.7: --include-model with ONNX in release → both downloaded."""
+    def test_include_model_downloads_all_artifacts(self, runner, tmp_path):
+        """§4.7: --include-model fetches ONNX, labels, and vocabulary from tactic-model release."""
         model_dir = tmp_path / "models"
         result, _, _ = self._invoke_download(
             runner, tmp_path,
             extra_args=["--include-model", "--model-dir", str(model_dir)],
         )
         assert result.exit_code == 0, result.output
-        model_path = model_dir / "tactic-predictor.onnx"
-        assert model_path.exists()
-        assert model_path.read_bytes() == SAMPLE_ONNX_CONTENT
+        assert (model_dir / "tactic-predictor.onnx").read_bytes() == SAMPLE_ONNX_CONTENT
+        assert (model_dir / "tactic-labels.json").read_bytes() == SAMPLE_LABELS_CONTENT
+        assert (model_dir / "coq-vocabulary.json").read_bytes() == SAMPLE_VOCAB_CONTENT
 
-    def test_include_model_null_onnx_prints_warning_and_skips(self, runner, tmp_path):
-        """§4.7: --include-model but onnx_model_sha256 is null → warning, skip, exit 0."""
+    def test_include_model_skips_unchanged_artifacts(self, runner, tmp_path):
+        """Model artifacts with matching checksum are skipped without --force."""
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+        (model_dir / "tactic-predictor.onnx").write_bytes(SAMPLE_ONNX_CONTENT)
+        (model_dir / "tactic-labels.json").write_bytes(SAMPLE_LABELS_CONTENT)
+        (model_dir / "coq-vocabulary.json").write_bytes(SAMPLE_VOCAB_CONTENT)
+        result, _, _ = self._invoke_download(
+            runner, tmp_path,
+            extra_args=["--include-model", "--model-dir", str(model_dir)],
+        )
+        assert result.exit_code == 0, result.output
+        assert "already up to date" in result.output or "already present" in result.output
+
+    def test_include_model_no_release_prints_warning_and_skips(self, runner, tmp_path):
+        """§4.7: --include-model but no tactic-model release → warning, skip, exit 0."""
+        import urllib.error
+
         model_dir = tmp_path / "models"
         libs_dir = tmp_path / "libraries"
         libs_dir.mkdir()
-        manifest_no_onnx = {
-            **SAMPLE_MANIFEST,
-            "onnx_model_sha256": None,
-        }
         releases = [_make_release()]
-        manifest_bytes = json.dumps(manifest_no_onnx).encode()
+        manifest_bytes = json.dumps(SAMPLE_MANIFEST).encode()
 
         url_map = {
             "https://example.com/manifest.json": manifest_bytes,
@@ -348,6 +418,10 @@ class TestDownloadIndexCommand:
             def _routing(req):
                 url = req.full_url if hasattr(req, "full_url") else str(req)
                 if "api.github.com" in url:
+                    if "tags/tactic-model" in url:
+                        raise urllib.error.HTTPError(
+                            url, 404, "Not Found", {}, None,
+                        )
                     resp = MagicMock()
                     resp.read.return_value = json.dumps(releases).encode()
                     resp.headers = {"Content-Length": "0"}
@@ -367,7 +441,7 @@ class TestDownloadIndexCommand:
                 ["--libraries-dir", str(libs_dir), "--include-model", "--model-dir", str(model_dir)],
             )
         assert result.exit_code == 0, result.output
-        assert "Warning" in result.output or "No ONNX model" in result.output
+        assert "Warning" in result.output or "No tactic-model release" in result.output
         assert not (model_dir / "tactic-predictor.onnx").exists()
 
 
@@ -378,22 +452,6 @@ class TestDownloadIndexCommand:
 
 class TestDownloadIndexErrors:
     """download-index error handling."""
-
-    def test_model_exists_without_force_exits_1(self, runner, tmp_path):
-        """§6: Model file exists, no --force → exit 1."""
-        libs_dir = tmp_path / "libraries"
-        libs_dir.mkdir()
-        config = libs_dir / "config.toml"
-        config.write_text('[index]\nlibraries = ["stdlib"]\n')
-        model_dir = tmp_path / "models"
-        model_dir.mkdir()
-        (model_dir / "tactic-predictor.onnx").write_text("existing")
-        result = runner.invoke(
-            download_index,
-            ["--libraries-dir", str(libs_dir), "--include-model", "--model-dir", str(model_dir)],
-        )
-        assert result.exit_code == 1
-        assert "already exists" in result.output
 
     def test_no_release_found_exits_1(self, runner, tmp_path):
         """§6: No matching release → exit 1, 'No index release found on GitHub.'"""

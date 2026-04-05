@@ -18,8 +18,10 @@ from Poule.storage.merge import merge_indexes
 GITHUB_API_URL = "https://api.github.com/repos/ekirton/Poule/releases"
 TAG_LIBRARIES = "index-libraries"
 TAG_MERGED = "index-merged"
+TAG_MODEL = "tactic-model"
 CHUNK_SIZE = 65536  # 64 KB
 ALL_LIBRARIES = ["stdlib", "stdpp", "mathcomp", "flocq", "coqinterval", "coquelicot"]
+MODEL_ARTIFACTS = ["tactic-predictor.onnx", "tactic-labels.json", "coq-vocabulary.json"]
 
 
 def get_libraries_dir() -> Path:
@@ -210,10 +212,14 @@ def download_index(
 
     # 3. Check for existing model before downloading anything
     model_path = model_dir / "tactic-predictor.onnx"
-    if include_model and model_path.exists() and not force:
-        raise click.ClickException(
-            f"{model_path} already exists. Use --force to overwrite."
-        )
+    if include_model and not force:
+        existing = [model_dir / a for a in MODEL_ARTIFACTS if (model_dir / a).exists()]
+        if existing:
+            click.echo(
+                "  Model artifacts already present. Will skip unchanged files "
+                "(use --force to overwrite all).",
+                err=True,
+            )
 
     # 4. Resolve libraries release
     click.echo("Finding index release...", err=True)
@@ -264,22 +270,57 @@ def download_index(
     merged_dest = libraries_dir / "index.db"
     merge_indexes(sources, merged_dest)
 
-    # 8. Handle ONNX model if requested
+    # 8. Handle ONNX model if requested — fetched from the tactic-model release
     if include_model:
-        onnx_checksum = manifest.get("onnx_model_sha256")
-        if not onnx_checksum:
+        click.echo("Finding model release...", err=True)
+        try:
+            model_release = _find_release(TAG_MODEL)
+        except click.ClickException:
             click.echo(
-                "  Warning: No ONNX model in this release. Skipping.", err=True
+                "  Warning: No tactic-model release found. Skipping model download.",
+                err=True,
             )
-        else:
+            model_release = None
+
+        if model_release is not None:
+            # Download and parse model manifest
+            model_manifest_asset = _find_asset(model_release, "manifest.json")
+            req = urllib.request.Request(
+                model_manifest_asset["browser_download_url"]
+            )
+            try:
+                with urllib.request.urlopen(req) as resp:
+                    model_manifest = json.loads(resp.read().decode())
+            except urllib.error.URLError as exc:
+                raise click.ClickException(
+                    f"Failed to download model manifest: {exc}"
+                ) from exc
+
             model_dir.mkdir(parents=True, exist_ok=True)
-            _download_and_verify(
-                release,
-                "tactic-predictor.onnx",
-                model_path,
-                onnx_checksum,
-                "tactic-predictor.onnx",
-            )
+            artifacts = model_manifest.get("artifacts", {})
+            for artifact_name in MODEL_ARTIFACTS:
+                entry = artifacts.get(artifact_name)
+                if entry is None:
+                    click.echo(
+                        f"  Warning: {artifact_name} not in model manifest. Skipping.",
+                        err=True,
+                    )
+                    continue
+                dest = model_dir / artifact_name
+                if dest.exists() and not force:
+                    if _file_sha256(dest) == entry["sha256"]:
+                        click.echo(
+                            f"  {artifact_name} already up to date. Skipping.",
+                            err=True,
+                        )
+                        continue
+                _download_and_verify(
+                    model_release,
+                    artifact_name,
+                    dest,
+                    entry["sha256"],
+                    artifact_name,
+                )
 
     # 9. Done
     click.echo("Done.", err=True)
