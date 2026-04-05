@@ -269,6 +269,16 @@ class MLXTacticClassifier(nn.Module):
                 f"{prefix}.output.dense.bias", "linear2.bias"
             )
 
+        # Free PyTorch model and state dict to reclaim ~500 MB.
+        # MLX lazy eval may hold numpy intermediates; explicit del + gc
+        # ensures the PyTorch graph is released before training begins.
+        del pt_state, pt_model, old_emb
+        import gc; gc.collect()
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+
 
 class MLXBiEncoder(nn.Module):
     """Bi-encoder for premise retrieval: shared CodeBERT encoder producing
@@ -453,3 +463,7 @@ class MLXBiEncoder(nn.Module):
             layer.linear2.bias = _copy(
                 f"{prefix}.output.dense.bias", "linear2.bias"
             )
+
+        # Free PyTorch model and state dict to reclaim ~500 MB
+        del pt_state, pt_model
+        import gc; gc.collect()

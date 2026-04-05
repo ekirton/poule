@@ -228,19 +228,23 @@ class MLXTrainer:
         all_ids_np = all_ids_np[sort_idx]
         all_mask_np = all_mask_np[sort_idx]
         all_label_np = all_label_np[sort_idx]
-        all_lengths = all_lengths[sort_idx]
-        all_ids = mx.array(all_ids_np)
-        all_masks = mx.array(all_mask_np)
-        all_labels = mx.array(all_label_np)
-        all_cat_labels = mx.array(all_cat_label_np)
-        all_within_labels = mx.array(all_within_label_np)
-        del all_ids_np, all_mask_np, all_label_np, all_cat_label_np, all_within_label_np
+        all_cat_label_np = all_cat_label_np[sort_idx]
+        all_within_label_np = all_within_label_np[sort_idx]
         print(
             f"Pre-tokenized {len(train_pairs)} samples "
             f"(lengths: median={int(np.median(all_lengths))}, "
             f"mean={int(np.mean(all_lengths))}, max={int(all_lengths.max())})",
             flush=True,
         )
+        # Convert to MLX and free all numpy arrays
+        all_ids = mx.array(all_ids_np)
+        all_masks = mx.array(all_mask_np)
+        all_labels = mx.array(all_label_np)
+        all_cat_labels = mx.array(all_cat_label_np)
+        all_within_labels = mx.array(all_within_label_np)
+        del all_ids_np, all_mask_np, all_label_np, all_cat_label_np
+        del all_within_label_np, all_lengths, sort_idx
+        import gc; gc.collect()
 
         n_train = len(train_pairs)
         # Pre-compute batch start indices for length-bucketed batching.
