@@ -79,12 +79,48 @@ The top 20 families cover ~80% of all steps. However, 2,011 families have fewer 
 
 ### Phase 2: Tactic family classifier
 
-Train a classifier on (proof_state → tactic_family) using a custom tokenizer and encoder:
+Train a classifier on (proof_state → tactic_family) using a custom tokenizer and CodeBERT-based encoder.
 
-1. Tokenize the proof state using a Coq-specific vocabulary (see below)
-2. Encode via transformer encoder (mean pooling)
-3. Add a classification head mapping to the top-K tactic families
-4. Train with cross-entropy loss on 140K (state, tactic_family) pairs
+#### Model architecture
+
+The classifier is a CodeBERT encoder with a linear classification head:
+
+```
+Input: proof_state_text [B, max_seq_length]
+  ↓
+Token Embedding: nn.Embedding(vocab_size, 768)
+  ↓
+Positional Embedding: nn.Embedding(514, 768)
+  ↓
+Embedding LayerNorm
+  ↓
+Transformer Encoder (num_hidden_layers ∈ {4, 6, 8, 12}):
+  └─ Each layer:
+     ├─ Multi-head self-attention (12 heads)
+     ├─ Residual connection + LayerNorm
+     ├─ FFN: Linear(768, 3072) → GELU → Linear(3072, 768)
+     └─ Residual connection + LayerNorm
+  ↓
+Mean Pooling (attention-masked over non-padding tokens)
+  ↓
+Classification Head: nn.Linear(768, num_classes)
+  ↓
+Output: logits [B, num_classes]
+```
+
+The encoder is initialized from `microsoft/codebert-base` (pretrained on Python, Java, JavaScript, PHP, Ruby, Go). The token embedding layer is replaced with a custom embedding sized to the Coq vocabulary (158K tokens): overlapping tokens copy their pretrained weights; new Coq-specific tokens are initialized from N(0, 0.02). The positional embeddings, layer norms, and transformer layers are loaded from CodeBERT directly.
+
+When `num_hidden_layers < 12`, transformer layers are selected at evenly spaced indices from CodeBERT's 12 layers (e.g., 6 layers → indices 0, 2, 4, 6, 8, 10; 4 layers → indices 0, 3, 6, 9). This is the layer dropping approach described in the "Model size and overfitting under imbalance" section below.
+
+Mean pooling aggregates the encoder output over non-padding positions: `sum(output * mask) / sum(mask)`. This produces a single 768-dimensional representation per input, which the classification head maps to logits over tactic families.
+
+#### Training pipeline
+
+1. Tokenize proof states using the Coq-specific closed vocabulary
+2. Encode via the transformer encoder with mean pooling
+3. Classify with the linear head
+4. Train with cross-entropy loss (class-weighted, label-smoothed) on 140K (state, tactic_family) pairs
+5. Evaluate with top-1 and top-5 accuracy on a held-out validation set
 
 #### Vocabulary
 
@@ -133,7 +169,21 @@ Coq tactics have complex syntax with arguments, combinators (`;`, `||`), and SSR
 
 ### Class imbalance
 
-Some tactics (`rewrite` at 19.2%, `apply` at 17.5%) dominate the distribution while 2,011 of 2,113 families have fewer than 50 examples. The classifier needs class weighting or focal loss to avoid degenerate predictions, and rare families should be grouped or excluded.
+Some tactics (`rewrite` at 19.2%, `apply` at 17.5%) dominate the distribution while 2,011 of 2,113 families have fewer than 50 examples. The classifier uses four complementary techniques to handle this imbalance:
+
+**1. Rare family collapsing.** Tactic families with fewer than `min_family_count` (default 50) training examples are mapped to a catch-all "other" class during data loading. Alias normalization is also applied (e.g., `intro` → `intros`). This reduces the 2,113 raw families to a manageable number of classes with sufficient training signal.
+
+**2. Inverse-frequency class weighting.** The cross-entropy loss is weighted per class using a tunable power law:
+
+```
+weight[c] = (total / (num_classes × count[c])) ^ alpha
+```
+
+where `alpha ∈ [0, 1]` controls rebalancing strength (0 = uniform weights, 1 = full inverse frequency, default 0.5). For example, with alpha=0.5: `rewrite` (19.2%) gets weight ~0.82, while `simpl` (1.4%) gets weight ~1.83. This penalizes the loss more for misclassifying rare families without fully inverting the distribution.
+
+**3. Label smoothing.** The cross-entropy loss uses label smoothing (default ε=0.1), replacing hard one-hot targets with soft targets: correct class gets probability `1 - ε + ε/K`, incorrect classes get `ε/K`. This reduces overconfidence on frequent classes and improves calibration across the full distribution.
+
+**4. Sharpness-Aware Minimization (SAM).** The optimizer performs a two-step update: (1) perturb parameters along the gradient direction by `rho` (default 0.05), then (2) compute the gradient at the perturbed point and apply the base optimizer (AdamW). SAM seeks parameters in flat loss neighborhoods, which improves generalization on imbalanced data where the model otherwise memorizes dominant classes. When `sam_rho = 0.0`, plain AdamW is used instead.
 
 ### Model size and overfitting under imbalance
 
@@ -157,6 +207,38 @@ where T is the temperature (softens the teacher's output distribution) and α ba
 
 MathComp uses SSReflect's tactic language extensively. SSReflect compound tactics (e.g., `rewrite !addnA addnC`) pack multiple operations into a single step, making tactic family classification harder. These may need special handling or a separate SSReflect-aware head.
 
+### Hyperparameter optimization
+
+The training pipeline includes an Optuna-based hyperparameter tuner that searches over model architecture and training configuration jointly.
+
+#### Search space
+
+| Hyperparameter | Sampling | Range | Default |
+|---|---|---|---|
+| `num_hidden_layers` | Categorical | {4, 6, 8, 12} | 6 |
+| `learning_rate` | Log-uniform | [1e-6, 1e-4] | 2e-5 |
+| `batch_size` | Categorical | {16, 32, 64} | 16 |
+| `weight_decay` | Log-uniform | [1e-4, 1e-1] | 1e-2 |
+| `class_weight_alpha` | Uniform | [0.0, 1.0] | 0.5 |
+| `label_smoothing` | Uniform | [0.0, 0.3] | 0.1 |
+| `sam_rho` | Log-uniform | [0.01, 0.2] | 0.05 |
+
+Fixed parameters not searched: `max_seq_length` (512), `embedding_dim` (768), `max_epochs` (20), `early_stopping_patience` (3).
+
+Note that `num_hidden_layers` is in the search space — the tuner can explore smaller (4-layer) or larger (12-layer) models alongside the training hyperparameters. This is important given the class imbalance findings from Shwartz-Ziv et al.: the optimal model size for imbalanced data may differ from the balanced-data optimum.
+
+#### Optimization algorithm
+
+The tuner uses a Tree-structured Parzen Estimator (TPE) sampler, which models the search space as a density ratio between good and bad trials. This is more sample-efficient than random search for the 7-dimensional space above.
+
+A `MedianPruner` stops underperforming trials early: the first 3 trials run to completion (startup), and within each trial the first 3 epochs are immune to pruning (warmup, since early metrics are noisy). After epoch 3, if a trial's validation accuracy falls below the median of completed trials at that epoch, it is pruned. This avoids wasting compute on clearly unpromising configurations.
+
+Study state is persisted to a SQLite database (`hpo-study.db`), allowing the search to be resumed across sessions. Trials execute sequentially with explicit memory cleanup (garbage collection, CUDA cache clearing, MLX memory reset) between trials to prevent OOM accumulation.
+
+#### Objective
+
+Each trial trains the model with the sampled hyperparameters and returns the best validation accuracy@5 (top-5 accuracy on the held-out set). The study maximizes this metric. Trials that hit OOM are caught and marked as pruned rather than crashing the study.
+
 ### Evaluation
 
 Tactic prediction accuracy is not the same as proof completion rate. The model may predict the correct tactic family 80% of the time but still fail to produce a complete proof because the argument is wrong. Evaluation should track:
@@ -169,7 +251,7 @@ Tactic prediction accuracy is not the same as proof completion rate. The model m
 | Phase | Effort | Status |
 |-------|--------|--------|
 | Phase 1: Emit tactic records | Small | **Done** — 140K steps extracted, validated |
-| Phase 2: Tactic classifier | Medium | **In progress** — vocabulary built (158K tokens) |
+| Phase 2: Tactic classifier | Medium | **In progress** — model, training pipeline, HPO tuner, and evaluator implemented; supports PyTorch (CUDA/CPU) and MLX (Apple Silicon) backends |
 | Phase 3: Argument retrieval | Medium | Blocked on Phase 2 |
 | Phase 4: MCP integration | Small | Blocked on Phase 2 or 3 |
 
