@@ -47,6 +47,33 @@ def cross_entropy_loss(
         return mx.mean(nll)
 
 
+def precompute_category_indices(
+    category_labels: mx.array,
+    num_categories: int,
+) -> list[mx.array]:
+    """Pre-compute per-category sample indices for the full training set.
+
+    Call once after pre-tokenization. Returns a list of mx.array index
+    vectors, one per category, avoiding per-batch numpy round-trips.
+    """
+    import numpy as np
+
+    cat_np = numpy_array_from_mlx(category_labels)
+    indices = []
+    for cat_idx in range(num_categories):
+        idx = numpy_array_from_mlx(None, raw=np.where(cat_np == cat_idx)[0])
+        indices.append(idx)
+    return indices
+
+
+def numpy_array_from_mlx(arr, *, raw=None):
+    """Convert MLX array to numpy, or wrap a raw numpy array as mx.array."""
+    import numpy as np
+    if raw is not None:
+        return mx.array(raw)
+    return np.array(arr)
+
+
 def hierarchical_loss_mlx(
     category_logits: mx.array,
     within_logits: dict[str, mx.array],
@@ -56,6 +83,7 @@ def hierarchical_loss_mlx(
     per_category_weights: dict[str, mx.array],
     category_names: list[str],
     lambda_within: float = 1.0,
+    batch_cat_indices: list[mx.array] | None = None,
 ) -> mx.array:
     """Hierarchical loss: L = L_category + lambda * L_within(active head).
 
@@ -68,37 +96,47 @@ def hierarchical_loss_mlx(
         per_category_weights: dict[cat_name -> [cat_size]] per-category weights
         category_names: ordered category names
         lambda_within: balancing weight
+        batch_cat_indices: pre-computed per-category index arrays for this
+            batch (avoids numpy round-trip). If None, falls back to computing
+            indices from category_labels.
 
     Returns:
         Scalar combined loss.
     """
     l_category = cross_entropy_loss(category_logits, category_labels, category_weights)
 
-    # MLX doesn't support boolean indexing, so use mx.where to gather
-    # samples per category and compute weighted within-category loss.
-    import numpy as np
-
-    B = category_logits.shape[0]
-    cat_labels_np = np.array(category_labels)
-    within_labels_np = np.array(within_labels)
-
     l_within = mx.array(0.0)
     total_weight = 0.0
 
-    for cat_idx, cat_name in enumerate(category_names):
-        indices = np.where(cat_labels_np == cat_idx)[0]
-        n = len(indices)
-        if n == 0:
-            continue
-
-        idx = mx.array(indices)
-        cat_within_labels = within_labels[idx]
-        cat_logits = within_logits[cat_name][idx]
-        cat_weights = per_category_weights[cat_name]
-
-        cat_loss = cross_entropy_loss(cat_logits, cat_within_labels, cat_weights)
-        l_within = l_within + cat_loss * n
-        total_weight += n
+    if batch_cat_indices is not None:
+        # Fast path: use pre-computed indices (no CPU-GPU sync)
+        for cat_idx, cat_name in enumerate(category_names):
+            idx = batch_cat_indices[cat_idx]
+            n = idx.shape[0]
+            if n == 0:
+                continue
+            cat_within_labels = within_labels[idx]
+            cat_logits = within_logits[cat_name][idx]
+            cat_weights = per_category_weights[cat_name]
+            cat_loss = cross_entropy_loss(cat_logits, cat_within_labels, cat_weights)
+            l_within = l_within + cat_loss * n
+            total_weight += n
+    else:
+        # Fallback: compute indices via numpy (causes CPU-GPU sync)
+        import numpy as np
+        cat_labels_np = np.array(category_labels)
+        for cat_idx, cat_name in enumerate(category_names):
+            indices = np.where(cat_labels_np == cat_idx)[0]
+            n = len(indices)
+            if n == 0:
+                continue
+            idx = mx.array(indices)
+            cat_within_labels = within_labels[idx]
+            cat_logits = within_logits[cat_name][idx]
+            cat_weights = per_category_weights[cat_name]
+            cat_loss = cross_entropy_loss(cat_logits, cat_within_labels, cat_weights)
+            l_within = l_within + cat_loss * n
+            total_weight += n
 
     if total_weight > 0:
         l_within = l_within / total_weight
