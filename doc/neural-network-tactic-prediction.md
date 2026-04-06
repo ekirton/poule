@@ -77,7 +77,7 @@ Top tactic families by frequency:
 | `move` | 1,616 | 1.2% |
 | `+` | 1,357 | 1.0% |
 
-The top 20 families cover ~80% of all steps. However, 2,011 families have fewer than 50 examples — these rare families will need grouping or exclusion during training.
+The top 20 families cover ~80% of all steps. The hierarchical taxonomy groups all tactics into 8 categories (~65 tactic families total), eliminating the need for frequency thresholding or an `"other"` catch-all class.
 
 ### Phase 2: Tactic family classifier
 

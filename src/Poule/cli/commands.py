@@ -939,14 +939,24 @@ def cmd_evaluate(db: str, json_mode: bool, checkpoint: str, test_data: str):
     click.echo("Loading test data...", err=True)
     dataset = TrainingDataLoader.load([Path(test_data)])
 
-    # Re-map test pairs to the checkpoint's label map
+    # Re-map test pairs to the checkpoint's label map.
+    # Dataset returns hierarchical triples (state, category_idx, within_idx).
+    # Reconstruct flat family name from category + within-category index.
     test_pairs = []
-    for state_text, label_idx in dataset.test_pairs:
-        family = dataset.label_names[label_idx]
+    for item in dataset.test_pairs:
+        state_text = item[0]
+        if len(item) == 3 and dataset.category_names:
+            cat_idx, within_idx = item[1], item[2]
+            cat_name = dataset.category_names[cat_idx]
+            within_names = dataset.per_category_label_names.get(cat_name, [])
+            if within_idx < len(within_names):
+                family = within_names[within_idx]
+            else:
+                continue
+        else:
+            family = dataset.label_names[item[1]]
         if family in label_map:
             test_pairs.append((state_text, label_map[family]))
-        elif "other" in label_map:
-            test_pairs.append((state_text, label_map["other"]))
 
     if not test_pairs:
         click.echo("No test pairs available after label remapping.", err=True)

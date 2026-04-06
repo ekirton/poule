@@ -237,7 +237,7 @@ Post-extraction preprocessing that merges per-library JSONL files into a single 
 #### collapse(input_paths, output_path, min_count, dry_run)
 
 - REQUIRES: `input_paths` is a non-empty list of paths to compact training data JSONL files. `output_path` is a writable file path. `min_count` is a positive integer (default: 50). `dry_run` is a boolean (default: false).
-- ENSURES: Reads all `"s"` records from input files, normalizes each record's tactic family via `normalize_tactic_family`, counts family occurrences across the full corpus, maps families below `min_count` to `"other"`, and writes all step records to `output_path` with the `"c"` field replaced by the final normalized family name. Returns a `CollapseReport`.
+- ENSURES: Reads all `"s"` records from input files, normalizes each record's tactic family via `normalize_tactic_family`, counts family occurrences across the full corpus, maps families below `min_count` to `"other"`, and writes all step records to `output_path` with the `"c"` field replaced by the final normalized family name. Returns a `CollapseReport`. Note: the `"other"` label is a pre-processing artifact for data reduction; `TrainingDataLoader.load()` skips any tactic not in the taxonomy, so `"other"` records are excluded from training.
 - ENSURES: If `dry_run` is true, computes and returns the `CollapseReport` without writing the output file.
 - ENSURES: Input files are not modified.
 
@@ -347,32 +347,40 @@ Extracts the normalized tactic family name from raw tactic command text:
 > **When** `extract_tactic_family` runs
 > **Then** returns `"intros"` (whitespace stripped, trailing punctuation removed)
 
-#### Label map construction
+#### Hierarchical label construction
 
-After all steps are extracted, build a `label_map: dict[str, int]` mapping tactic family names to contiguous integer class indices:
+After all steps are extracted, build hierarchical labels from the taxonomy (§4.0.7):
 
-1. Count occurrences of each tactic family across all extracted steps.
-2. Families appearing fewer than `min_family_count` times (default: 50) are mapped to the family `"other"`.
-3. Assign class indices 0, 1, 2, ... to families sorted lexicographically. The `"other"` family is always included.
+1. Import `CATEGORY_NAMES`, `TACTIC_CATEGORIES`, `TACTIC_TO_CATEGORY`, and `EXCLUDED_TOKENS` from the taxonomy module.
+2. Skip proof structure tokens listed in `EXCLUDED_TOKENS`.
+3. Skip tactics not present in `TACTIC_TO_CATEGORY`. There is no `"other"` catch-all.
+4. For each tactic family, assign a `category_idx` (index into `CATEGORY_NAMES`) and a `within_idx` (index into that category's tactic list from `TACTIC_CATEGORIES`).
+5. Build a flat `label_map` for backward compatibility by concatenating all per-category tactic lists in category order.
 
-- MAINTAINS: The label map has contiguous integer values starting from 0. Every tactic family in the dataset maps to exactly one class index.
-- MAINTAINS: Target is approximately 30 families covering >95% of proof steps.
+- MAINTAINS: Every tactic family in the dataset maps to exactly one (category_idx, within_idx) pair.
+- MAINTAINS: No frequency thresholding — all taxonomy-listed tactics are included regardless of count.
 
-> **Given** extracted steps with families: `apply` (5000), `rewrite` (3000), `simpl` (2000), `intros` (4000), `rare_tactic` (10)
-> **When** label map is built with `min_family_count=50`
-> **Then** `rare_tactic` is mapped to `"other"`, and label_map contains `{"apply": 0, "intros": 1, "other": 2, "rewrite": 3, "simpl": 4}` (lexicographic order)
+> **Given** extracted steps with families: `apply` (5000), `rewrite` (3000), `lia` (10), `intros` (4000)
+> **When** hierarchical labels are built from the taxonomy
+> **Then** each family maps to its category (e.g., `apply` → `elimination`, `intros` → `introduction`) and within-category index. All families are included; `lia` is not collapsed to `"other"`.
 
 #### TacticDataset
 
-A dataset holding `(state_text, label_index)` pairs with train/validation/test splits:
+A dataset holding `(state_text, category_idx, within_idx)` triples with train/validation/test splits:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `train` | list of (str, int) | Training pairs: (proof_state_text, tactic_family_index) |
-| `val` | list of (str, int) | Validation pairs |
-| `test` | list of (str, int) | Test pairs |
-| `label_map` | dict[str, int] | Tactic family name → class index |
-| `num_classes` | int | Number of distinct tactic families (including `"other"`) |
+| `train_pairs` | list of (str, int, int) | Training triples: (proof_state_text, category_idx, within_category_idx) |
+| `val_pairs` | list of (str, int, int) | Validation triples |
+| `test_pairs` | list of (str, int, int) | Test triples |
+| `label_map` | dict[str, int] | Flat tactic family name → class index (backward compat) |
+| `label_names` | list[str] | Flat tactic family names in index order |
+| `category_names` | list[str] | Category names in index order (from taxonomy) |
+| `per_category_label_maps` | dict[str, dict[str, int]] | Per-category tactic → within-index |
+| `per_category_label_names` | dict[str, list[str]] | Per-category tactic names in index order |
+| `per_category_counts` | dict[str, dict[str, int]] | Per-category tactic occurrence counts |
+| `num_classes` | int (property) | Total tactic families across all categories |
+| `num_categories` | int (property) | Number of categories |
 
 #### Train/validation/test split
 

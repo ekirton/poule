@@ -181,7 +181,7 @@ The collapsed file contains only `"s"` records. Metadata, goal, error, and summa
 
 ### Relationship to Data Loading
 
-The collapsed file is consumed by `TrainingDataLoader.load()` identically to the per-library files. The loader's existing `min_family_count` threshold still applies, but after collapse, most families already exceed it. The collapse step is optional — the training pipeline works with or without it.
+The collapsed file is consumed by `TrainingDataLoader.load()` identically to the per-library files. The loader filters tactics through the hierarchical taxonomy — only tactics listed in `TACTIC_TO_CATEGORY` are included, and proof structure tokens in `EXCLUDED_TOKENS` are skipped. There is no frequency thresholding or `"other"` catch-all at the loader level. The collapse step is optional — the training pipeline works with or without it.
 
 ## Data Loading
 
