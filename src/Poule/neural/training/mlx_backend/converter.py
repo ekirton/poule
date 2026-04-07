@@ -52,11 +52,21 @@ _HF_TO_MLX_LAYER_TEMPLATES = {
 }
 
 # Classification head and projection: MLX name -> PyTorch name
+# Names are identical between MLX and PyTorch for these parameters.
 _DIRECT_MAPPING = {
     "classifier.weight": "classifier.weight",
     "classifier.bias": "classifier.bias",
     "embedding_projection.weight": "embedding_projection.weight",
+    "category_head.weight": "category_head.weight",
+    "category_head.bias": "category_head.bias",
 }
+
+# within_heads.<category>.{weight,bias} are mapped dynamically since
+# category names vary per model.  The MLX and PyTorch names are identical
+# (both use nn.ModuleDict / dict with the same keys), so the fallthrough
+# at line 179 handles them — but they must be recognized as known params
+# during validation.
+_WITHIN_HEADS_PREFIX = "within_heads."
 
 
 def _build_mappings(num_layers: int) -> tuple[dict[str, str], dict[str, str]]:
@@ -148,6 +158,10 @@ class WeightConverter:
         num_heads = config.get("num_heads", 12)
         embedding_dim = config.get("embedding_dim", 768)
 
+        # Detect hierarchical model
+        per_category_sizes = config.get("per_category_sizes")
+        is_hierarchical = per_category_sizes is not None
+
         # Load MLX weights
         import mlx.core as mx
 
@@ -167,6 +181,9 @@ class WeightConverter:
             # Classification head weights pass through directly
             if mlx_name in _DIRECT_MAPPING:
                 pt_state_dict[_DIRECT_MAPPING[mlx_name]] = torch_tensor
+            elif mlx_name.startswith(_WITHIN_HEADS_PREFIX):
+                # within_heads.<category>.{weight,bias} — same name in PyTorch
+                pt_state_dict[mlx_name] = torch_tensor
             elif mlx_name in mlx_to_hf:
                 hf_name = mlx_to_hf[mlx_name]
                 # Strip "roberta." prefix -- PyTorch TacticClassifier uses "encoder."
@@ -201,6 +218,13 @@ class WeightConverter:
             checkpoint["label_map"] = label_map
             checkpoint["best_accuracy_5"] = best_metric
 
+        if is_hierarchical:
+            checkpoint["per_category_sizes"] = per_category_sizes
+            checkpoint["num_categories"] = config.get("num_categories", len(per_category_sizes))
+            checkpoint["category_names"] = config.get("category_names", list(per_category_sizes.keys()))
+            checkpoint["per_category_label_names"] = config.get("per_category_label_names", {})
+            checkpoint["per_category_label_maps"] = config.get("per_category_label_maps", {})
+
         torch.save(checkpoint, str(output_path))
         logger.info(f"Converted MLX checkpoint to PyTorch: {output_path}")
 
@@ -227,8 +251,11 @@ class WeightConverter:
         num_layers = config.get("num_layers", 12)
         hidden_size = config.get("hidden_size", 768)
         num_heads = config.get("num_heads", 12)
-
         embedding_dim = config.get("embedding_dim", 768)
+        per_category_sizes = config.get("per_category_sizes")
+        is_hierarchical = per_category_sizes is not None
+
+        num_categories = config.get("num_categories", len(per_category_sizes) if per_category_sizes else 0)
 
         # Rebuild MLX model and load weights
         mlx_model = MLXTacticClassifier(
@@ -238,6 +265,8 @@ class WeightConverter:
             hidden_size=hidden_size,
             num_heads=num_heads,
             embedding_dim=embedding_dim,
+            per_category_sizes=per_category_sizes,
+            num_categories=num_categories,
         )
         mlx_model.load_weights(list(mlx_weights.items()))
         mx.eval(mlx_model.parameters())
@@ -245,7 +274,7 @@ class WeightConverter:
         # Build PyTorch model
         import torch
 
-        from Poule.neural.training.model import TacticClassifier
+        from Poule.neural.training.model import HierarchicalTacticClassifier
 
         pt_checkpoint = {
             "model_state_dict": pt_state_dict,
@@ -253,7 +282,12 @@ class WeightConverter:
             "num_hidden_layers": num_layers,
             "embedding_dim": embedding_dim,
         }
-        pt_model = TacticClassifier.from_checkpoint(pt_checkpoint)
+        if is_hierarchical:
+            pt_checkpoint["per_category_sizes"] = per_category_sizes
+            pt_checkpoint["num_categories"] = config.get(
+                "num_categories", len(per_category_sizes)
+            )
+        pt_model = HierarchicalTacticClassifier.from_checkpoint(pt_checkpoint)
         pt_model.eval()
 
         # Generate random inputs
@@ -264,19 +298,28 @@ class WeightConverter:
         attention_mask_np = np.ones((n_samples, seq_len), dtype=np.int32)
 
         # MLX forward
-        mlx_logits = mlx_model(
+        mlx_output = mlx_model(
             mx.array(input_ids_np), mx.array(attention_mask_np)
         )
-        mx.eval(mlx_logits)
-        mlx_labels = np.argmax(np.array(mlx_logits), axis=1)
 
         # PyTorch forward
         with torch.no_grad():
-            pt_logits = pt_model(
+            pt_output = pt_model(
                 torch.from_numpy(input_ids_np.astype(np.int64)),
                 torch.from_numpy(attention_mask_np.astype(np.int64)),
             )
-        pt_labels = torch.argmax(pt_logits, dim=1).numpy()
+
+        # Compare category predictions for hierarchical, flat logits otherwise
+        if is_hierarchical:
+            mlx_cat_logits, _ = mlx_output
+            mx.eval(mlx_cat_logits)
+            mlx_labels = np.argmax(np.array(mlx_cat_logits), axis=1)
+            pt_cat_logits, _ = pt_output
+            pt_labels = torch.argmax(pt_cat_logits, dim=1).numpy()
+        else:
+            mx.eval(mlx_output)
+            mlx_labels = np.argmax(np.array(mlx_output), axis=1)
+            pt_labels = torch.argmax(pt_output, dim=1).numpy()
 
         agreement = np.mean(mlx_labels == pt_labels)
         if agreement < 0.30:
