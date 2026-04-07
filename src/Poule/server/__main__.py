@@ -293,7 +293,11 @@ TOOL_DEFINITIONS = [
     ),
     Tool(
         name="submit_tactic",
-        description="Submit a tactic and receive the resulting proof state.",
+        description=(
+            "Submit a tactic and receive the resulting proof state. "
+            "For automated proving, use tactic='hammer', 'sauto', 'qauto', "
+            "or 'auto_hammer' (tries all three in sequence)."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -303,7 +307,34 @@ TOOL_DEFINITIONS = [
                 },
                 "tactic": {
                     "type": "string",
-                    "description": "Coq tactic to execute",
+                    "description": (
+                        "Coq tactic to execute. Use 'hammer', 'sauto', 'qauto' "
+                        "for CoqHammer automation, or 'auto_hammer' for "
+                        "multi-strategy fallback."
+                    ),
+                },
+                "options": {
+                    "type": "object",
+                    "description": (
+                        "Options for hammer tactics (ignored for regular tactics). "
+                        "Supported keys: timeout (seconds), hints (list of lemma names), "
+                        "sauto_depth, qauto_depth, unfold (list of definition names)."
+                    ),
+                    "properties": {
+                        "timeout": {"type": "number", "description": "Timeout in seconds"},
+                        "hints": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Lemma names to pass as hints",
+                        },
+                        "sauto_depth": {"type": "integer", "description": "Search depth for sauto"},
+                        "qauto_depth": {"type": "integer", "description": "Search depth for qauto"},
+                        "unfold": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Definitions to unfold (sauto/qauto)",
+                        },
+                    },
                 },
             },
             "required": ["session_id", "tactic"],
@@ -1159,6 +1190,7 @@ def _dispatch_tool(ctx: _ServerContext, name: str, arguments: dict):
             ctx,
             session_id=arguments.get("session_id", ""),
             tactic=arguments.get("tactic", ""),
+            options=arguments.get("options"),
         )
     elif name == "step_backward":
         return handle_step_backward(

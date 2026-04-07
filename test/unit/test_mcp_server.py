@@ -1641,6 +1641,248 @@ class TestHandleSubmitTactic:
 
 
 # ===========================================================================
+# handle_submit_tactic — Hammer keyword delegation (spec §4.1)
+# ===========================================================================
+
+class TestHandleSubmitTacticHammerDelegation:
+    """When submit_tactic receives a hammer keyword, it delegates to the engine."""
+
+    @pytest.mark.asyncio
+    async def test_hammer_keyword_delegates_to_engine(self):
+        """Tactic 'hammer' delegates to execute_hammer, not session_manager."""
+        (_, _, _, _, _, _, handle_submit, *_) = _import_proof_handlers()
+        ctx = _make_proof_handler_ctx()
+        completed_state = _make_proof_state(is_complete=True)
+
+        from Poule.hammer.types import HammerResult
+        mock_result = HammerResult(
+            status="success",
+            proof_script="hammer.",
+            atp_proof=None,
+            strategy_used="hammer",
+            state=completed_state,
+            diagnostics=[],
+            wall_time_ms=500,
+        )
+
+        with patch("Poule.server.handlers.execute_hammer", return_value=mock_result) as mock_exec:
+            result = await handle_submit(ctx, session_id="abc123", tactic="hammer")
+
+        mock_exec.assert_awaited_once()
+        # session_manager.submit_tactic should NOT have been called
+        ctx.session_manager.submit_tactic.assert_not_awaited()
+        assert result.get("isError") is not True
+        parsed = json.loads(result["content"][0]["text"])
+        assert parsed["status"] == "success"
+        assert parsed["proof_script"] == "hammer."
+
+    @pytest.mark.asyncio
+    async def test_sauto_keyword_delegates_to_engine(self):
+        """Tactic 'sauto' delegates to execute_hammer."""
+        (_, _, _, _, _, _, handle_submit, *_) = _import_proof_handlers()
+        ctx = _make_proof_handler_ctx()
+
+        from Poule.hammer.types import HammerResult
+        mock_result = HammerResult(
+            status="success",
+            proof_script="sauto.",
+            atp_proof=None,
+            strategy_used="sauto",
+            state=_make_proof_state(is_complete=True),
+            diagnostics=[],
+            wall_time_ms=200,
+        )
+
+        with patch("Poule.server.handlers.execute_hammer", return_value=mock_result) as mock_exec:
+            result = await handle_submit(ctx, session_id="abc123", tactic="sauto")
+
+        mock_exec.assert_awaited_once()
+        call_kwargs = mock_exec.call_args
+        assert call_kwargs.kwargs["strategy"] == "sauto"
+
+    @pytest.mark.asyncio
+    async def test_qauto_keyword_delegates_to_engine(self):
+        """Tactic 'qauto' delegates to execute_hammer."""
+        (_, _, _, _, _, _, handle_submit, *_) = _import_proof_handlers()
+        ctx = _make_proof_handler_ctx()
+
+        from Poule.hammer.types import HammerResult
+        mock_result = HammerResult(
+            status="success",
+            proof_script="qauto.",
+            atp_proof=None,
+            strategy_used="qauto",
+            state=_make_proof_state(is_complete=True),
+            diagnostics=[],
+            wall_time_ms=100,
+        )
+
+        with patch("Poule.server.handlers.execute_hammer", return_value=mock_result) as mock_exec:
+            result = await handle_submit(ctx, session_id="abc123", tactic="qauto")
+
+        mock_exec.assert_awaited_once()
+        call_kwargs = mock_exec.call_args
+        assert call_kwargs.kwargs["strategy"] == "qauto"
+
+    @pytest.mark.asyncio
+    async def test_auto_hammer_delegates_to_execute_auto_hammer(self):
+        """Tactic 'auto_hammer' delegates to execute_auto_hammer."""
+        (_, _, _, _, _, _, handle_submit, *_) = _import_proof_handlers()
+        ctx = _make_proof_handler_ctx()
+
+        from Poule.hammer.types import HammerResult
+        mock_result = HammerResult(
+            status="success",
+            proof_script="sauto.",
+            atp_proof=None,
+            strategy_used="sauto",
+            state=_make_proof_state(is_complete=True),
+            diagnostics=[],
+            wall_time_ms=1500,
+        )
+
+        with patch("Poule.server.handlers.execute_auto_hammer", return_value=mock_result) as mock_exec:
+            result = await handle_submit(ctx, session_id="abc123", tactic="auto_hammer")
+
+        mock_exec.assert_awaited_once()
+        assert result.get("isError") is not True
+
+    @pytest.mark.asyncio
+    async def test_non_hammer_tactic_passes_through(self):
+        """A regular tactic like 'intro n.' goes to session_manager as before."""
+        (_, _, _, _, _, _, handle_submit, *_) = _import_proof_handlers()
+        ctx = _make_proof_handler_ctx()
+        ctx.session_manager.submit_tactic.return_value = _make_proof_state(step_index=1)
+
+        with patch("Poule.server.handlers.execute_hammer") as mock_hammer, \
+             patch("Poule.server.handlers.execute_auto_hammer") as mock_auto:
+            result = await handle_submit(ctx, session_id="abc123", tactic="intro n.")
+
+        mock_hammer.assert_not_awaited()
+        mock_auto.assert_not_awaited()
+        ctx.session_manager.submit_tactic.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_options_passed_to_engine(self):
+        """Options dict is forwarded to the hammer engine."""
+        (_, _, _, _, _, _, handle_submit, *_) = _import_proof_handlers()
+        ctx = _make_proof_handler_ctx()
+
+        from Poule.hammer.types import HammerResult
+        mock_result = HammerResult(
+            status="failure",
+            proof_script=None,
+            atp_proof=None,
+            strategy_used=None,
+            state=_make_proof_state(),
+            diagnostics=[],
+            wall_time_ms=5000,
+        )
+
+        with patch("Poule.server.handlers.execute_hammer", return_value=mock_result) as mock_exec:
+            result = await handle_submit(
+                ctx, session_id="abc123", tactic="hammer",
+                options={"timeout": 15, "hints": ["Nat.add_0_r"]},
+            )
+
+        call_kwargs = mock_exec.call_args.kwargs
+        assert call_kwargs["timeout"] == 15
+        assert call_kwargs["hints"] == ["Nat.add_0_r"]
+
+    @pytest.mark.asyncio
+    async def test_hammer_failure_returns_diagnostics(self):
+        """When hammer fails, diagnostics are returned in the response."""
+        (_, _, _, _, _, _, handle_submit, *_) = _import_proof_handlers()
+        ctx = _make_proof_handler_ctx()
+
+        from Poule.hammer.types import HammerResult, StrategyDiagnostic
+        mock_result = HammerResult(
+            status="failure",
+            proof_script=None,
+            atp_proof=None,
+            strategy_used=None,
+            state=_make_proof_state(),
+            diagnostics=[
+                StrategyDiagnostic(
+                    strategy="hammer",
+                    failure_reason="timeout",
+                    detail="Error: Timeout",
+                    partial_progress=None,
+                    wall_time_ms=30000,
+                    timeout_used=30,
+                ),
+            ],
+            wall_time_ms=30000,
+        )
+
+        with patch("Poule.server.handlers.execute_hammer", return_value=mock_result):
+            result = await handle_submit(ctx, session_id="abc123", tactic="hammer")
+
+        assert result.get("isError") is not True  # Hammer failure is not an MCP error
+        parsed = json.loads(result["content"][0]["text"])
+        assert parsed["status"] == "failure"
+        assert len(parsed["diagnostics"]) == 1
+        assert parsed["diagnostics"][0]["failure_reason"] == "timeout"
+
+    @pytest.mark.asyncio
+    async def test_hammer_session_not_found_returns_mcp_error(self):
+        """SESSION_NOT_FOUND from engine propagates as MCP error."""
+        (_, _, _, _, _, _, handle_submit, *_) = _import_proof_handlers()
+        SessionError = _import_session_error()
+        ctx = _make_proof_handler_ctx()
+
+        with patch(
+            "Poule.server.handlers.execute_hammer",
+            side_effect=SessionError("SESSION_NOT_FOUND", "No such session"),
+        ):
+            result = await handle_submit(ctx, session_id="bad_id", tactic="hammer")
+
+        assert result["isError"] is True
+        text = json.loads(result["content"][0]["text"])
+        assert text["error"]["code"] == "SESSION_NOT_FOUND"
+
+    @pytest.mark.asyncio
+    async def test_hammer_parse_error_returns_mcp_error(self):
+        """ParseError from engine (bad hint name) returns PARSE_ERROR."""
+        (_, _, _, _, _, _, handle_submit, *_) = _import_proof_handlers()
+        ctx = _make_proof_handler_ctx()
+
+        from Poule.hammer.errors import ParseError
+        with patch(
+            "Poule.server.handlers.execute_hammer",
+            side_effect=ParseError("Invalid hint: '123bad'"),
+        ):
+            result = await handle_submit(
+                ctx, session_id="abc123", tactic="hammer",
+                options={"hints": ["123bad"]},
+            )
+
+        assert result["isError"] is True
+        text = json.loads(result["content"][0]["text"])
+        assert text["error"]["code"] == "PARSE_ERROR"
+
+    @pytest.mark.asyncio
+    async def test_default_timeout_used_when_not_specified(self):
+        """When options has no timeout, the engine default is used."""
+        (_, _, _, _, _, _, handle_submit, *_) = _import_proof_handlers()
+        ctx = _make_proof_handler_ctx()
+
+        from Poule.hammer.types import HammerResult
+        mock_result = HammerResult(
+            status="failure", proof_script=None, atp_proof=None,
+            strategy_used=None, state=_make_proof_state(),
+            diagnostics=[], wall_time_ms=100,
+        )
+
+        with patch("Poule.server.handlers.execute_hammer", return_value=mock_result) as mock_exec:
+            await handle_submit(ctx, session_id="abc123", tactic="hammer")
+
+        call_kwargs = mock_exec.call_args.kwargs
+        # Default for hammer is 30s (spec §4.4)
+        assert call_kwargs["timeout"] == 30
+
+
+# ===========================================================================
 # handle_step_backward
 # ===========================================================================
 
