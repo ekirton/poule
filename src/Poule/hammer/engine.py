@@ -170,7 +170,7 @@ def _extract_atp_proof(coq_output: str) -> Optional[str]:
 async def execute_auto_hammer(
     session_manager,
     session_id: str,
-    timeout: float = 60,
+    timeout: float = 90,
     hints: list[str] | None = None,
     options: dict | None = None,
 ) -> HammerResult:

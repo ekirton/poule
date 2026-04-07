@@ -48,7 +48,7 @@ The `submit_tactic` tool doubles as the entry point for CoqHammer. When the `tac
 | `hammer` | Standard CoqHammer with ATP backend | 30 s |
 | `sauto` | Semi-automated search tactic | 10 s |
 | `qauto` | Quick automation tactic | 5 s |
-| `auto_hammer` | Multi-strategy fallback — tries `hammer`, then `sauto`, then `qauto`, stops on first success | 60 s total |
+| `auto_hammer` | Multi-strategy fallback — tries `hammer`, then `sauto`, then `qauto`, stops on first success | 90 s total |
 
 **`options` parameter** (optional object, ignored for non-hammer tactics):
 

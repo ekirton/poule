@@ -81,7 +81,7 @@ When `submit_tactic` receives a tactic string matching a recognized hammer keywo
 | `hammer` | 30 |
 | `sauto` | 10 |
 | `qauto` | 5 |
-| `auto_hammer` | 60 (total budget) |
+| `auto_hammer` | 90 (total budget) |
 
 When a caller provides an explicit `timeout`, it overrides the default for single-strategy calls. For `auto_hammer`, the caller-provided timeout overrides the total budget.
 
