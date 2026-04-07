@@ -1,14 +1,14 @@
 # Skills Reference
 
-Poule provides slash commands (skills) that orchestrate multiple MCP tools into compound workflows. Unlike individual MCP tools (see [poule-mcp.md](poule-mcp.md)), skills are multi-step agentic workflows — Claude reasons between steps, adapts strategy based on intermediate results, and coordinates tools that no single MCP call can replace.
+Skills are slash commands that combine multiple tools into a single workflow. Type a skill name in Claude Code and it handles the rest — searching, opening proof sessions, verifying results, and presenting what it found.
 
-Skills are invoked as slash commands in Claude Code. You do not need to know which MCP tools are used behind the scenes.
+Unlike individual MCP tools (see [MCP.md](MCP.md)), skills are multi-step workflows — Claude reasons between steps, adapts strategy based on intermediate results, and coordinates tools that no single tool call can replace.
 
 ## Proof Development
 
 ### /formalize
 
-Translate a natural-language theorem description into a formal Coq statement and help build the proof interactively.
+Translate a natural-language theorem into a formal Coq statement and help build the proof interactively.
 
 ```
 /formalize For all natural numbers, addition is commutative
@@ -47,8 +47,6 @@ Scan a project for all `admit`, `Admitted`, and `Axiom` declarations; classify b
 /proof-obligations src/Algebra/
 ```
 
-Claude scans the codebase, inspects surrounding context to classify each obligation, and produces a severity-ranked report with file locations and recommendations.
-
 ### /proof-lint
 
 Analyze proof scripts for deprecated tactics, inconsistent bullet style, and unnecessarily complex tactic chains.
@@ -58,7 +56,7 @@ Analyze proof scripts for deprecated tactics, inconsistent bullet style, and unn
 /proof-lint --fix
 ```
 
-Claude detects style issues, reports them grouped by category, and optionally applies fixes — verifying each refactoring through a proof session before committing it.
+Claude detects style issues, reports them grouped by category, and optionally applies fixes — verifying each change through a proof session before committing it.
 
 ### /proof-repair
 
@@ -84,26 +82,26 @@ Claude scans all `.v` and build files for deprecated `Coq.*` names, presents pro
 
 ### /check-compat
 
-Check whether a project's declared dependencies are mutually compatible before you hit opaque build failures.
+Check whether your project's dependencies are mutually compatible before you hit opaque build failures.
 
 ```
 /check-compat
 ```
 
-Claude reads your opam/dune dependency declarations, queries package metadata, analyzes version constraints for conflicts, and explains any incompatibilities in plain language with resolution suggestions.
+Claude reads your opam/dune dependency declarations, analyzes version constraints for conflicts, and explains any incompatibilities in plain language with resolution suggestions.
 
 ## Education
 
 ### /textbook
 
-Search the Software Foundations textbook for explanations of Coq concepts, tactics, and proof techniques.
+Search the *Software Foundations* textbook for explanations of Coq concepts, tactics, and proof techniques.
 
 ```
 /textbook how does induction work?
 /textbook --volume lf rewrite tactic
 ```
 
-Claude queries the bundled Software Foundations vector database, retrieves the most relevant passages with source citations, and provides local file paths so you can open chapters in your browser for extended reading.
+Claude retrieves the most relevant passages with source citations and gives you local file paths so you can open chapters in your browser for extended reading.
 
 ## Error Diagnosis
 
@@ -115,7 +113,7 @@ Parse a Coq type error and explain in plain language what went wrong, with conte
 /explain-error
 ```
 
-Claude obtains the error (from your last build or conversation), fetches relevant type definitions and coercions, explains the root cause, and suggests concrete fixes. Handles type mismatches, unification failures, universe inconsistencies, missing coercions, and notation confusion.
+Claude fetches the error (from your last build or conversation), looks up relevant type definitions and coercions, explains the root cause, and suggests concrete fixes. Handles type mismatches, unification failures, universe inconsistencies, missing coercions, and notation confusion.
 
 ## Scaffolding
 
@@ -127,22 +125,22 @@ Generate a complete Coq/Rocq project skeleton with build files, CI configuration
 /scaffold
 ```
 
-Claude asks for project parameters (name, build system, Coq version, dependencies), generates the full directory structure (dune-project, opam file, CI config, .gitignore, source boilerplate, README), and verifies the generated project builds successfully.
+Claude asks for project parameters (name, build system, Coq version, dependencies) and generates the full directory structure — dune-project, opam file, CI config, .gitignore, source boilerplate, and README. Verifies the generated project builds successfully.
 
 ---
 
 ## Summary
 
-| Skill | Purpose | Effort to run |
-|-------|---------|---------------|
-| `/formalize` | Natural language → formal theorem + proof | Interactive |
+| Skill | What it does | How it runs |
+|-------|-------------|-------------|
+| `/formalize` | Natural language to formal theorem + proof | Interactive |
 | `/compress-proof` | Find shorter proof alternatives | Automated |
 | `/explain-proof` | Step-by-step proof explanation | Automated |
 | `/proof-obligations` | Scan for admits/axioms, classify, rank | Automated |
 | `/proof-lint` | Style linting with optional auto-fix | Automated |
 | `/proof-repair` | Fix broken proofs after version upgrade | Automated, iterative |
-| `/migrate-rocq` | Coq→Rocq namespace migration | Semi-automated |
+| `/migrate-rocq` | Coq to Rocq namespace migration | Semi-automated |
 | `/check-compat` | Dependency compatibility analysis | Automated |
 | `/explain-error` | Type error explanation + fix suggestions | Automated |
-| `/textbook` | Search Software Foundations for concept explanations | Automated |
+| `/textbook` | Search Software Foundations | Automated |
 | `/scaffold` | Project skeleton generation | Interactive |
