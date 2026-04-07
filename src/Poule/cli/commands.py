@@ -944,8 +944,20 @@ def cmd_evaluate(db: str, json_mode: bool, checkpoint: str, test_data: str):
     dataset = TrainingDataLoader.load([Path(test_data)])
 
     # Re-map test pairs to the checkpoint's label map.
-    # Dataset returns hierarchical triples (state, category_idx, within_idx).
-    # Reconstruct flat family name from category + within-category index.
+    # For hierarchical models, produce (state, cat_idx, within_idx) triples
+    # using the checkpoint's category taxonomy. For flat models, produce
+    # (state, flat_idx) pairs.
+    ckpt_category_names = ckpt.get("category_names")
+    ckpt_per_cat_label_names = ckpt.get("per_category_label_names")
+    is_hierarchical = bool(ckpt_category_names)
+
+    # Build reverse lookup: family_name -> (cat_idx, within_idx) for hierarchical
+    if is_hierarchical:
+        family_to_hier = {}
+        for ci, cat in enumerate(ckpt_category_names):
+            for wi, tac in enumerate(ckpt_per_cat_label_names.get(cat, [])):
+                family_to_hier[tac] = (ci, wi)
+
     test_pairs = []
     for item in dataset.test_pairs:
         state_text = item[0]
@@ -959,8 +971,14 @@ def cmd_evaluate(db: str, json_mode: bool, checkpoint: str, test_data: str):
                 continue
         else:
             family = dataset.label_names[item[1]]
-        if family in label_map:
-            test_pairs.append((state_text, label_map[family]))
+
+        if is_hierarchical:
+            if family in family_to_hier:
+                ci, wi = family_to_hier[family]
+                test_pairs.append((state_text, ci, wi))
+        else:
+            if family in label_map:
+                test_pairs.append((state_text, label_map[family]))
 
     if not test_pairs:
         click.echo("No test pairs available after label remapping.", err=True)
@@ -969,7 +987,13 @@ def cmd_evaluate(db: str, json_mode: bool, checkpoint: str, test_data: str):
     click.echo(f"  test_pairs={len(test_pairs)}", err=True)
 
     # Evaluate
-    evaluator = TacticEvaluator(model, tokenizer, label_names, device)
+    category_names = ckpt.get("category_names")
+    per_category_label_names = ckpt.get("per_category_label_names")
+    evaluator = TacticEvaluator(
+        model, tokenizer, label_names, device,
+        category_names=category_names,
+        per_category_label_names=per_category_label_names,
+    )
     report = evaluator.evaluate(test_pairs)
 
     if json_mode:

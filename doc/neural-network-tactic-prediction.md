@@ -499,24 +499,46 @@ Final training time: ~2.7 hours (161 minutes).
 | Parameters | ~150M | ~77M |
 | HPO time | 51.9 hours | 35.6 hours |
 | Training time | 7.6 hours | 2.7 hours |
-| Dead classes (test) | 86 of 96 | Pending test evaluation |
+| Dead classes (test) | 86 of 96 | 55 of 65 |
+| Test accuracy@1 | 14.0% | 12.9% |
+| Test accuracy@5 | 46.6% | 45.2% |
+| Val–test gap (acc@5) | 23.6pp | 34.8pp |
 
-**Test set evaluation:** Not yet run. Run `poule evaluate --checkpoint final-model/model.pt --test-data training.jsonl --db index.db` to obtain test accuracy@1, accuracy@5, per-category accuracy, and per-family precision/recall.
+**Test set evaluation** (run 2026-04-07, 15,497 test samples, CPU inference ~32 min):
+
+| Tactic | Precision | Recall | Notes |
+|---------|-----------|--------|-------|
+| rewrite | 0.215 | 0.417 | Highest recall |
+| intros | 0.126 | 0.356 | Second-highest recall |
+| apply | 0.265 | 0.019 | High precision, very low recall |
+| auto | 0.182 | 0.104 | Moderate both |
+| left | 0.001 | 0.078 | Essentially noise |
+| exists | 0.010 | 0.029 | Low |
+| split | 0.033 | 0.021 | Low |
+| destruct | 0.044 | 0.012 | Low |
+| unfold | 0.077 | 0.001 | Near-zero recall |
+| assert | 0.010 | 0.003 | Near-zero |
+| *55 others* | 0.000 | 0.000 | Dead classes |
 
 ### Analysis: flat vs. hierarchical
 
-The hierarchical model's 10.5pp improvement over the flat model validates the hypothesis from the [flat model analysis](#analysis-validationtest-gap): the problem was not the model capacity or training signal, but the 96-class taxonomy with extreme imbalance (IR=26,950:1). Reducing the top-level classification to 8 well-balanced categories eliminated the long tail of dead classes and concentrated gradient signal where it matters.
+The hierarchical model improved validation accuracy by 10.5pp (70.2% → 80.2%), but the val–test gap *widened* from 24pp to 35pp, leaving test accuracy essentially unchanged (46.6% → 45.2%). The hierarchical architecture did not solve the underlying generalization problem.
 
-The shift from 4 to 8 optimal layers is consistent: with per-head class counts between 3 and 14 (instead of 96), deeper models have enough signal per class to justify the extra capacity. The factored embedding (128d → 768d) reduced the model from 150M to ~77M parameters while *improving* accuracy — confirming that the 158K-token × 768d embedding matrix was pure overfitting for rare tokens.
+**What the hierarchy fixed:** The factored embedding (128d → 768d) halved the parameter count while matching validation performance, confirming that the 158K-token × 768d embedding matrix was overfitting rare tokens. The 8-category top level is well-balanced and trains efficiently.
 
-The val–test gap that plagued the flat model (70.2% vs. 46.6%) is the key metric to watch on the hierarchical model. If the hierarchical architecture resolves the SSReflect normalization and dead-class issues that drove the flat model's gap, test accuracy should track closer to validation.
+**What the hierarchy did not fix:** The core failure mode is unchanged — the model learns to predict only 5–6 dominant tactic families (rewrite, intros, apply, auto, destruct, split) and ignores the remaining 55+ families. The val–test gap suggests the validation set shares file-level patterns with training (despite file-level splits), possibly because proofs within the same library share stylistic regularities that don't transfer across libraries.
+
+**Root causes to investigate:**
+1. **Library-level leakage**: The 80/10/10 split is file-level, but files within the same library (e.g., MathComp, stdpp) share conventions. A library-level split would be a harder but fairer test.
+2. **SSReflect normalization**: SSReflect-heavy libraries (MathComp) use `move`, `congr`, `suff`, `wlog` — all dead in both models. These tactics may need separate normalization or a dedicated SSReflect category.
+3. **Class collapse**: 55 of 65 tactic families have zero test recall. The within-category heads are as imbalanced as the original flat taxonomy — the hierarchy only balanced the *top-level* categories.
 
 ## Implementation Scope
 
 | Phase | Effort | Status |
 |-------|--------|--------|
 | Phase 1: Emit tactic records | Small | **Done** — 140K steps extracted, validated |
-| Phase 2: Tactic classifier | Medium | **Done** — hierarchical model trained (8-layer CodeBERT, 8 categories × ~65 tactics, factored embeddings), val_acc@5=80.2%; test evaluation pending. See [Hierarchical Model Results](#hierarchical-model-results) |
+| Phase 2: Tactic classifier | Medium | **Done** — hierarchical model trained (8-layer CodeBERT, 8 categories × ~65 tactics, factored embeddings), val_acc@5=80.2%, test_acc@5=45.2%. See [Hierarchical Model Results](#hierarchical-model-results) |
 | Phase 3: Argument retrieval | Medium | **Done** — ArgumentRetriever routes tactic families to retrieval strategies (type_match for apply/exact, equality filter for rewrite); integrated into suggest_tactics |
 | Phase 4: MCP integration | Small | **Done** — TacticPredictor (ONNX), ArgumentRetriever, and suggest_tactics wired end-to-end; pipeline context connected at server startup; quantize CLI available |
 
