@@ -3,17 +3,34 @@
 *"Un coq a bien besoin d'une poule."
 (A rooster really needs a hen.)*
 
-Poule ("Hen") supports the Coq ("Rooster") procedural logic community.
+Poule ("Hen") makes Coq ("Rooster") accessible in natural language via [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
-Semantic lemma search, interactive proof exploration, and proof visualization for Coq/Rocq libraries — delivered as an MCP server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+## Who Is This For
 
-Poule indexes compiled Coq `.vo` libraries into a SQLite database and provides multi-channel retrieval (structural, symbol, lexical, type-based) with reciprocal rank fusion. It also supports interactive proof sessions and Mermaid-based visualization of proof states, proof trees, and dependency graphs.
+Students and newcomers learning Coq and formal proof — no prior experience with theorem provers required.
 
-Six Coq libraries are available as prebuilt indexes: **stdlib**, **MathComp**, **std++**, **Flocq**, **Coquelicot**, and **CoqInterval**. All 6 are downloaded and merged into a single searchable index — no configuration required.
+## What Is Claude Code
 
-## Features
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) is Anthropic's agentic coding tool — you interact with it in natural language from your terminal. Poule extends Claude's capabilities through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/): when you ask Claude a question about Coq, it automatically calls the right Poule tools behind the scenes and presents the results in plain language. You never need to invoke tools directly.
 
-### Search
+## What You Get
+
+### Docker Container
+
+The Docker image contains everything you need to get started: Coq, commonly used libraries, and all of Poule's enhancements (MCP server, search index, textbook, tactic model). Nothing is installed on your computer and no configuration is required.
+
+### Education
+
+The [Software Foundations](https://softwarefoundations.cis.upenn.edu) textbook series is included, and a retrieval-augmented generation (RAG) system makes it searchable via Claude Code. Ask questions with the `/textbook` slash command. Claude also provides textbook references as part of its responses in other operations.
+
+- **Textbook retrieval** — search *Software Foundations* by concept, tactic, or proof technique via `/textbook`
+- Retrieval-augmented generation over all 7 SF volumes, bundled offline in the container
+- `/explain-proof` and `/explain-error` automatically cite relevant SF passages with browser-openable links
+- SF HTML books available at `~/software-foundations/` for direct browser reading
+
+### Searchable Coq Libraries
+
+Six Coq libraries ship with prebuilt indexes: **stdlib**, **MathComp**, **std++**, **Flocq**, **Coquelicot**, and **CoqInterval**. All six are merged into a single searchable index — no configuration required. Search via natural language.
 
 - **Structural** — Weisfeiler-Lehman graph kernels, tree edit distance, and collapse matching
 - **Symbol** — MePo-style iterative relevance filtering with weighted symbol overlap
@@ -21,14 +38,9 @@ Six Coq libraries are available as prebuilt indexes: **stdlib**, **MathComp**, *
 - **Type** — multi-channel fusion combining all of the above
 - **Dependency navigation** — `uses`, `used_by`, `same_module`, `same_typeclass`
 
-### Neural Tactic Prediction
+### Tactic Suggestion
 
-- CodeBERT-based tactic family classifier trained on 140K proof state/tactic pairs from six Coq libraries
-- 4-layer transformer encoder with closed Coq vocabulary (158K tokens), 96 tactic family classes
-- Hyperparameter optimization via Optuna (TPE sampler, median pruning)
-- Training supports PyTorch (CUDA/CPU) and MLX (Apple Silicon GPU) backends
-- Argument retrieval: for `apply`, `rewrite`, `exact`, retrieves specific lemma candidates from the search index
-- Integrates into `suggest_tactics` MCP tool; falls back to rule-based suggestions without a model
+A lightweight neural network offers fast tactic suggestions via the `suggest_tactics` tool. The idea is that you have a conversation with Claude about how to develop your proof as a learning exercise — Claude functions as a thinking partner, providing suggestions, explanations, and textbook references. For stronger automated solving, use CoqHammer (`hammer`, `sauto`, `qauto`), which is also available through the same proof interaction tools.
 
 ### Proof Interaction
 
@@ -51,13 +63,6 @@ Six Coq libraries are available as prebuilt indexes: **stdlib**, **MathComp**, *
 - **Auto/eauto trace explanation** — diagnose why `auto` or `eauto` failed to solve a goal: which hints were tried, why each was rejected, and what to do instead
 - **Convoy pattern assistant** — detect dependent pattern matching failures, recommend repair techniques (`revert`-before-`destruct`, `dependent destruction`, convoy pattern, Equations `depelim`), generate boilerplate, and warn about axiom implications
 - **Setoid rewriting assistant** — diagnose `setoid_rewrite` failures, identify missing `Proper` instances, generate `Instance Proper ...` declarations with correct `respectful` signatures, and suggest `setoid_rewrite` when `rewrite` fails under binders
-
-### Education
-
-- **Textbook retrieval** — search the *Software Foundations* textbook by concept, tactic, or proof technique via `/textbook`
-- Retrieval-augmented generation over all 7 SF volumes, bundled offline in the container
-- `/explain-proof` and `/explain-error` automatically cite relevant SF passages with browser-openable links
-- SF HTML books available at `~/software-foundations/` for direct browser reading
 
 ### Visualization
 
@@ -82,47 +87,7 @@ flowchart TD
     classDef discharged fill:#d4edda,stroke:#28a745,stroke-dasharray:5 5
 ```
 
-## Quick Start
-
-Requires [Docker](https://docs.docker.com/get-docker/) and an [Anthropic API key](https://console.anthropic.com/).
-
-**1. Get the launcher script**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ekirton/Poule/main/bin/poule -o ~/bin/poule && chmod +x ~/bin/poule
-```
-
-Or, if you prefer to clone the repo:
-
-```bash
-git clone https://github.com/ekirton/Poule.git
-cp poule/bin/poule ~/bin/poule
-chmod +x ~/bin/poule
-```
-
-Make sure `~/bin` is on your `PATH` (add `export PATH="$HOME/bin:$PATH"` to your `~/.zshrc` if needed).
-
-**2. Run**
-
-```bash
-poule          # run this from your project dir
-```
-
-To always start with the same project regardless of your current directory, set `POULE_PROJECT_DIR` (e.g. add `export POULE_PROJECT_DIR=~/Projects/my-coq-project` to your `~/.zshrc`).
-
-Everything runs inside the container — no local Coq, Python, or opam installation required. All six supported libraries are pre-installed in the container for proof interaction. Claude Code and the search index are baked into the image for instant startup. On first run, the launcher pulls the image and initializes a persistent home directory at `~/poule-home`.
-
-### Library indexes
-
-All supported libraries (**stdlib**, **MathComp**, **std++**, **Flocq**, **Coquelicot**, **CoqInterval**) are indexed and baked into the container image at build time. The index is validated against the installed Coq and library versions during the Docker build — a version mismatch fails the build. A startup message confirms which libraries are currently indexed.
-
-### Updating
-
-The launcher automatically pulls the latest container image each time you run `poule`. The image includes Claude Code, the search index, and all Coq libraries — everything updates together.
-
-## Use with Claude Code
-
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) is Anthropic's agentic coding tool — you interact with it in natural language from your terminal. Poule extends Claude's capabilities through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/): when you ask Claude a question about Coq, it automatically calls the right Poule tools behind the scenes and presents the results in plain language. You never need to invoke Poule tools directly.
+## Examples
 
 > 👉 **[See examples of what you can ask](https://github.com/ekirton/Poule/blob/main/examples/README.md)** — search, proof interaction, profiling, debugging, visualization, and more.
 
@@ -156,15 +121,39 @@ For the full list of skills and their details, see [Skills Reference](doc/claude
 
 For the full list of MCP tools and their parameters, see [MCP Tools Reference](doc/poule-mcp.md).
 
-### CLI
+## Quick Start
 
-All search and proof replay features are also available as standalone commands inside the container:
+Requires [Docker](https://docs.docker.com/get-docker/) and an [Anthropic API key](https://console.anthropic.com/).
+
+**1. Get the launcher script**
 
 ```bash
-poule search-by-name "Nat.add_comm"
-poule search-by-type "nat -> nat -> nat"
-poule --help
+curl -fsSL https://raw.githubusercontent.com/ekirton/Poule/main/bin/poule -o ~/bin/poule && chmod +x ~/bin/poule
 ```
+
+Or clone the repo:
+
+```bash
+git clone https://github.com/ekirton/Poule.git
+cp Poule/bin/poule ~/bin/poule
+chmod +x ~/bin/poule
+```
+
+Make sure `~/bin` is on your `PATH` (add `export PATH="$HOME/bin:$PATH"` to your `~/.zshrc` or `~/.bashrc` if needed).
+
+**2. Run**
+
+```bash
+poule          # run this from your project directory
+```
+
+To always start with the same project regardless of your current directory, set `POULE_PROJECT_DIR` (e.g., add `export POULE_PROJECT_DIR=~/Projects/my-coq-project` to your shell profile).
+
+Everything runs inside the container — no local Coq, Python, or opam installation required. All six libraries are pre-installed for proof interaction. Claude Code, the search index, the textbook RAG, and the tactic model are baked into the image for instant startup. On first run, the launcher pulls the image and initializes a persistent home directory at `~/poule-home`.
+
+### Updating
+
+The launcher automatically pulls the latest container image each time you run `poule`. The image includes Claude Code, the search index, all Coq libraries, the textbook RAG, and the tactic model — everything updates together.
 
 ## FAQ
 
