@@ -21,10 +21,10 @@ The Docker image contains everything you need to get started: Coq, commonly used
 
 ### Education
 
-The [Software Foundations](https://softwarefoundations.cis.upenn.edu) textbook series is included, and a retrieval-augmented generation (RAG) system makes it searchable via Claude Code. Ask questions with the `/textbook` slash command. Claude also provides textbook references as part of its responses in other operations.
+The [Software Foundations](https://softwarefoundations.cis.upenn.edu) textbook series is included and fully searchable via Claude Code. Ask questions with the `/textbook` slash command. Claude also provides textbook references as part of its responses in other operations.
 
-- **Textbook retrieval** — search *Software Foundations* by concept, tactic, or proof technique via `/textbook`
-- Retrieval-augmented generation over all 7 SF volumes, bundled offline in the container
+- **Textbook search** — search *Software Foundations* by concept, tactic, or proof technique via `/textbook`
+- All 7 SF volumes bundled offline in the container — no internet required
 - `/explain-proof` and `/explain-error` automatically cite relevant SF passages with browser-openable links
 - SF HTML books available at `~/software-foundations/` for direct browser reading
 
@@ -32,11 +32,11 @@ The [Software Foundations](https://softwarefoundations.cis.upenn.edu) textbook s
 
 Six Coq libraries ship with prebuilt indexes: **stdlib**, **MathComp**, **std++**, **Flocq**, **Coquelicot**, and **CoqInterval**. All six are merged into a single searchable index — no configuration required. Search via natural language.
 
-- **Structural** — Weisfeiler-Lehman graph kernels, tree edit distance, and collapse matching
-- **Symbol** — MePo-style iterative relevance filtering with weighted symbol overlap
-- **Lexical** — FTS5 full-text search over names, statements, and modules
-- **Type** — multi-channel fusion combining all of the above
-- **Dependency navigation** — `uses`, `used_by`, `same_module`, `same_typeclass`
+- **By name** — find lemmas by name or pattern (e.g., `Nat.add_*`)
+- **By type** — describe the type signature you're looking for and Claude finds matching lemmas
+- **By structure** — find lemmas with a similar shape to an expression you provide
+- **By symbol** — find lemmas that mention specific definitions or types
+- **By relationship** — navigate what a lemma uses, what uses it, and what else lives in the same module or typeclass
 
 ### Tactic Suggestion
 
@@ -44,25 +44,25 @@ A lightweight neural network offers fast tactic suggestions via the `suggest_tac
 
 ### Proof Interaction
 
-- Open interactive proof sessions against `.v` files
+- Open interactive proof sessions on `.v` files
 - Observe proof states, submit tactics, step forward/backward
-- Extract full proof traces with per-step premise annotations
-- Batch tactic submission and concurrent sessions
+- Extract full proof traces showing which lemmas each tactic used
+- Work on multiple proofs at once
 
 ### Proof Profiling
 
 - Profile individual proofs or entire files — per-tactic timing ranked from slowest to fastest
-- Separate `Qed` kernel re-checking time from tactic execution time
-- Identify bottlenecks with natural-language explanations and concrete optimization suggestions
-- Ltac call-tree profiling for complex custom tactics
-- Compare timing between runs for regression detection
+- Separate proof-checking time (`Qed`) from tactic execution time, so you know where slowness comes from
+- Identify bottlenecks with plain-language explanations and concrete optimization suggestions
+- Break down time spent inside custom Ltac tactics
+- Compare timing between runs to catch regressions
 - Project-wide profiling with ranked summaries of slowest files and lemmas
 
 ### Proof Assistants
 
-- **Auto/eauto trace explanation** — diagnose why `auto` or `eauto` failed to solve a goal: which hints were tried, why each was rejected, and what to do instead
-- **Convoy pattern assistant** — detect dependent pattern matching failures, recommend repair techniques (`revert`-before-`destruct`, `dependent destruction`, convoy pattern, Equations `depelim`), generate boilerplate, and warn about axiom implications
-- **Setoid rewriting assistant** — diagnose `setoid_rewrite` failures, identify missing `Proper` instances, generate `Instance Proper ...` declarations with correct `respectful` signatures, and suggest `setoid_rewrite` when `rewrite` fails under binders
+- **Auto/eauto trace explanation** — when `auto` or `eauto` fails to solve a goal, Claude explains which hints were tried, why each was rejected, and what to try instead
+- **Pattern matching assistant** — when `destruct` or `induction` fails on dependent types, Claude diagnoses the problem and suggests fixes (reordering hypotheses, using `dependent destruction`, the convoy pattern, or Equations)
+- **Setoid rewriting assistant** — when `rewrite` fails because you're rewriting under a function that doesn't preserve your equivalence relation, Claude identifies the missing compatibility proof and generates it for you
 
 ### Visualization
 
@@ -112,12 +112,12 @@ For the full list of skills and their details, see [Skills Reference](SKILLS.md)
 
 | Category | What Claude can do |
 |----------|--------------------|
-| **Search** | Find lemmas by name, type signature, structural similarity, or symbol usage; navigate dependencies; browse modules |
-| **Proof interaction** | Open interactive proof sessions, observe goal states, submit tactics, step through proofs, extract traces with premise annotations |
-| **Profiling** | Profile proofs and files for per-tactic timing, separate Qed from tactic time, explain bottlenecks, suggest optimizations, compare runs for regressions |
-| **Proof assistants** | Diagnose `auto`/`eauto` hint failures, fix dependent pattern matching (`destruct`/convoy pattern), resolve `setoid_rewrite` `Proper` constraint errors |
-| **Visualization** | Render proof states, proof trees, dependency graphs, and step-by-step proof evolution as Mermaid diagrams — written to `proof-diagram.html` in your project directory for browser viewing |
-| **Skills** | Compound agentic workflows: formalization, proof compression, explanation, linting, repair, migration, compatibility analysis, error diagnosis, scaffolding |
+| **Search** | Find lemmas by name, type signature, structure, or symbol usage; navigate dependencies; browse modules |
+| **Proof interaction** | Open interactive proof sessions, observe goal states, submit tactics, step through proofs, see which lemmas each step used |
+| **Profiling** | Time individual tactics, find bottlenecks, get optimization suggestions, compare runs for regressions |
+| **Proof assistants** | Diagnose `auto`/`eauto` failures, fix dependent pattern matching errors, resolve rewriting compatibility issues |
+| **Visualization** | Render proof states, proof trees, dependency graphs, and step-by-step proof evolution as diagrams in your browser |
+| **Skills** | Multi-step workflows: formalization, proof compression, explanation, linting, repair, migration, compatibility analysis, error diagnosis, scaffolding |
 
 For the full list of MCP tools and their parameters, see [MCP Tools Reference](MCP.md).
 
@@ -149,11 +149,11 @@ poule          # run this from your project directory
 
 To always start with the same project regardless of your current directory, set `POULE_PROJECT_DIR` (e.g., add `export POULE_PROJECT_DIR=~/Projects/my-coq-project` to your shell profile).
 
-Everything runs inside the container — no local Coq, Python, or opam installation required. All six libraries are pre-installed for proof interaction. Claude Code, the search index, the textbook RAG, and the tactic model are baked into the image for instant startup. On first run, the launcher pulls the image and initializes a persistent home directory at `~/poule-home`.
+Everything runs inside the container — no local Coq, Python, or opam installation required. All six libraries are pre-installed for proof interaction. Claude Code, the search index, the textbook, and the tactic model are baked into the image for instant startup. On first run, the launcher pulls the image and initializes a persistent home directory at `~/poule-home`.
 
 ### Updating
 
-The launcher automatically pulls the latest container image each time you run `poule`. The image includes Claude Code, the search index, all Coq libraries, the textbook RAG, and the tactic model — everything updates together.
+The launcher automatically pulls the latest container image each time you run `poule`. The image includes Claude Code, the search index, all Coq libraries, the textbook, and the tactic model — everything updates together.
 
 ## FAQ
 
