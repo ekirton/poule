@@ -11,7 +11,7 @@ Coq projects (.v)
 Proof traces (JSONL) — "s" records with (proof_state, tactic_text)
   │  poule validate-training-data
   ▼
-Validated training data (~105K steps from 6 libraries)
+Validated training data (~140K steps from 6 libraries)
   │  poule build-vocabulary
   ▼
 Closed vocabulary (coq-vocabulary.json)
@@ -57,7 +57,7 @@ Each line in the output is a self-contained JSON object. The key record types:
 | `extraction_error` | One per failed proof — error kind and message |
 | `extraction_summary` | Counts (found, extracted, failed, skipped) — last line |
 
-The `"s"` records are the training data: each contains a serialized proof state (the goals and hypotheses before the tactic) and the tactic command text that was applied. The six target libraries yield ~105,000 such records.
+The `"s"` records are the training data: each contains a serialized proof state (the goals and hypotheses before the tactic) and the tactic command text that was applied. The six target libraries yield ~140,000 such records.
 
 ## Step 2: Validate training data
 
@@ -72,7 +72,7 @@ The validator reports:
 - Tactic family distribution (frequency of each family)
 - Class imbalance warnings (dominant families that may need stronger weighting)
 
-A minimum of 10,000 steps is recommended; the six target libraries combined yield ~105,000.
+A minimum of 10,000 steps is recommended; the six target libraries combined yield ~140,000.
 
 ## Step 3: Build the vocabulary
 
@@ -180,9 +180,10 @@ Measure tactic prediction accuracy on the held-out test set.
 poule evaluate --checkpoint model.pt --test-data training-data.jsonl --db index.db
 ```
 
-Reports accuracy@1, accuracy@5, per-family precision/recall, and a confusion matrix. Warnings are emitted if:
+Reports accuracy@1, accuracy@5, per-category accuracy, per-family precision/recall, and a confusion matrix. Warnings are emitted if:
 - accuracy@1 < 40%
 - accuracy@5 < 80%
+- category accuracy@1 < 80%
 
 ## Step 6: Export to ONNX
 
