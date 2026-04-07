@@ -276,7 +276,7 @@ _HAMMER_SINGLE_STRATEGIES = {"hammer", "sauto", "qauto"}
 _HAMMER_KEYWORDS = _HAMMER_SINGLE_STRATEGIES | {"auto_hammer"}
 
 # Default per-strategy timeouts (spec §4.4)
-_HAMMER_DEFAULT_TIMEOUTS = {"hammer": 30, "sauto": 10, "qauto": 5, "auto_hammer": 60}
+_HAMMER_DEFAULT_TIMEOUTS = {"hammer": 30, "sauto": 10, "qauto": 5, "auto_hammer": 90}
 
 
 async def handle_submit_tactic(

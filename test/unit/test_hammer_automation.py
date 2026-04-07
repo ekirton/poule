@@ -610,8 +610,8 @@ class TestMultiStrategyFallback:
         assert success_count == 1
 
     @pytest.mark.asyncio
-    async def test_default_total_timeout_is_60(self):
-        """REQUIRES: total_timeout default is 60 for auto_hammer (§4.4)."""
+    async def test_default_total_timeout_is_90(self):
+        """REQUIRES: total_timeout default is 90 for auto_hammer (§4.4)."""
         execute_auto = _import_execute_auto_hammer()
         initial_state = _make_proof_state()
         manager = AsyncMock()
@@ -622,11 +622,11 @@ class TestMultiStrategyFallback:
 
         manager.submit_tactic.side_effect = _submit
 
-        # Call without explicit timeout; should use default of 60
+        # Call without explicit timeout; should use default of 90
         result = await execute_auto(
             session_manager=manager,
             session_id="test",
-            timeout=60,
+            timeout=90,
             hints=[],
             options={},
         )
