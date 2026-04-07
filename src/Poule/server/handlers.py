@@ -16,6 +16,8 @@ from Poule.server.errors import (
     PARSE_ERROR,
     PROOF_INCOMPLETE,
 )
+from Poule.hammer.engine import execute_hammer, execute_auto_hammer
+from Poule.hammer.errors import ParseError as HammerParseError
 from Poule.session.errors import SessionError
 
 logger = logging.getLogger(__name__)
@@ -269,10 +271,23 @@ async def handle_extract_proof_trace(ctx: Any, *, session_id: str) -> dict:
     return _format_success(trace)
 
 
+# Hammer keyword set (spec §4.1: recognized keywords that trigger delegation)
+_HAMMER_SINGLE_STRATEGIES = {"hammer", "sauto", "qauto"}
+_HAMMER_KEYWORDS = _HAMMER_SINGLE_STRATEGIES | {"auto_hammer"}
+
+# Default per-strategy timeouts (spec §4.4)
+_HAMMER_DEFAULT_TIMEOUTS = {"hammer": 30, "sauto": 10, "qauto": 5, "auto_hammer": 60}
+
+
 async def handle_submit_tactic(
-    ctx: Any, *, session_id: str, tactic: str,
+    ctx: Any, *, session_id: str, tactic: str, options: dict | None = None,
 ) -> dict:
-    """Handle submit_tactic tool call."""
+    """Handle submit_tactic tool call.
+
+    When the tactic string matches a recognized hammer keyword, delegates to
+    the Hammer Automation component (spec §4.1). Otherwise, forwards the
+    tactic to the Proof Session Manager unchanged.
+    """
     try:
         session_id = validate_string(session_id)
     except (ValueError, Exception):
@@ -281,6 +296,41 @@ async def handle_submit_tactic(
         tactic = validate_string(tactic)
     except (ValueError, Exception):
         return format_error(PARSE_ERROR, "tactic must be a non-empty string.")
+
+    # Hammer keyword detection (spec §4.1)
+    if tactic in _HAMMER_KEYWORDS:
+        opts = options or {}
+        timeout = opts.get("timeout", _HAMMER_DEFAULT_TIMEOUTS[tactic])
+        hints = opts.get("hints", [])
+        # Remaining options forwarded to the engine (sauto_depth, qauto_depth, unfold)
+        engine_opts = {k: v for k, v in opts.items() if k not in ("timeout", "hints")}
+
+        try:
+            if tactic == "auto_hammer":
+                result = await execute_auto_hammer(
+                    session_manager=ctx.session_manager,
+                    session_id=session_id,
+                    timeout=timeout,
+                    hints=hints,
+                    options=engine_opts,
+                )
+            else:
+                result = await execute_hammer(
+                    session_manager=ctx.session_manager,
+                    session_id=session_id,
+                    strategy=tactic,
+                    timeout=timeout,
+                    hints=hints,
+                    options=engine_opts,
+                )
+        except HammerParseError as exc:
+            return format_error(PARSE_ERROR, str(exc))
+        except SessionError as exc:
+            return _session_error_response(exc)
+
+        return _format_success(result)
+
+    # Non-hammer: pass through to session manager
     try:
         state = await ctx.session_manager.submit_tactic(session_id, tactic)
     except SessionError as exc:
