@@ -29,7 +29,7 @@ RESULTS_FILE = DATA_DIR / "final-model-validation.txt"
 
 
 def main():
-    from Poule.neural.training.data import TrainingDataLoader
+    from Poule.neural.training.data import TrainingDataLoader, undersample_train
 
     # ---- Step 1: Load data ----
     logger.info("Loading training data...")
@@ -49,6 +49,17 @@ def main():
         n_tactics = len(dataset.per_category_label_names.get(cat, []))
         logger.info("  %s: %d samples, %d tactic families", cat, total, n_tactics)
 
+    # ---- Step 1b: Undersample dominant families ----
+    UNDERSAMPLE_CAP = 2000
+    original_train = len(dataset.train_pairs)
+    dataset = undersample_train(dataset, cap=UNDERSAMPLE_CAP)
+    logger.info(
+        "Undersampled training set: %d -> %d (cap=%d per family)",
+        original_train,
+        len(dataset.train_pairs),
+        UNDERSAMPLE_CAP,
+    )
+
     # ---- Step 2: HPO ----
     from Poule.neural.training.tuner import HyperparameterTuner
 
@@ -59,7 +70,8 @@ def main():
         HPO_DIR,
         vocabulary_path=VOCABULARY,
         n_trials=15,
-        study_name="poule-hpo-hierarchical",
+        study_name="poule-hpo-undersampled",
+        resume=False,
         hpo_max_epochs=10,
         hpo_patience=2,
     )
