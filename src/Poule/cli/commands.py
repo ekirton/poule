@@ -882,6 +882,63 @@ def cmd_train(
 
 
 # ---------------------------------------------------------------------------
+# loocv
+# ---------------------------------------------------------------------------
+
+
+@cli.command("loocv")
+@click.argument("data", nargs=-1, required=True)
+@click.option("--output-dir", required=True, type=click.Path(), help="Directory for fold results and report.")
+@click.option("--vocabulary", required=True, type=click.Path(exists=True), help="Path to closed vocabulary JSON.")
+@click.option("--undersample-cap", default=1000, type=int, help="Per-family training cap (default: 1000).")
+@click.option("--backend", default="mlx", type=click.Choice(["mlx", "pytorch"]), help="Training backend.")
+def cmd_loocv(
+    data: tuple[str, ...],
+    output_dir: str,
+    vocabulary: str,
+    undersample_cap: int,
+    backend: str,
+):
+    """Run leave-one-library-out cross-validation.
+
+    Each DATA argument is a JSONL file; the library name is inferred
+    from the filename stem (e.g., stdlib.jsonl -> "stdlib").
+    """
+    from Poule.neural.training.loocv import LibraryLOOCV
+
+    jsonl_paths = _validate_input_files(data)
+
+    # Infer library names from filename stems
+    library_paths: dict[str, list[Path]] = {}
+    for p in jsonl_paths:
+        lib_name = p.stem
+        library_paths.setdefault(lib_name, []).append(p)
+
+    if len(library_paths) < 2:
+        click.echo("Error: LOOCV requires at least 2 libraries.", err=True)
+        sys.exit(1)
+
+    click.echo(f"Libraries: {', '.join(sorted(library_paths.keys()))}", err=True)
+    click.echo(f"Undersample cap: {undersample_cap}", err=True)
+
+    report = LibraryLOOCV.run(
+        library_paths=library_paths,
+        vocabulary_path=Path(vocabulary),
+        output_dir=Path(output_dir),
+        undersample_cap=undersample_cap,
+        backend=backend,
+    )
+
+    click.echo(
+        f"\nMean test_acc@5: {report.mean_test_acc_at_5:.3f} "
+        f"± {report.std_test_acc_at_5:.3f}",
+        err=True,
+    )
+    for lib, acc in sorted(report.per_library_acc_at_5.items()):
+        click.echo(f"  {lib}: {acc:.3f}", err=True)
+
+
+# ---------------------------------------------------------------------------
 # evaluate
 # ---------------------------------------------------------------------------
 

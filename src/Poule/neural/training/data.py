@@ -481,3 +481,164 @@ class TrainingDataLoader:
             per_category_label_names=per_category_label_names,
             per_category_counts=per_category_counts,
         )
+
+    @staticmethod
+    def load_by_library(
+        library_paths: dict[str, list[Path]],
+        held_out_library: str,
+        val_fraction: float = 0.1,
+        seed: int = 42,
+    ) -> TacticDataset:
+        """Load training data with a library-level split.
+
+        spec §4.1: Holds out one library entirely as the test set.
+        Remaining libraries' files are shuffled and split into
+        train/val by ``val_fraction``.
+        """
+        import math
+
+        from Poule.neural.training.taxonomy import (
+            CATEGORY_NAMES,
+            EXCLUDED_TOKENS,
+            TACTIC_CATEGORIES,
+            TACTIC_TO_CATEGORY,
+        )
+
+        # Build per-category label maps (same as load())
+        per_category_label_maps: dict[str, dict[str, int]] = {}
+        per_category_label_names: dict[str, list[str]] = {}
+        for cat in CATEGORY_NAMES:
+            tactics = TACTIC_CATEGORIES[cat]
+            per_category_label_names[cat] = list(tactics)
+            per_category_label_maps[cat] = {t: i for i, t in enumerate(tactics)}
+
+        category_index = {cat: i for i, cat in enumerate(CATEGORY_NAMES)}
+
+        flat_label_names: list[str] = []
+        flat_label_map: dict[str, int] = {}
+        for cat in CATEGORY_NAMES:
+            for tac in TACTIC_CATEGORIES[cat]:
+                flat_label_map[tac] = len(flat_label_names)
+                flat_label_names.append(tac)
+
+        # Phase 1: Read all steps, tagged by library
+        # file_steps[filepath] = (library_name, [(state_text, family), ...])
+        file_steps: dict[str, tuple[str, list[tuple[str, str]]]] = {}
+        raw_family_counts: Counter[str] = Counter()
+
+        for lib_name, paths in library_paths.items():
+            for path in paths:
+                with open(path, encoding="utf-8") as f:
+                    for line in f:
+                        if (
+                            '"t":"s"' not in line[:25]
+                            and '"t": "s"' not in line[:25]
+                        ):
+                            continue
+                        try:
+                            record = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+
+                        if record.get("t") != "s":
+                            continue
+
+                        source_file = record["f"]
+                        state_text = record["s"]
+                        tactic_text = record.get("c", "")
+                        if not tactic_text:
+                            continue
+
+                        if len(state_text) > _MAX_STMT:
+                            state_text = state_text[:_MAX_STMT]
+
+                        family = extract_tactic_family(tactic_text)
+
+                        if family in EXCLUDED_TOKENS:
+                            continue
+                        if family not in TACTIC_TO_CATEGORY:
+                            continue
+
+                        raw_family_counts[family] += 1
+
+                        if source_file not in file_steps:
+                            file_steps[source_file] = (lib_name, [])
+                        file_steps[source_file][1].append((state_text, family))
+
+        # Phase 2: Split by library membership
+        held_out_files: list[str] = []
+        remaining_files: list[str] = []
+
+        for filepath, (lib_name, _steps) in file_steps.items():
+            if lib_name == held_out_library:
+                held_out_files.append(filepath)
+            else:
+                remaining_files.append(filepath)
+
+        held_out_files.sort()
+        remaining_files.sort()
+
+        # Shuffle remaining files and split into train/val
+        rng = random.Random(seed)
+        shuffled = list(remaining_files)
+        rng.shuffle(shuffled)
+
+        split_idx = math.ceil(len(shuffled) * (1 - val_fraction))
+        train_file_set = set(shuffled[:split_idx])
+        val_file_set = set(shuffled[split_idx:])
+
+        # Build per-category counts
+        per_category_counts: dict[str, dict[str, int]] = {}
+        for cat in CATEGORY_NAMES:
+            cat_counts: dict[str, int] = {}
+            for tac in TACTIC_CATEGORIES[cat]:
+                count = raw_family_counts.get(tac, 0)
+                if count > 0:
+                    cat_counts[tac] = count
+            per_category_counts[cat] = cat_counts
+
+        # Phase 3: Assign steps to splits
+        train_pairs: list[tuple[str, int, int]] = []
+        val_pairs: list[tuple[str, int, int]] = []
+        test_pairs: list[tuple[str, int, int]] = []
+        train_files_list: list[str] = []
+        val_files_list: list[str] = []
+        test_files_list: list[str] = []
+
+        for filepath in sorted(file_steps.keys()):
+            _lib_name, steps = file_steps[filepath]
+            labeled_steps: list[tuple[str, int, int]] = []
+            for state, family in steps:
+                cat = TACTIC_TO_CATEGORY[family]
+                cat_idx = category_index[cat]
+                within_idx = per_category_label_maps[cat][family]
+                labeled_steps.append((state, cat_idx, within_idx))
+
+            if filepath in train_file_set:
+                train_pairs.extend(labeled_steps)
+                train_files_list.extend([filepath] * len(labeled_steps))
+            elif filepath in val_file_set:
+                val_pairs.extend(labeled_steps)
+                val_files_list.extend([filepath] * len(labeled_steps))
+            else:
+                # Held-out library
+                test_pairs.extend(labeled_steps)
+                test_files_list.extend([filepath] * len(labeled_steps))
+
+        del file_steps
+
+        return TacticDataset(
+            train_pairs=train_pairs,
+            val_pairs=val_pairs,
+            test_pairs=test_pairs,
+            label_map=flat_label_map,
+            label_names=flat_label_names,
+            family_counts=dict(raw_family_counts),
+            train_files=train_files_list,
+            val_files=val_files_list,
+            test_files=test_files_list,
+            category_names=list(CATEGORY_NAMES),
+            per_category_label_maps=per_category_label_maps,
+            per_category_label_names=per_category_label_names,
+            per_category_counts=per_category_counts,
+        )

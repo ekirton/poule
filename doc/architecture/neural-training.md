@@ -281,6 +281,53 @@ After the file-level split, the training split is optionally undersampled to cap
 
 **Expected impact:** With a 2,000-example cap on the 6 dominant families (rewrite, intros, apply, auto, destruct, split), training reduces from ~114K to ~40–50K samples. Per-epoch tail-class exposure increases proportionally.
 
+### Leave-One-Library-Out Cross-Validation
+
+A diagnostic evaluation mode that replaces the file-level split with a library-level split. For each fold, one of the 5 vanilla-Coq libraries is held out entirely as the test set, and the remaining 4 libraries provide training and validation data. This isolates whether the model generalizes across library boundaries or memorizes library-specific tactic conventions.
+
+MathComp is excluded: 71% of its steps use SSReflect-dialect tactics (`by`, `move=>`, `exact:`, `apply:`, `case:`), making it a different tactic language rather than a transferable signal. The remaining 5 libraries are 78–99% vanilla Coq.
+
+```
+poule loocv stdlib.jsonl stdpp.jsonl flocq.jsonl coquelicot.jsonl coqinterval.jsonl \
+  --output-dir loocv-results/ --vocabulary coq-vocabulary.json --undersample-cap 1000
+```
+
+#### Data Loading: `load_by_library()`
+
+An alternative to `TrainingDataLoader.load()` that splits by library membership:
+
+1. Accept a `library_paths: dict[str, list[Path]]` mapping library names to their JSONL files, and a `held_out_library: str`.
+2. Parse all JSONL files identically to `load()` (step extraction, taxonomy filtering, hierarchical labeling).
+3. All steps from the held-out library → test set.
+4. Remaining libraries' files → shuffled (seeded) and split 90/10 for train/val at the file level.
+5. Apply undersampling to the training split (default cap=1000, lower than the standard 2000 because holding out a library shrinks the training pool).
+
+The same `TacticDataset` structure is returned — downstream training code is unchanged.
+
+#### LOOCV Orchestration
+
+`LibraryLOOCV.run()` iterates over all libraries:
+
+```
+For each library L in {stdlib, stdpp, flocq, coquelicot, coqinterval}:
+    1. Load data with L held out
+    2. Undersample training split at configured cap
+    3. Train model with fixed hyperparameters (best from undersampled HPO)
+    4. Evaluate on held-out library
+    5. Collect FoldResult (accuracies, dead families, per-family recall, timing)
+    6. Delete checkpoint (only aggregate results matter)
+
+Aggregate into LOOCVReport: mean/std of test_acc@5, per-library comparison.
+```
+
+#### CLI
+
+```
+poule loocv DATA... --output-dir DIR --vocabulary PATH [--undersample-cap 1000] [--backend mlx|pytorch]
+```
+
+Library name is inferred from each JSONL filename stem (e.g., `stdlib.jsonl` → `"stdlib"`).
+
 ## Training
 
 ### Objective: Class-Weighted Cross-Entropy with Label Smoothing

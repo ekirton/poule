@@ -35,15 +35,13 @@ Extract proof traces with per-step tactic annotations from Coq libraries. The ex
 # Extract from the Coq/Rocq standard library
 poule extract /opt/opam/coq/lib/coq/user-contrib/Stdlib --output stdlib.jsonl
 
-# Extract from MathComp
-poule extract /opt/opam/coq/lib/coq/user-contrib/mathcomp --output mathcomp.jsonl
-
 # Multi-project extraction in a single campaign
 poule extract \
   /opt/opam/coq/lib/coq/user-contrib/Stdlib \
-  /opt/opam/coq/lib/coq/user-contrib/mathcomp \
   /opt/opam/coq/lib/coq/user-contrib/stdpp \
   /opt/opam/coq/lib/coq/user-contrib/Flocq \
+  /opt/opam/coq/lib/coq/user-contrib/Coquelicot \
+  /opt/opam/coq/lib/coq/user-contrib/Interval \
   --output training-data.jsonl
 ```
 
@@ -188,6 +186,37 @@ The tuner searches over 8 hyperparameters:
 
 The study uses TPE sampling with a MedianPruner (3 startup trials, 3 warmup epochs). Study state persists to SQLite (`hpo-study.db`) for crash recovery with `--resume`. The best trial's checkpoint is copied to `best-model.pt`.
 
+### Leave-one-library-out cross-validation
+
+The file-level split scatters files from the same library across train/val/test. Libraries share tactic conventions (stdlib favors `destruct`/`induction`, stdpp has its own automation), so the model may memorize library identity rather than learning generalizable proof structure. LOOCV diagnoses this by holding out each vanilla-Coq library in turn as the test set. MathComp is excluded because 71% of its steps use SSReflect-dialect tactics, making it a different tactic language rather than a transferable signal.
+
+```bash
+# Run LOOCV across all 5 vanilla-Coq libraries (MathComp excluded)
+poule loocv \
+  stdlib.jsonl stdpp.jsonl \
+  flocq.jsonl coquelicot.jsonl coqinterval.jsonl \
+  --output-dir loocv-results/ \
+  --vocabulary coq-vocabulary.json \
+  --undersample-cap 1000
+```
+
+Each JSONL file's stem is used as the library name. For each of the 5 libraries, the command:
+1. Holds out that library entirely as the test set
+2. Splits the remaining libraries' files 90/10 (seeded shuffle) for train/val
+3. Undersamples training at cap=1000 per family
+4. Trains with the best HPO hyperparameters
+5. Evaluates on the held-out library
+
+The aggregate report (`loocv-results/loocv-report.json`) contains mean/std of test_acc@5 across folds and per-library accuracy. Interpretation:
+
+| Outcome | Meaning |
+|---------|---------|
+| Mean test_acc@5 ≈ 57% (current baseline) | Library leakage is not the bottleneck |
+| Mean test_acc@5 drops to 30–40% | Model learns library style, not proof structure |
+| High variance across folds | Some libraries transfer well, others don't |
+
+The `--undersample-cap` defaults to 1000 (lower than the standard 2000) because holding out a library shrinks the training pool. The `--backend` flag selects `mlx` (default) or `pytorch`.
+
 ## Step 5: Evaluate the model
 
 Measure tactic prediction accuracy on the held-out test set.
@@ -268,10 +297,9 @@ The script:
 ```bash
 COQ_LIBS="/opt/opam/coq/lib/coq/user-contrib"
 
-# 1. Extract training data from all supported libraries
+# 1. Extract training data from vanilla-Coq libraries (MathComp excluded — SSReflect dialect)
 poule extract \
   $COQ_LIBS/Stdlib \
-  $COQ_LIBS/mathcomp \
   $COQ_LIBS/stdpp \
   $COQ_LIBS/Flocq \
   $COQ_LIBS/Coquelicot \
@@ -315,6 +343,14 @@ poule evaluate --checkpoint model.pt --test-data training.jsonl --db index.db
 # 8. Export to ONNX
 poule quantize --checkpoint model.pt --output tactic-predictor.onnx
 
-# 9. Publish (requires gh CLI, authenticated)
+# 9. (Optional) LOOCV diagnostic — diagnose library-level leakage
+poule loocv \
+  stdlib.jsonl stdpp.jsonl \
+  flocq.jsonl coquelicot.jsonl coqinterval.jsonl \
+  --output-dir loocv-results/ \
+  --vocabulary coq-vocabulary.json \
+  --undersample-cap 1000
+
+# 10. Publish (requires gh CLI, authenticated)
 ./scripts/publish-model.sh
 ```

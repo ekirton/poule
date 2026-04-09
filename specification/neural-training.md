@@ -429,6 +429,82 @@ All steps from the same file go into the same split.
 > **When** the resulting `train_pairs` are compared
 > **Then** they are identical (same examples in the same positions per family group)
 
+#### Library-level split: load_by_library()
+
+`TrainingDataLoader.load_by_library(library_paths, held_out_library, val_fraction, seed)`
+
+- REQUIRES: `library_paths` is a `dict[str, list[Path]]` mapping library name strings to non-empty lists of JSONL file paths. `held_out_library` is a key in `library_paths`. `val_fraction` is a float in (0.0, 1.0), default 0.1. `seed` is an integer, default 42.
+- ENSURES: Returns a `TacticDataset` where:
+  - `test_pairs` contains all steps from the held-out library (and only those steps).
+  - `val_pairs` contains steps from `val_fraction` of files in the non-held-out libraries.
+  - `train_pairs` contains steps from the remaining files in the non-held-out libraries.
+  - All hierarchical label maps, taxonomy filtering, and label construction are identical to `load()`.
+
+**Procedure:**
+
+1. Parse all JSONL files from all libraries identically to `load()`: extract `"s"` records, apply `extract_tactic_family()`, filter through taxonomy, build hierarchical labels.
+2. Collect all steps from the held-out library → `test_pairs`.
+3. Collect all files from the remaining libraries. Shuffle the file list using `random.Random(seed)`. Split at index `ceil(len(files) * (1 - val_fraction))`: files before → train, files at and after → val.
+4. Assign all steps from each file to the corresponding split.
+5. Return a `TacticDataset` with the same structure as `load()`.
+
+- MAINTAINS: No file from the held-out library appears in train or val.
+- MAINTAINS: No file appears in more than one split.
+- MAINTAINS: Deterministic — the same `(library_paths, held_out_library, val_fraction, seed)` always produces the same splits.
+
+> **Given** 3 libraries: A (10 files), B (5 files), C (8 files), held_out=B
+> **When** `load_by_library` runs with val_fraction=0.1, seed=42
+> **Then** all files from B are in test; files from A and C are shuffled and split 90/10 into train/val
+
+> **Given** held_out_library="flocq"
+> **When** the resulting dataset is inspected
+> **Then** no file matching the flocq library appears in train_files or val_files
+
+#### Leave-one-library-out cross-validation
+
+`LibraryLOOCV.run(library_paths, vocabulary_path, output_dir, undersample_cap, hyperparams, backend)`
+
+- REQUIRES: `library_paths` is a `dict[str, list[Path]]` with at least 2 libraries. Only vanilla-Coq libraries should be included (MathComp is excluded — 71% SSReflect dialect). `vocabulary_path` points to a valid vocabulary JSON. `output_dir` is a writable directory path. `undersample_cap` is a positive integer (default 1000). `hyperparams` is an optional dict of training hyperparameters (defaults to the best undersampled HPO configuration). `backend` is `"mlx"` or `"pytorch"` (default `"mlx"`).
+- ENSURES: Runs one fold per library. For each fold: loads data with `load_by_library()`, applies `undersample_train()` with `undersample_cap`, trains a model with the specified hyperparameters, evaluates on the held-out library, collects a `FoldResult`, and deletes the checkpoint. After all folds, aggregates into an `LOOCVReport`. Writes the report as JSON to `output_dir/loocv-report.json`.
+
+**FoldResult fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `held_out_library` | str | Name of the held-out library |
+| `train_samples` | int | Number of training samples (after undersampling) |
+| `val_samples` | int | Number of validation samples |
+| `test_samples` | int | Number of test samples |
+| `accuracy_at_1` | float | Top-1 accuracy on the held-out library |
+| `accuracy_at_5` | float | Top-5 accuracy on the held-out library |
+| `category_accuracy_at_1` | float | Category-level top-1 accuracy |
+| `dead_families` | int | Number of families with zero recall on the held-out library |
+| `total_families` | int | Total number of tactic families |
+| `per_family_recall` | dict[str, float] | Per-family recall on the held-out library |
+| `training_time_s` | float | Wall-clock training time in seconds |
+
+**LOOCVReport fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `folds` | list[FoldResult] | One result per library fold |
+| `undersample_cap` | int | The cap used for undersampling |
+| `mean_test_acc_at_5` | float | Mean of accuracy_at_5 across all folds |
+| `std_test_acc_at_5` | float | Standard deviation of accuracy_at_5 across folds |
+| `mean_dead_families` | float | Mean of dead_families across folds |
+| `per_library_acc_at_5` | dict[str, float] | Library name → accuracy_at_5 for that fold |
+
+- MAINTAINS: Each fold trains a fresh model from scratch (no transfer between folds).
+- MAINTAINS: Checkpoints are deleted after evaluation; only the report persists.
+
+> **Given** 5 vanilla-Coq libraries (excluding MathComp)
+> **When** `LibraryLOOCV.run()` completes
+> **Then** the report contains exactly 5 FoldResult entries, one per library
+
+> **Given** a fold with held_out_library="stdlib"
+> **When** the fold trains
+> **Then** no stdlib data appears in training or validation
+
 #### Split diagnostic report
 
 `SplitReport.generate(dataset: TacticDataset) -> SplitReport`

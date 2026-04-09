@@ -29,7 +29,8 @@ RESULTS_FILE = DATA_DIR / "final-model-validation.txt"
 LOOCV_DIR = DATA_DIR / "loocv-results"
 
 # Per-library JSONL files for LOOCV (set RUN_LOOCV=1 to enable)
-LIBRARY_JSONL_STEMS = ["stdlib", "mathcomp", "stdpp", "flocq", "coquelicot", "coqinterval"]
+# MathComp excluded: 71% SSReflect dialect, not transferable to vanilla Coq.
+LIBRARY_JSONL_STEMS = ["stdlib", "stdpp", "flocq", "coquelicot", "coqinterval"]
 
 
 def main():
