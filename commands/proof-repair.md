@@ -107,9 +107,8 @@ When targeted strategies fail for a proof goal:
 
 1. Open a proof session with `open_proof_session` if one is not already open.
 2. Navigate to the failing step. Use `step_forward` / `step_backward` and `observe_proof_state` to position at the goal that needs solving.
-3. Try `submit_tactic` with `hammer.` first.
-4. If `hammer` fails, try `sauto.` then `qauto.`
-5. If any hammer variant succeeds, use `observe_proof_state` to confirm the goal is closed. Replace the broken tactic sequence with the successful hammer call using `Edit`. Close the session.
+3. Call `try_automation` with `strategy="auto_hammer"` (tries hammer, sauto, qauto in sequence).
+4. If automation succeeds, use `observe_proof_state` to confirm the goal is closed. Replace the broken tactic sequence with the successful tactic using `Edit`. Close the session.
 6. If all hammer variants fail, mark the proof as unresolved. Record which strategies were attempted. Close the session with `close_proof_session`.
 
 ## Step 6: Rebuild and iterate

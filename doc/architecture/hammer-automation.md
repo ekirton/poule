@@ -12,9 +12,7 @@ The component that wraps CoqHammer tactics (`hammer`, `sauto`, `qauto`) for invo
 ```
 MCP Server
   │
-  │ submit_tactic(session_id, tactic="hammer", options={...})
-  │   — or —
-  │ submit_tactic(session_id, tactic="auto_hammer", options={...})
+  │ try_automation(session_id, strategy="auto_hammer", options={...})
   ▼
 ┌───────────────────────────────────────────────────────────────┐
 │                   Hammer Automation                            │
@@ -67,17 +65,14 @@ Coq Backend Process
 
 ## Tool Surface
 
-Hammer automation is exposed as a mode of the existing `submit_tactic` tool, not as a new top-level MCP tool. This respects the tool count budget (RH-P0-6, Story 1.3).
-
-When `submit_tactic` receives a tactic string that is a recognized hammer keyword (`hammer`, `sauto`, `qauto`, or `auto_hammer`), the MCP Server delegates to the Hammer Automation component instead of passing the tactic string directly to the Proof Session Manager. The `options` parameter on `submit_tactic` carries hammer-specific configuration.
+Hammer automation is exposed as a dedicated `try_automation` MCP tool, separate from `suggest_tactics`. This reflects their different roles: `suggest_tactics` is a pedagogical tool that provides explained hints to help students learn proof strategy, while `try_automation` is a solver that attempts to close goals without human involvement.
 
 ```typescript
-// No new tool — extended behavior of submit_tactic
-submit_tactic(
+try_automation(
   session_id: string,
-  tactic: string,              // "hammer" | "sauto" | "qauto" | "auto_hammer"
+  strategy?: string,           // "hammer" | "sauto" | "qauto" | "auto_hammer" (default)
   options?: {
-    timeout?: number,          // seconds; default: 30 for hammer, 10 for sauto/qauto, 60 for auto_hammer
+    timeout?: number,          // seconds; default: 30 for hammer, 10 for sauto/qauto, 90 for auto_hammer
     hints?: string[],          // lemma names to pass as hints
     sauto_depth?: number,      // search depth for sauto (P1)
     qauto_depth?: number,      // search depth for qauto (P1)
@@ -86,7 +81,7 @@ submit_tactic(
 ) → HammerResult
 ```
 
-When `tactic` is not a recognized hammer keyword, `submit_tactic` behaves exactly as before — the tactic string is forwarded to the Proof Session Manager unchanged. The MCP Server performs the keyword check; the Proof Session Manager is unaware of hammer automation.
+For backward compatibility, `submit_tactic` still recognizes hammer keywords and delegates to the same engine. New commands and prompts should use `try_automation` for solver invocations and `submit_tactic` for regular tactic submission.
 
 ## Data Structures
 
@@ -268,9 +263,9 @@ Running `hammer`, `sauto`, and `qauto` in parallel would require three concurren
 
 Hammer tactics depend on the proof context — the current goal, hypotheses, and imported libraries. The Proof Session Manager already maintains this context through a live Coq backend process. Submitting hammer tactics through the existing session guarantees they see the correct context. A standalone invocation would need to reconstruct the proof state from scratch (re-importing the file, replaying to the current position), which is slow and fragile.
 
-### Why expose as a mode of submit_tactic rather than a new tool
+### Why a dedicated try_automation tool rather than a mode of submit_tactic
 
-The PRD explicitly requires this (RH-P0-6): Poule already exposes 22 MCP tools, and LLM accuracy degrades past 20-30 tools. Adding even one new tool pushes toward that ceiling. From Claude's perspective, invoking hammer is just submitting a tactic — the only difference is the tactic string and the optional configuration. The `submit_tactic` tool already accepts arbitrary tactic strings; hammer keywords are a natural extension.
+The original design embedded hammer as a mode of `submit_tactic` to minimize the tool count (RH-P0-6). However, `suggest_tactics` and hammer automation serve fundamentally different purposes: `suggest_tactics` provides pedagogical hints that Claude explains to help students learn proof strategy, while hammer automation is a solver that closes goals without human involvement. Conflating hints and solutions in the same tool — or routing both through `submit_tactic` — obscures this distinction in prompts and commands. A dedicated `try_automation` tool makes the intent explicit: use `suggest_tactics` for teaching moments, `try_automation` for routine subgoals. The tool count increase (one additional tool) is justified by the clearer separation of concerns. For backward compatibility, `submit_tactic` still recognizes hammer keywords.
 
 ### Why a shared timeout budget for multi-strategy mode
 

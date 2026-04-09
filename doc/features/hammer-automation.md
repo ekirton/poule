@@ -12,7 +12,9 @@ What's missing is the ability for Claude to say "let me try automated proving" a
 
 ## Solution
 
-Hammer automation lets Claude invoke CoqHammer tactics within an active proof session through the existing proof interaction tools. When the user asks Claude to try proving a goal automatically, Claude submits hammer tactics to Coq and reports the outcome: either a verified proof script ready to insert, or a clear explanation of why automation did not succeed and what to try next.
+Hammer automation lets Claude invoke CoqHammer tactics within an active proof session through the `try_automation` tool. This is a solver — it attempts to close goals without human involvement. It is distinct from `suggest_tactics`, which provides explained tactic hints for teaching proof strategy.
+
+When the user asks Claude to try proving a goal automatically, or when routine subgoals arise during guided proof construction, Claude calls `try_automation` and reports the outcome: either a verified proof script ready to insert, or a clear explanation of why automation did not succeed and what to try next.
 
 ### Multi-Strategy Fallback
 
@@ -51,9 +53,9 @@ Hammer automation does not provide:
 
 ## Design Rationale
 
-### Why expose as a mode of existing tools
+### Why a dedicated try_automation tool
 
-Poule already exposes 22 MCP tools, and research indicates that LLM accuracy degrades past 20-30 tools. Adding new top-level tools for each hammer variant would push past this budget. Exposing hammer automation as a mode of the existing proof interaction tools keeps the tool count stable while expanding capability. From Claude's perspective, invoking hammer is just another way to use a tool it already knows.
+Tactic suggestion and automated solving serve fundamentally different purposes. `suggest_tactics` is a teaching tool: it provides hints with rationale so Claude can explain *why* a tactic makes sense and link to textbook material. `try_automation` is a solver: it attempts to close a goal without human involvement. Mixing hints and solutions in one tool obscures the pedagogical intent. A student asking "what should I try?" should get explained suggestions, not "hammer solved it in 2 seconds." The one-tool increase is justified by the clearer separation of concerns — Claude can choose the right tool based on whether the moment calls for teaching or efficiency.
 
 ### Why try multiple strategies
 
@@ -89,14 +91,15 @@ CoqHammer is the most mature automated proving tool in the Coq ecosystem. It com
 
 **Traces to:** RH-P0-2
 
-### Expose as Mode of Existing Tools
+### Expose as Dedicated try_automation Tool
 
 **Priority:** P0
 **Stability:** Stable
 
-- GIVEN the MCP server's tool list WHEN it is inspected THEN hammer automation does not appear as a new top-level tool
-- GIVEN an existing proof interaction tool WHEN it is invoked with a hammer mode or tactic parameter THEN it executes the hammer tactic and returns the result
-- GIVEN a user who has never used CoqHammer WHEN they ask Claude to "try to prove this automatically" THEN Claude can invoke hammer through the existing tool interface without additional setup
+- GIVEN the MCP server's tool list WHEN it is inspected THEN `try_automation` appears as a top-level tool separate from `suggest_tactics`
+- GIVEN the `try_automation` tool WHEN it is invoked with a strategy parameter THEN it executes the corresponding solver tactic and returns the result
+- GIVEN a user who has never used CoqHammer WHEN they ask Claude to "try to prove this automatically" THEN Claude calls `try_automation` without additional setup
+- GIVEN `submit_tactic` WHEN it is invoked with a hammer keyword THEN it still delegates to the hammer engine for backward compatibility
 
 **Traces to:** RH-P0-6
 

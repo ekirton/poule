@@ -1,6 +1,6 @@
 # Tactic Suggestion
 
-Quality and behavior of the `suggest_tactics` MCP tool — both rule-based fallback and neural-enhanced predictions.
+Quality and behavior of the `suggest_tactics` MCP tool — a pedagogical tool that provides explained tactic hints to help students learn proof strategy. Distinct from `try_automation`, which is a solver.
 
 **Rule-based fallback (no model files present):**
 ```
@@ -39,4 +39,17 @@ Suggest tactics for a goal of the form n + 0 = n — does it still work if the n
 **Prediction latency:**
 ```
 Open a proof session on add_comm in examples/arith.v, apply intros, and suggest tactics. How long did the suggestion take?
+```
+
+**Pedagogical use case — explained suggestions with textbook references:**
+```
+Open a proof session on add_comm in examples/arith.v, apply intros, and suggest tactics. For each suggestion, explain why that tactic makes sense for this proof state and link to relevant textbook material.
+```
+```
+I'm a student learning Coq. Open a proof session on app_nil_r in examples/lists.v, suggest tactics, and teach me which one to try and why.
+```
+
+**Distinguish from try_automation — suggest_tactics is for learning, not solving:**
+```
+Open a proof session on add_comm in examples/arith.v. First use suggest_tactics to get hints with explanations. Then use try_automation to see if automation can solve it directly. Compare the two experiences.
 ```

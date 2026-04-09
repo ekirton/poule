@@ -6,13 +6,15 @@ Lineage: Depends on Training Data Extraction for `(proof_state, tactic_text)` pa
 
 ## 1. Business Goals
 
-The extraction pipeline captures ~134,000 proof records from six Coq libraries, containing ~105,000 unique goal states each paired with the tactic that was applied to it. This data is currently discarded in the compact output format. Meanwhile, the original plan to train a neural premise retrieval model failed: only ~3,500 of those 134,000 records produce non-empty premise lists — a 97% attrition rate caused by Coq's kernel not tracking per-tactic premise usage. With ~3,500 pairs (1,600x smaller than LeanHammer's dataset), the premise retrieval model cannot achieve competitive quality.
+Students learning Coq need a thought partner who can suggest what tactic to try next and explain *why* it makes sense — linking the suggestion to proof strategy, mathematical intuition, and reference material so the student builds real understanding. Claude fills this role, but needs a signal for which tactics are most promising given the current proof state.
 
-Tactic prediction reuses the same extraction infrastructure with 30x more training data. Given a proof state (goal type + hypotheses), a tactic family classifier predicts which tactic the user should apply next (e.g., `apply`, `rewrite`, `induction`, `auto`). This is directly useful as proof assistance: "you should try `induction n`" is more actionable than "these lemmas might be relevant." The existing rule-based `suggest_tactics` MCP tool provides structural goal classification but cannot learn from proof patterns across libraries.
+The neural tactic predictor provides that signal. Trained on ~105,000 (proof_state, tactic) pairs from six Coq libraries, it predicts which tactic family is most likely to make progress. Claude uses these predictions as a starting point to explain the reasoning behind each suggestion, linking to relevant textbook material and proof techniques as needed.
 
-**What this initiative does:** Train a tactic family classifier on ~105K (proof_state, tactic_text) pairs extracted from Coq libraries, and integrate neural predictions into the existing `suggest_tactics` MCP tool. The classifier predicts which tactic family to apply; argument selection (e.g., which lemma to `apply`) remains a separate concern addressed by the existing rule-based system and premise retrieval in future work.
+This is not an automated prover. CoqHammer, Tactician, and similar solvers are mature products that aim to close proof goals without human involvement. The goal here is the opposite: keep the student in the loop, help them build intuition about proof structure, and accelerate learning by offering contextual suggestions with explanations. The model provides the "what to try next" signal; Claude provides the "why" and the pedagogical scaffolding.
 
-**What this initiative does not do:** It does not add a neural retrieval channel to Semantic Lemma Search. It does not predict full tactic text with arguments (that is a future generation task). It does not replace the rule-based `suggest_tactics` — it enhances it with learned predictions that rank above rule-based fallbacks.
+**What this initiative does:** Train a tactic family classifier on ~105K (proof_state, tactic_text) pairs extracted from Coq libraries, and integrate neural predictions into the existing `suggest_tactics` MCP tool. Claude uses these ranked suggestions to offer explained, contextual proof guidance. The classifier predicts which tactic family to apply; argument selection (e.g., which lemma to `apply`) remains a separate concern addressed by the existing rule-based system and premise retrieval in future work.
+
+**What this initiative does not do:** It does not compete with automated provers. It does not add a neural retrieval channel to Semantic Lemma Search. It does not predict full tactic text with arguments (that is a future generation task). It does not replace the rule-based `suggest_tactics` — it enhances it with learned predictions that rank above rule-based fallbacks.
 
 **Success metrics:**
 - Top-1 tactic family accuracy >= 40% on a held-out test set of Coq proof steps
@@ -26,8 +28,8 @@ Tactic prediction reuses the same extraction infrastructure with 30x more traini
 
 | Segment | Needs | Priority |
 |---------|-------|----------|
-| Coq developers using Claude Code | Tactic suggestions during interactive proof development, reducing trial-and-error | Primary |
-| Proof Search & Automation | Tactic candidate generation during automated proof search, improving search success rate | Primary |
+| Students learning Coq with Claude as tutor | Explained tactic suggestions that build proof intuition — "try induction here because the goal quantifies over a recursive type" — with links to textbook material | Primary |
+| Coq developers using Claude Code | Contextual tactic suggestions during interactive proof development, reducing trial-and-error | Primary |
 | AI researchers | A tactic prediction baseline for Coq that can be evaluated, compared, and extended | Secondary |
 
 ---

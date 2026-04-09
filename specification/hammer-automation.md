@@ -30,9 +30,9 @@ Define the hammer automation component that assembles CoqHammer tactic strings f
 
 ### 4.1 Tool Surface
 
-Hammer automation is a mode of the existing `submit_tactic` tool, not a separate MCP tool.
+Hammer automation is exposed as a dedicated `try_automation` MCP tool, separate from `suggest_tactics`. `suggest_tactics` provides pedagogical hints (neural + rule-based) for teaching proof strategy; `try_automation` is a solver that attempts to close goals without human involvement.
 
-When `submit_tactic` receives a tactic string matching a recognized hammer keyword (`hammer`, `sauto`, `qauto`, or `auto_hammer`), the MCP Server shall delegate to the Hammer Automation component. When the tactic string does not match a recognized hammer keyword, the MCP Server shall forward it to the Proof Session Manager unchanged.
+The `try_automation` tool accepts a `strategy` parameter (`hammer`, `sauto`, `qauto`, or `auto_hammer`; default `auto_hammer`) and an `options` parameter for solver-specific configuration. For backward compatibility, `submit_tactic` still recognizes hammer keywords and delegates to the same engine.
 
 ### 4.2 Single-Strategy Execution
 
@@ -211,9 +211,9 @@ When the interpreter cannot classify an error message into a specific reason, th
 
 | Property | Value |
 |----------|-------|
-| Trigger | `submit_tactic` called with `tactic` matching a hammer keyword |
-| Keyword detection | MCP Server checks `tactic` against `{"hammer", "sauto", "qauto", "auto_hammer"}`; Proof Session Manager is unaware of hammer automation |
-| Options passthrough | `options` parameter on `submit_tactic` carries hammer-specific configuration |
+| Trigger | `try_automation` called with a `strategy` parameter (or `submit_tactic` called with `tactic` matching a hammer keyword for backward compatibility) |
+| Keyword detection | MCP Server checks `strategy` (or `tactic`) against `{"hammer", "sauto", "qauto", "auto_hammer"}`; Proof Session Manager is unaware of hammer automation |
+| Options passthrough | `options` parameter on `try_automation` (or `submit_tactic`) carries hammer-specific configuration |
 
 ## 7. Error Specification
 
@@ -256,7 +256,7 @@ When the interpreter cannot classify an error message into a specific reason, th
 ### Successful single strategy -- hammer with hints
 
 ```
-submit_tactic(session_id="abc123", tactic="hammer", options={hints: ["Nat.add_0_r"]})
+try_automation(session_id="abc123", strategy="hammer", options={hints: ["Nat.add_0_r"]})
 
 Proof state: n : nat |- n + 0 = n
 
@@ -281,7 +281,7 @@ Result:
 ### Failed single strategy -- timeout
 
 ```
-submit_tactic(session_id="def456", tactic="hammer", options={timeout: 10})
+try_automation(session_id="def456", strategy="hammer", options={timeout: 10})
 
 Proof state: |- complex_theorem
 
@@ -315,7 +315,7 @@ Result:
 ### Multi-strategy fallback -- hammer fails, sauto succeeds
 
 ```
-submit_tactic(session_id="ghi789", tactic="auto_hammer", options={timeout: 60})
+try_automation(session_id="ghi789", strategy="auto_hammer", options={timeout: 60})
 
 Proof state: H : a = b |- b = a
 

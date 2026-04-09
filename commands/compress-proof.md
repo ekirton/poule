@@ -24,17 +24,16 @@ Before attempting compression, understand what the proof does:
 
 Run these strategies independently. A failure in one does not affect the others. For each candidate that appears to work, you must verify it before recording it.
 
-### Strategy 1: Hammer tactics
+### Strategy 1: Automated solvers
 
-Try replacing the entire proof (or targeted sub-proof) with each of these, one at a time:
+Try replacing the entire proof (or targeted sub-proof) with automation:
 
-1. `hammer.`
-2. `sauto.`
-3. `qauto.`
+1. Call `try_automation` with `strategy="auto_hammer"` — this tries hammer, sauto, and qauto in sequence.
+2. If `auto_hammer` fails, try each strategy individually with `try_automation` using `strategy="hammer"`, `strategy="sauto"`, and `strategy="qauto"` with longer timeouts.
 
-For each, call `submit_tactic` with the tactic. If it closes the goal (check with `observe_proof_state`), record it as a candidate. Then call `step_backward` to restore the goal state before trying the next one.
+If automation closes the goal (check with `observe_proof_state`), record it as a candidate. Then call `step_backward` to restore the goal state.
 
-If the full proof has multiple goals (e.g., from `split`), try hammer on individual subgoals too — navigate to each subgoal and attempt hammer there.
+If the full proof has multiple goals (e.g., from `split`), try automation on individual subgoals too — navigate to each subgoal and attempt there.
 
 ### Strategy 2: Direct lemma search
 

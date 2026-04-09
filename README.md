@@ -38,9 +38,13 @@ Six Coq libraries ship with prebuilt indexes: **stdlib**, **MathComp**, **std++*
 - **By symbol** — find lemmas that mention specific definitions or types
 - **By relationship** — navigate what a lemma uses, what uses it, and what else lives in the same module or typeclass
 
-### Tactic Suggestion
+### Tactic Suggestion (`suggest_tactics`)
 
-A lightweight neural network offers fast tactic suggestions via the `suggest_tactics` tool. The idea is that you have a conversation with Claude about how to develop your proof as a learning exercise — Claude functions as a thinking partner, providing suggestions, explanations, and textbook references. For stronger automated solving, use CoqHammer (`hammer`, `sauto`, `qauto`), which is also available through the same proof interaction tools.
+A lightweight neural network offers fast tactic suggestions via the `suggest_tactics` tool. Claude uses these as a starting point to explain *why* each tactic makes sense for the current proof state, linking to relevant textbook material and proof techniques. This is a teaching tool — Claude functions as a thinking partner, helping students build proof intuition through explained suggestions.
+
+### Automated Solving (`try_automation`)
+
+For routine subgoals or when you want to close a goal without manual proof construction, `try_automation` invokes CoqHammer solvers (`hammer`, `sauto`, `qauto`, or `auto_hammer` which tries all three). This is a solver tool — it attempts to finish the goal without human involvement. Use `suggest_tactics` for learning; use `try_automation` for efficiency.
 
 ### Proof Interaction
 
