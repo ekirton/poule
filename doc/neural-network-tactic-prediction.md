@@ -687,9 +687,56 @@ Head-class undersampling collapsed the val–test gap (35pp → 6pp) and raised 
 
 1. **Head-class undersampling.** ✅ **Done.** Cap dominant families at 2,000 examples each (95K → 40K training). Collapsed the val–test gap from 35pp to 6pp, raised test_acc@5 from 45.2% to 57.0%, doubled non-zero families from 10 to 21.
 
-2. **Balanced softmax** (Ren et al., 2020). Subtract `log(class_frequency)` from logits before softmax at inference time. No retraining needed — can be applied to the current checkpoint as a post-hoc correction. Zero cost, worth trying immediately to boost rare-family recall.
+2. **Balanced softmax** (Ren et al., 2020). ❌ **Evaluated 2026-04-08 and rejected.** The correction subtracts `alpha × log(class_frequency)` from logits before softmax at inference time, adjusting for training distribution bias without retraining. Tested on the undersampled hierarchical model (6 layers, cap=2000, test_acc@5=57.0% baseline) using the ONNX predictor on a 2,000-sample test subset.
 
-3. **Decoupled training** (Kang et al., 2020). Freeze the trained 6-layer encoder, reinitialize the 8 category heads, retrain them with class-balanced sampling. The literature's strongest finding is that imbalance harms the classifier, not the feature extractor. This is cheap since it skips encoder training. The poor category acc@1 (35%) suggests the category heads specifically need rebalancing.
+   **Alpha sweep results (2,000 test samples):**
+
+   | Alpha | Acc@1 | Acc@5 |
+   |-------|-------|-------|
+   | 0.0 (baseline) | 10.7% | 41.1% |
+   | 0.1 | 0.3% | 0.7% |
+   | 0.2 | 0.0% | 0.2% |
+   | 0.3 | 0.0% | 0.2% |
+   | 0.5 | 0.0% | 0.2% |
+   | 0.7 | 0.0% | 0.2% |
+   | 1.0 | 0.0% | 0.2% |
+
+   Note: the baseline (alpha=0.0) shows lower accuracy than the full 15,497-sample evaluation (17.2%/57.0%) because this 2,000-sample prefix is not representative of the full test distribution. The relative comparison across alpha values is valid.
+
+   **Full evaluation at alpha=1.0** (15,497 test samples, 2,574 seconds): acc@1=0.0%, acc@5=0.0%. All 54 families with training data showed zero recall — predictions shifted entirely to untrained families. Even after fixing zero-count family handling (setting log_prior=0 for families with no training examples), per-category accuracy collapsed: only hypothesis_mgmt (33.2%), arithmetic (41.6%), and contradiction (42.1%) had non-zero category accuracy, but individual family recall remained zero across all families.
+
+   **Why it fails:**
+   - **Test distribution mirrors training.** Balanced softmax assumes the test distribution differs from training (ideally uniform). In Coq proof data, `rewrite` and `apply` dominate both train and test — correcting for the training prior fights the real data distribution.
+   - **Narrow logit range.** The hierarchical product-rule model produces logits spanning ~2 nats, while the log-prior correction spans ~5 nats (from log(51/66265) to log(7621/66265)). Even alpha=0.1 produces a ~0.5 nat correction that overwhelms the model's discriminative signal.
+   - **Problem is in the encoder, not the softmax.** With 44 dead families, the encoder hasn't learned distinctive features for rare tactics. Post-hoc logit adjustment cannot fix unlearned representations — this is exactly the finding from Kang et al. (2020) that motivates decoupled training (Next Step 3).
+
+3. **Decoupled training** (Kang et al., 2020). ❌ **Evaluated 2026-04-09 — did not improve over baseline.** Froze the 6-layer encoder, reinitialized the 8 category heads + within-category heads, and retrained with category-balanced sampling using the MLX backend on Apple Silicon.
+
+   **Run 1 (family-balanced sampling, lr=1e-3):** val_acc@5 peaked at 0.4512 (epoch 3), test_acc@5=34.3%, 28 families with non-zero recall (vs. 21 baseline). Category accuracy was not measured but test_acc@5 dropped 23pp from baseline. The per-family balanced sampling over-represented rare categories (arithmetic: 864 total examples, contradiction: 146) while diluting well-represented categories. `apply` recall collapsed from 13.3% to 0.06%.
+
+   **Run 2 (category-balanced sampling, lr=1e-4):** val_acc@5 peaked at 0.5606 (epoch 5), test results:
+
+   | Metric | Baseline (stage 1) | Decoupled (stage 2) | Change |
+   |--------|-------------------|---------------------|--------|
+   | test_acc@1 | 17.2% | 11.5% | -5.7pp |
+   | test_acc@5 | 57.0% | 46.0% | -11.0pp |
+   | Category acc@1 | 34.9% | 29.1% | -5.8pp |
+   | Non-zero recall families | 21 | 29 | +8 |
+
+   **Per-category accuracy@1 (stage 2):**
+
+   | Category | Acc@1 | vs. Baseline |
+   |----------|-------|-------------|
+   | hypothesis_mgmt | 57.4% | +40.7pp |
+   | introduction | 25.7% | -12.4pp |
+   | automation | 18.0% | -5.5pp |
+   | arithmetic | 15.0% | +15.0pp |
+   | contradiction | 15.8% | +15.8pp |
+   | rewriting | 13.7% | +7.8pp |
+   | elimination | 12.1% | +8.8pp |
+   | ssreflect | 1.8% | -5.7pp (from 7.8%) |
+
+   **Why it underperforms:** Decoupled training improved 5 of 8 categories but overall accuracy dropped because (1) the reinitialized heads start from scratch, discarding the jointly-trained signal, and (2) the encoder representations were learned jointly with the original heads — the frozen encoder produces features optimized for the *original* decision boundaries, not the reinitialized ones. Kang et al.'s results were on vision tasks with much larger datasets (ImageNet: 1.2M images vs. our 40K proof states) where encoder features are more general.
 
 4. **Minority oversampling.** Undersampling capped the majority but did nothing to boost families with <50 examples (arithmetic, contradiction, many elimination tactics). SMOTE-like augmentation or simple oversampling of rare families could help fill the gap.
 
@@ -697,4 +744,4 @@ Head-class undersampling collapsed the val–test gap (35pp → 6pp) and raised 
 
 6. **Focal loss** (Lin et al., 2017). Down-weight well-classified examples via `(1-p)^gamma` modulation. This focuses training on hard/rare examples without requiring changes to the sampling strategy. May complement undersampling.
 
-Try (2) first as a free inference-time fix. Then (3) for category head rebalancing. If dead families persist, (4) + (5) address the long tail directly.
+Try (5) next — LDAM + deferred re-balancing operates during end-to-end training rather than post-hoc, addressing the decision boundary directly without discarding the jointly-learned signal.
