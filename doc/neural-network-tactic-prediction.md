@@ -4,7 +4,7 @@
 
 **Hierarchical model trained and deployed.** Replaces the abandoned neural premise selection approach (see [neural-network-search.md](neural-network-search.md) for why that failed). The extraction pipeline captures 140,358 (proof_state, tactic) steps across 136,936 unique states — 40x more training data than was available for premise retrieval.
 
-The flat 96-class classifier achieved 46.6% test_acc@5 with 86 of 96 classes showing zero recall. A hierarchical decomposition (8 categories × ~65 within-category tactics) replaced the flat approach and achieved **80.2% val_acc@5** — a 10.5pp improvement. See [hierarchical results](#hierarchical-model-results) below. Test set evaluation is pending.
+The flat 96-class classifier achieved 46.6% test_acc@5 with 86 of 96 classes showing zero recall. A hierarchical decomposition (8 categories × ~65 within-category tactics) replaced the flat approach and achieved **80.2% val_acc@5** — a 10.5pp improvement. With head-class undersampling (cap 2,000 per family, reducing training from 95K to 40K), the model achieves **57.0% test_acc@5** — a 12pp improvement over the non-undersampled hierarchical model (45.2%) and a 10pp improvement over the flat baseline (46.6%). See [undersampled results](#undersampled-model-results) below.
 
 ## Problem
 
@@ -533,12 +533,144 @@ The hierarchical model improved validation accuracy by 10.5pp (70.2% → 80.2%),
 2. **SSReflect normalization**: SSReflect-heavy libraries (MathComp) use `move`, `congr`, `suff`, `wlog` — all dead in both models. These tactics may need separate normalization or a dedicated SSReflect category.
 3. **Class collapse**: 55 of 65 tactic families have zero test recall. The within-category heads are as imbalanced as the original flat taxonomy — the hierarchy only balanced the *top-level* categories.
 
+## Undersampled Model Results
+
+### Motivation
+
+The hierarchical model improved validation accuracy to 80.2% but the val–test gap widened to 35pp (test_acc@5=45.2%), with 55 of 65 families dead. The dominant families (rewrite, intros, apply, auto, destruct, split) each had 5,000–27,000 training examples, drowning out minority families. Head-class undersampling caps each family at 2,000 examples, reducing the training set from 95,497 to 40,247 samples while preserving all rare-family data intact.
+
+### HPO results
+
+15-trial Optuna study on 40,247 undersampled training samples (10,521 validation, 15,497 test), 8-category hierarchical architecture with factored embeddings (D=128). Fixed parameters: `max_seq_length` (256), `embedding_dim` (128), `max_epochs` (10), `early_stopping_patience` (2).
+
+| Trial | Layers | LR | Batch | alpha | label_smooth | sam_rho | lambda | val_acc@5 | Status |
+|-------|--------|----|-------|-------|-------------|---------|--------|-----------|--------|
+| 0 | 6 | 1.6e-5 | 16 | 0.60 | 0.142 | 0.011 | 2.80 | 0.5484 | Complete |
+| 1 | 4 | 2.3e-6 | 32 | 0.61 | 0.028 | 0.024 | 0.70 | 0.4196 | Complete |
+| **2** | **6** | **1.1e-5** | **64** | **0.07** | **0.190** | **0.180** | **1.93** | **0.6207** | **Best** |
+| 3 | 8 | 7.6e-6 | 32 | 0.26 | 0.133 | 0.025 | 0.99 | 0.5609 | Complete |
+| 4 | 8 | — | 16 | — | — | — | — | — | Pruned |
+| 5 | 8 | 5.2e-6 | 32 | 0.07 | 0.197 | 0.101 | 0.47 | 0.6018 | Complete |
+| 6 | — | — | — | — | — | — | — | — | Pruned |
+| 7 | — | — | — | — | — | — | — | — | Pruned |
+| 8 | — | — | — | — | — | — | — | — | Pruned |
+| 9 | — | — | — | — | — | — | — | — | Pruned |
+| 10 | 6 | 5.3e-6 | 64 | 0.33 | 0.182 | 0.062 | 2.82 | 0.5742 | Complete |
+| 11 | — | — | — | — | — | — | — | — | Pruned |
+| 12 | — | — | — | — | — | — | — | — | Pruned |
+| 13 | 6 | 8.9e-6 | 64 | 0.14 | 0.161 | 0.122 | 0.49 | 0.5756 | Complete |
+| 14 | — | — | — | — | — | — | — | — | Pruned |
+
+HPO time: 16.4 hours on a 32 GiB Mac Mini (Apple M2 Pro, 10 CPU cores, MLX Metal GPU). 7 complete, 8 pruned.
+
+**Key findings from HPO:**
+- **Undersampling halved HPO time** (16.4h vs. 35.6h) due to the smaller training set.
+- **Best trial shifted to 6 layers, batch_size=64.** With the undersampled data, the deeper 8-layer model no longer dominates — 6 layers with larger batches performed best.
+- **High SAM rho is critical.** The best trial used sam_rho=0.180, the highest in the search range. SAM's flat-minima seeking appears especially valuable when training data is reduced by undersampling.
+- **Low alpha still best** (0.07). Aggressive class rebalancing remains harmful — the model performs best with near-uniform class weights even after undersampling.
+- **Higher label smoothing** (0.190 vs. 0.039 in the non-undersampled best). The smaller dataset benefits from stronger regularization.
+
+### Final model results
+
+The final model was trained with trial 2's best hyperparameters (6 layers, lr=1.07e-5, batch_size=64, alpha=0.065, label_smoothing=0.190, sam_rho=0.180, lambda_within=1.93, embedding_dim=128) for 20 epochs (patience=3). Early stopping triggered at epoch 9 (best: epoch 6).
+
+**Training curve:**
+
+| Epoch | Loss | val_acc@5 |
+|-------|------|-----------|
+| 1 | 4.689 | 0.5512 |
+| 2 | 4.090 | 0.6005 |
+| 3 | 3.831 | 0.6006 |
+| 4 | 3.604 | 0.6046 |
+| 5 | 3.392 | 0.6225 |
+| 6 | 3.182 | **0.6261** |
+| 7 | 2.962 | 0.5926 |
+| 8 | 2.755 | 0.5873 |
+| 9 | 2.557 | 0.5862 |
+
+Final training time: 1.85 hours (111 minutes).
+
+**Test set evaluation** (run 2026-04-08, 15,497 test samples):
+
+| Metric | Value |
+|--------|-------|
+| Category Accuracy@1 | 34.9% |
+| Accuracy@1 | 17.2% |
+| Accuracy@5 | 57.0% |
+| Eval latency | 315 s (CPU, full test set) |
+
+**Per-category accuracy (test set):**
+
+| Category | Accuracy@1 |
+|----------|-----------|
+| introduction | 38.1% |
+| ssreflect | 38.5% |
+| automation | 23.5% |
+| hypothesis_mgmt | 16.7% |
+| rewriting | 5.9% |
+| elimination | 3.3% |
+| arithmetic | 0.0% |
+| contradiction | 0.0% |
+
+**Per-family highlights (test set):**
+
+| Family | Precision | Recall | Notes |
+|--------|-----------|--------|-------|
+| have | 0.214 | 0.612 | Highest recall — strong signal |
+| intros | 0.369 | 0.537 | Best balance of precision + recall |
+| move | 0.236 | 0.401 | SSReflect family no longer dead |
+| replace | 0.054 | 0.395 | High recall, low precision |
+| exact | 0.081 | 0.298 | High recall |
+| auto | 0.110 | 0.292 | Moderate |
+| apply | 0.310 | 0.133 | High precision, moderate recall |
+| exists | 0.070 | 0.205 | Improved from flat model |
+| reflexivity | 0.111 | 0.129 | Newly non-zero |
+| set | 0.047 | 0.129 | Newly non-zero |
+| split | 0.438 | 0.118 | Highest precision |
+| *44 others* | 0.000 | 0.000 | Dead classes |
+
+**Success criteria:**
+
+| Criterion | Result | Status |
+|-----------|--------|--------|
+| test_acc@5 > 46.6% | 57.0% | **PASS** |
+| Dead families < 20 | 44 of 65 | **FAIL** |
+| Category acc@1 > 80% | 34.9% | **FAIL** |
+
+### Comparison across all three models
+
+| Metric | Flat (96 cls) | Hierarchical | Undersampled |
+|--------|--------------|--------------|--------------|
+| Train samples | 114K | 95K | 40K |
+| Best HPO val_acc@5 | 0.697 | 0.802 | 0.621 |
+| Test acc@1 | 14.0% | 12.9% | 17.2% |
+| Test acc@5 | 46.6% | 45.2% | **57.0%** |
+| Val–test gap (acc@5) | 24pp | 35pp | **6pp** |
+| Dead classes | 86/96 | 55/65 | 44/65 |
+| Non-zero recall families | 10 | 10 | 21 |
+| Parameters | ~150M | ~77M | ~77M |
+| HPO time | 51.9h | 35.6h | 16.4h |
+| Training time | 7.6h | 2.7h | 1.85h |
+
+### Analysis: undersampling impact
+
+**What undersampling fixed:**
+1. **Val–test gap collapsed.** The gap shrank from 35pp to 6pp — the model now generalizes across libraries instead of memorizing training-set patterns. This was the primary problem.
+2. **Test acc@5 improved by 12pp** (45.2% → 57.0%). The model makes better top-5 predictions on unseen data, which is the metric that matters for suggest_tactics.
+3. **Double the non-zero families** (10 → 21). Undersampling forced the model to learn `have`, `move`, `replace`, `exact`, `exists`, `reflexivity`, `set`, and others that were previously dead.
+4. **acc@1 improved** (12.9% → 17.2%). The model's top prediction is correct more often.
+
+**What undersampling did not fix:**
+1. **44 dead families remain.** Most rare families (arithmetic, contradiction, many elimination tactics) still have zero recall. These families have <50 training examples — undersampling the majority doesn't increase their representation.
+2. **Category acc@1 is only 34.9%.** The 8-category top-level classifier is not discriminating well — the model often predicts the right tactic within the wrong category.
+3. **Precision is low across the board.** The model predicts more diverse tactics (good for recall) but at the cost of precision. This is acceptable for suggest_tactics (users see a ranked list) but not for automated proof search.
+
 ## Implementation Scope
 
 | Phase | Effort | Status |
 |-------|--------|--------|
 | Phase 1: Emit tactic records | Small | **Done** — 140K steps extracted, validated |
-| Phase 2: Tactic classifier | Medium | **Done** — hierarchical model trained (8-layer CodeBERT, 8 categories × ~65 tactics, factored embeddings), val_acc@5=80.2%, test_acc@5=45.2%. See [Hierarchical Model Results](#hierarchical-model-results) |
+| Phase 2: Tactic classifier | Medium | **Done** — hierarchical model with undersampling (6-layer CodeBERT, 8 categories × ~65 tactics, factored embeddings, cap=2000), test_acc@5=57.0%. See [Undersampled Model Results](#undersampled-model-results) |
 | Phase 3: Argument retrieval | Medium | **Done** — ArgumentRetriever routes tactic families to retrieval strategies (type_match for apply/exact, equality filter for rewrite); integrated into suggest_tactics |
 | Phase 4: MCP integration | Small | **Done** — TacticPredictor (ONNX), ArgumentRetriever, and suggest_tactics wired end-to-end; pipeline context connected at server startup; quantize CLI available |
 
@@ -551,16 +683,18 @@ The hierarchical model improved validation accuracy by 10.5pp (70.2% → 80.2%),
 
 ## Next Steps
 
-The 35pp val–test gap is the primary problem. The model learns useful representations (80% val) but does not generalize across libraries. The following interventions are ordered by expected impact; see [class-imbalance.md](background/class-imbalance.md) for literature backing.
+Head-class undersampling collapsed the val–test gap (35pp → 6pp) and raised test_acc@5 to 57%, but 44 of 65 families remain dead and category acc@1 is only 35%. The remaining interventions target the long tail; see [class-imbalance.md](background/class-imbalance.md) for literature backing.
 
-1. **Head-class undersampling.** ✅ **Implemented.** Cap the 6 dominant families (rewrite, intros, apply, auto, destruct, split) at ~2,000 examples each, reducing training from ~114K to ~40–50K samples. These families have enormous redundancy — thousands of near-identical proof states. Forcing more tail-class exposure per epoch is the simplest change to try. Pass `undersample_cap=2000` in hyperparams to enable (`undersample_seed` defaults to 42 for reproducibility). Only the training split is affected; validation and test splits remain unchanged. Class weights are recomputed from the undersampled distribution.
+1. **Head-class undersampling.** ✅ **Done.** Cap dominant families at 2,000 examples each (95K → 40K training). Collapsed the val–test gap from 35pp to 6pp, raised test_acc@5 from 45.2% to 57.0%, doubled non-zero families from 10 to 21.
 
-2. **Decoupled training** (Kang et al., 2020). Freeze the trained 8-layer encoder, reinitialize the 8 category heads, retrain them with class-balanced sampling. The literature's strongest finding is that imbalance harms the classifier, not the feature extractor. This is cheap since it skips encoder training.
+2. **Balanced softmax** (Ren et al., 2020). Subtract `log(class_frequency)` from logits before softmax at inference time. No retraining needed — can be applied to the current checkpoint as a post-hoc correction. Zero cost, worth trying immediately to boost rare-family recall.
 
-3. **Balanced softmax** (Ren et al., 2020). Subtract `log(class_frequency)` from logits before softmax at inference time. No retraining needed — can be applied to the current checkpoint as a post-hoc correction. Zero cost, worth trying immediately.
+3. **Decoupled training** (Kang et al., 2020). Freeze the trained 6-layer encoder, reinitialize the 8 category heads, retrain them with class-balanced sampling. The literature's strongest finding is that imbalance harms the classifier, not the feature extractor. This is cheap since it skips encoder training. The poor category acc@1 (35%) suggests the category heads specifically need rebalancing.
 
-4. **Library-level data split.** The current 80/10/10 split is file-level, but files within the same library share stylistic conventions. Splitting by library (e.g., MathComp+Coquelicot for training, stdpp for validation, stdlib for test) would reveal whether the gap is a distribution-shift problem rather than a class-imbalance problem.
+4. **Minority oversampling.** Undersampling capped the majority but did nothing to boost families with <50 examples (arithmetic, contradiction, many elimination tactics). SMOTE-like augmentation or simple oversampling of rare families could help fill the gap.
 
 5. **LDAM + deferred re-balancing** (Cao et al., 2019). Class-dependent margin offsets (`C / n_c^{1/4}`) penalize misclassification of rare tactics more heavily. Combined with deferred re-balancing (normal sampling for 80% of training, balanced for the final 20%), this is a strong literature baseline.
 
-Try (1) + (2) together first: undersample head classes, then do decoupled classifier retraining. Add (3) at inference as a free bonus. If the gap persists, (4) will determine whether the root cause is distribution shift rather than imbalance.
+6. **Focal loss** (Lin et al., 2017). Down-weight well-classified examples via `(1-p)^gamma` modulation. This focuses training on hard/rare examples without requiring changes to the sampling strategy. May complement undersampling.
+
+Try (2) first as a free inference-time fix. Then (3) for category head rebalancing. If dead families persist, (4) + (5) address the long tail directly.
