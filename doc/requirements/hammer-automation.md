@@ -8,7 +8,7 @@ CoqHammer is one of the most effective automation tools in the Coq ecosystem —
 
 This initiative wraps CoqHammer's tactics as an MCP-accessible mode so that Claude can invoke automated proving on behalf of the user during active proof sessions. The wrapper is thin: it submits hammer/sauto/qauto tactics through the existing Proof Interaction Protocol and interprets the results. When the tactic succeeds, Claude reports the verified proof script. When it fails, Claude explains why and suggests alternatives. The user experience shifts from "read the CoqHammer docs, install the plugin, figure out the right tactic" to "try to prove this automatically."
 
-Because Poule already exposes 22 MCP tools and research suggests accuracy degrades past 20–30 tools, this initiative should expose hammer automation as a mode of existing proof interaction tools rather than adding new top-level tools. This preserves the tool count budget while expanding capability.
+Hammer automation is exposed as a dedicated `try_automation` tool, separate from the pedagogical `suggest_tactics` tool. `suggest_tactics` provides explained tactic hints for teaching — Claude uses neural predictions to explain *why* a tactic makes sense and links to textbook material. `try_automation` is a solver — it attempts to close goals without human involvement. Keeping these separate ensures the student-facing and automation-facing tools have clearly different intents.
 
 **Success metrics:**
 - ≥ 80% of hammer invocations through MCP return a result (success or structured failure) within the configured timeout
@@ -60,7 +60,7 @@ Cross-references:
 | RH-P0-3 | When a hammer tactic succeeds, return the verified proof script that closes the goal |
 | RH-P0-4 | When a hammer tactic fails, return structured diagnostic information including the failure reason and any partial progress |
 | RH-P0-5 | Support a configurable timeout for hammer invocations, with a sensible default |
-| RH-P0-6 | Expose hammer automation as a mode of existing proof interaction tools rather than as new top-level MCP tools, to respect the tool count budget |
+| RH-P0-6 | Expose hammer automation as a dedicated `try_automation` tool, separate from the pedagogical `suggest_tactics` tool, so that solver and teaching intents are clearly distinguished |
 
 ### P1 — Should Have
 

@@ -33,24 +33,32 @@ These tools let Claude work with a live Coq process — opening proof sessions, 
 | `observe_proof_state` | — | See the current goals and hypotheses |
 | `get_proof_state_at_step` | `step` (integer, 0-based) | Peek at the proof state at a specific step without changing position |
 | `extract_proof_trace` | — | Get the full history of tactics and proof states from start to current position |
-| `submit_tactic` | `tactic` (string), optional `options` (object) | Apply a tactic and see the resulting proof state. Also supports CoqHammer keywords — see **Hammer Automation** below |
+| `submit_tactic` | `tactic` (string), optional `options` (object) | Apply a tactic and see the resulting proof state |
 | `step_backward` | — | Undo the last tactic |
 | `step_forward` | — | Replay the next tactic from the original proof script |
 | `submit_tactic_batch` | `tactics` (string[]) | Apply a sequence of tactics. Stops on the first failure and reports what went wrong |
 | `get_proof_premises` | — | List all lemmas and definitions used across the entire proof |
 | `get_step_premises` | `step` (integer, 1-based) | List lemmas and definitions used by a specific proof step |
-| `suggest_tactics` | `session_id` (string) | Get ranked tactic suggestions for the current goal |
+| `suggest_tactics` | `session_id` (string) | Get ranked tactic hints for the current goal — neural and rule-based suggestions with rationale. Use these to explain to the student *why* a tactic makes sense. This is a teaching tool, not a solver. |
+| `try_automation` | `session_id` (string), optional `strategy`, `options` | Attempt to close the current goal automatically using CoqHammer solvers. This is a solver — use for routine subgoals. See **Automated Solving** below. |
 
-## Hammer Automation
+## Tactic Suggestion vs. Automated Solving
 
-[CoqHammer](https://github.com/lukaszcz/coqhammer) is a powerful automation tool that can often close proof goals automatically. You access it through `submit_tactic` by using one of these special keywords as the tactic:
+Poule separates two kinds of proof assistance:
 
-| Keyword | What it does | Default timeout |
-|---------|-------------|-----------------|
+- **`suggest_tactics`** — a teaching tool. Returns ranked tactic hints that Claude uses to explain *why* each tactic makes sense, linking to textbook material and proof techniques. The student stays in the loop and builds proof intuition.
+- **`try_automation`** — a solver. Runs CoqHammer to try to close the goal without human involvement. Use for routine subgoals where the pedagogical value is low.
+
+## Automated Solving (`try_automation`)
+
+[CoqHammer](https://github.com/lukaszcz/coqhammer) is a powerful automation tool that can often close proof goals automatically. You access it through the `try_automation` tool:
+
+| Strategy | What it does | Default timeout |
+|----------|-------------|-----------------|
 | `hammer` | Sends the goal to external provers (E, Vampire, Z3, CVC4) and reconstructs a Coq proof from the result | 30 s |
 | `sauto` | Searches for a proof using Coq's own automation with extended depth | 10 s |
 | `qauto` | A faster, shallower variant of `sauto` | 5 s |
-| `auto_hammer` | Tries all three strategies in sequence, stopping as soon as one succeeds | 90 s total |
+| `auto_hammer` (default) | Tries all three strategies in sequence, stopping as soon as one succeeds | 90 s total |
 
 **Options** — pass these in the `options` parameter to customize behavior:
 
@@ -62,7 +70,7 @@ These tools let Claude work with a live Coq process — opening proof sessions, 
 | `qauto_depth` | integer | How deep `qauto` should search |
 | `unfold` | string[] | Definitions to unfold before searching (for `sauto`/`qauto`) |
 
-When a hammer tactic succeeds, the response includes the `proof_script` (the tactic that worked) and which `strategy_used`. When it fails, `diagnostics` explains what each strategy tried and why it didn't work — useful for understanding what to try next.
+When automation succeeds, the response includes the `proof_script` (the tactic that worked) and which `strategy_used`. When it fails, `diagnostics` explains what each strategy tried and why it didn't work — useful for understanding what to try next.
 
 ## Vernacular Query Tools
 

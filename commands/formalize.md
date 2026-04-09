@@ -58,24 +58,24 @@ Once the user accepts the formal statement, open a proof session with `open_proo
 
 Before manual proof construction, attempt automated strategies on the initial goal:
 
-1. Try `submit_tactic` with `hammer` (CoqHammer).
-2. If hammer fails or times out, try `sauto` or `qauto` with reasonable parameters.
-3. If automation solves the goal, present the completed proof and skip to Step 6.
+1. Call `try_automation` with `strategy="auto_hammer"` (tries hammer, sauto, and qauto in sequence).
+2. If automation solves the goal, present the completed proof and skip to Step 6.
 
 ### Guide manual proof construction
 
 If automation does not fully solve the goal:
 
 1. Use `observe_proof_state` to see the current goals.
-2. Suggest a tactic, explaining what it does and why it is appropriate given the mathematical content.
-3. Apply it with `submit_tactic`.
-4. If the tactic fails, explain the failure in mathematical terms (not just the raw Coq error). Suggest alternatives.
-5. If a step leads to a dead end, use `step_backward` to backtrack.
-6. For subgoals that are routine (arithmetic, simple rewriting, decidability), try automation (`auto`, `lia`, `omega`, `intuition`, `sauto`) to discharge them without burdening the user.
-7. Use `get_proof_premises` or `get_step_premises` to identify which lemmas are being used, and inform the user.
-8. Continue until all goals are closed.
+2. Call `suggest_tactics` to get neural and rule-based tactic suggestions for the current proof state.
+3. For the top suggestion(s), explain to the user *why* this tactic makes sense given the proof state — what proof strategy it serves, how it transforms the goal, and what mathematical principle is at work. Use `/textbook` to find and link relevant Software Foundations passages or Coq reference manual sections when the concept may be new to the student.
+4. Apply the chosen tactic with `submit_tactic`.
+5. If the tactic fails, explain the failure in mathematical terms (not just the raw Coq error). Suggest alternatives from the `suggest_tactics` results.
+6. If a step leads to a dead end, use `step_backward` to backtrack.
+7. For subgoals that are routine (arithmetic, simple rewriting, decidability), try automation (`auto`, `lia`, `omega`, `intuition`, `sauto`) to discharge them without burdening the user.
+8. Use `get_proof_premises` or `get_step_premises` to identify which lemmas are being used, and inform the user.
+9. Continue until all goals are closed.
 
-Throughout the proof, explain your reasoning in terms of the user's original mathematical description. The user should understand the proof strategy, not just the tactic sequence.
+Throughout the proof, explain your reasoning in terms of the user's original mathematical description. The user should understand the proof strategy, not just the tactic sequence. The goal is to build the student's proof intuition — each tactic suggestion is a teaching moment.
 
 ### If the proof gets stuck
 

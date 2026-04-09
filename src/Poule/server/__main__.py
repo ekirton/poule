@@ -31,6 +31,7 @@ from Poule.server.handlers import (
     handle_get_proof_state_at_step,
     handle_extract_proof_trace,
     handle_submit_tactic,
+    handle_try_automation,
     handle_step_backward,
     handle_step_forward,
     handle_submit_tactic_batch,
@@ -295,8 +296,7 @@ TOOL_DEFINITIONS = [
         name="submit_tactic",
         description=(
             "Submit a tactic and receive the resulting proof state. "
-            "For automated proving, use tactic='hammer', 'sauto', 'qauto', "
-            "or 'auto_hammer' (tries all three in sequence)."
+            "For automated proving, prefer the try_automation tool instead."
         ),
         inputSchema={
             "type": "object",
@@ -842,7 +842,12 @@ TOOL_DEFINITIONS = [
     ),
     Tool(
         name="suggest_tactics",
-        description="Get contextual tactic suggestions for the current proof state. Includes neural predictions when a trained model is available, merged with rule-based suggestions.",
+        description=(
+            "Get contextual tactic suggestions for the current proof state. "
+            "Returns neural and rule-based hints ranked by relevance — use these "
+            "to explain to the student why each tactic makes sense and link to "
+            "textbook material. This is a teaching tool, not a solver."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -850,6 +855,51 @@ TOOL_DEFINITIONS = [
                 "limit": {
                     "type": "integer",
                     "description": "Max suggestions to return (default: 10)",
+                },
+            },
+            "required": ["session_id"],
+        },
+    ),
+    Tool(
+        name="try_automation",
+        description=(
+            "Attempt to close the current goal automatically using CoqHammer "
+            "solvers (hammer, sauto, qauto, or auto_hammer which tries all three). "
+            "This is a solver tool — it tries to finish the goal without human "
+            "involvement. Use for routine subgoals; use suggest_tactics for "
+            "teaching moments."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID"},
+                "strategy": {
+                    "type": "string",
+                    "description": (
+                        "Solver strategy: 'hammer', 'sauto', 'qauto', "
+                        "or 'auto_hammer' (tries all three). Default: 'auto_hammer'."
+                    ),
+                    "enum": ["hammer", "sauto", "qauto", "auto_hammer"],
+                    "default": "auto_hammer",
+                },
+                "options": {
+                    "type": "object",
+                    "description": "Solver options: timeout (seconds), hints (lemma names), sauto_depth, qauto_depth, unfold.",
+                    "properties": {
+                        "timeout": {"type": "number", "description": "Timeout in seconds"},
+                        "hints": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Lemma names to pass as hints",
+                        },
+                        "sauto_depth": {"type": "integer", "description": "Search depth for sauto"},
+                        "qauto_depth": {"type": "integer", "description": "Search depth for qauto"},
+                        "unfold": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Definitions to unfold (sauto/qauto)",
+                        },
+                    },
                 },
             },
             "required": ["session_id"],
@@ -1394,6 +1444,13 @@ def _dispatch_tool(ctx: _ServerContext, name: str, arguments: dict):
             ctx,
             session_id=arguments.get("session_id", ""),
             limit=arguments.get("limit"),
+        )
+    elif name == "try_automation":
+        return handle_try_automation(
+            ctx,
+            session_id=arguments.get("session_id", ""),
+            strategy=arguments.get("strategy", "auto_hammer"),
+            options=arguments.get("options"),
         )
     elif name == "inspect_hint_db":
         return handle_inspect_hint_db(

@@ -6,6 +6,12 @@
 
 The flat 96-class classifier achieved 46.6% test_acc@5 with 86 of 96 classes showing zero recall. A hierarchical decomposition (8 categories × ~65 within-category tactics) replaced the flat approach and achieved **80.2% val_acc@5** — a 10.5pp improvement. With head-class undersampling (cap 2,000 per family, reducing training from 95K to 40K), the model achieves **57.0% test_acc@5** — a 12pp improvement over the non-undersampled hierarchical model (45.2%) and a 10pp improvement over the flat baseline (46.6%). See [undersampled results](#undersampled-model-results) below.
 
+## Motivation
+
+The neural tactic predictor exists to support Claude as a thought partner and tutor for students learning Coq. When a student is stuck mid-proof, the model suggests which tactic families are most likely to make progress — and Claude uses those predictions as a starting point to explain *why* each tactic makes sense in the current proof state, linking to relevant textbook material and proof techniques as needed.
+
+This is not an automated prover. Systems like CoqHammer, Tactician, and other solvers are mature products that aim to close proof goals without human involvement. The goal here is the opposite: keep the student in the loop, help them build intuition about proof structure, and accelerate learning by offering contextual suggestions with explanations. The model provides the "what to try next" signal; Claude provides the "why" and the pedagogical scaffolding.
+
 ## Problem
 
 The original neural training pipeline trained a bi-encoder to retrieve *premises* given a proof state. This required (proof_state, premises_used) pairs, but Coq's kernel does not track which lemmas each tactic consults. The result: the extraction pipeline captures proof records but only ~3,500 produce non-empty premise lists usable as training pairs — a 97% attrition rate.

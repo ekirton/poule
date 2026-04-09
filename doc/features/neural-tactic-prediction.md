@@ -6,18 +6,22 @@ A learned tactic family classifier that predicts which tactic to apply given a p
 
 ## Problem
 
+When a student is stuck mid-proof, they need more than a list of possible tactics — they need to understand *why* a particular tactic makes sense given the current proof state. Claude serves as a thought partner and tutor, but needs a signal for which tactics are most promising so it can explain the reasoning and link to relevant textbook material.
+
 The existing `suggest_tactics` MCP tool uses rule-based goal classification: it inspects the goal type for structural patterns (conjunction, disjunction, equality, existential, etc.) and suggests tactics accordingly. This approach is limited to a fixed set of goal shapes and cannot learn from proof patterns across libraries. It misses tactic choices that depend on hypothesis context, mathematical domain conventions, or library-specific idioms.
 
-Meanwhile, the extraction pipeline captures ~105,000 (proof_state, tactic) pairs from six Coq libraries — each goal state paired with the tactic that was actually applied. This data represents the collective proof strategies of library authors across diverse mathematical domains. A classifier trained on this data can learn which tactic families are appropriate for proof states that no rule-based system can enumerate.
+Meanwhile, the extraction pipeline captures ~105,000 (proof_state, tactic) pairs from six Coq libraries — each goal state paired with the tactic that was actually applied. This data represents the collective proof strategies of library authors across diverse mathematical domains.
 
 ## Solution
 
-A hierarchical encoder-based classifier predicts the tactic family from a serialized proof state. The model uses a CodeBERT encoder with a closed-vocabulary tokenizer and a two-level classification hierarchy: 8 tactic categories (introduction, elimination, rewriting, hypothesis management, automation, arithmetic, contradiction, ssreflect) with ~65 within-category tactic families. Training uses hierarchical class-weighted cross-entropy at both category and within-category levels. Inference produces P(tactic) = P(category) × P(tactic|category) via the product rule.
+A hierarchical encoder-based classifier predicts the tactic family from a serialized proof state. Claude uses these predictions as a starting point to explain each suggestion: why the tactic is appropriate for this proof state, what proof strategy it serves, and where the student can learn more (e.g., the relevant Software Foundations chapter or Coq reference manual section).
+
+The model uses a CodeBERT encoder with a closed-vocabulary tokenizer and a two-level classification hierarchy: 8 tactic categories (introduction, elimination, rewriting, hypothesis management, automation, arithmetic, contradiction, ssreflect) with ~65 within-category tactic families. Training uses hierarchical class-weighted cross-entropy at both category and within-category levels. Inference produces P(tactic) = P(category) × P(tactic|category) via the product rule.
 
 Neural predictions are integrated into the existing `suggest_tactics` MCP tool:
 - When a trained model is available, neural predictions are returned alongside rule-based suggestions, ranked by model confidence
 - When no model is available, the tool operates with rule-based suggestions only — no errors, no degradation
-- The MCP interface is unchanged; Claude sees richer suggestions when a model is present
+- The MCP interface is unchanged; Claude sees richer suggestions when a model is present and uses them to offer explained, pedagogical guidance
 
 ## What This Is Not
 

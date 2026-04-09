@@ -345,6 +345,59 @@ async def handle_submit_tactic(
     return _format_success(state)
 
 
+async def handle_try_automation(
+    ctx: Any, *, session_id: str, strategy: str = "auto_hammer",
+    options: dict | None = None,
+) -> dict:
+    """Handle try_automation tool call.
+
+    Runs CoqHammer or related solvers (hammer, sauto, qauto, auto_hammer)
+    to attempt to close the current goal automatically. This is the "solver"
+    tool — it tries to finish the goal without human involvement.
+    """
+    try:
+        session_id = validate_string(session_id)
+    except (ValueError, Exception):
+        return format_error(PARSE_ERROR, "session_id must be a non-empty string.")
+
+    if strategy not in _HAMMER_KEYWORDS:
+        return format_error(
+            PARSE_ERROR,
+            f"Unknown strategy '{strategy}'. "
+            f"Must be one of: {', '.join(sorted(_HAMMER_KEYWORDS))}.",
+        )
+
+    opts = options or {}
+    timeout = opts.get("timeout", _HAMMER_DEFAULT_TIMEOUTS[strategy])
+    hints = opts.get("hints", [])
+    engine_opts = {k: v for k, v in opts.items() if k not in ("timeout", "hints")}
+
+    try:
+        if strategy == "auto_hammer":
+            result = await execute_auto_hammer(
+                session_manager=ctx.session_manager,
+                session_id=session_id,
+                timeout=timeout,
+                hints=hints,
+                options=engine_opts,
+            )
+        else:
+            result = await execute_hammer(
+                session_manager=ctx.session_manager,
+                session_id=session_id,
+                strategy=strategy,
+                timeout=timeout,
+                hints=hints,
+                options=engine_opts,
+            )
+    except HammerParseError as exc:
+        return format_error(PARSE_ERROR, str(exc))
+    except SessionError as exc:
+        return _session_error_response(exc)
+
+    return _format_success(result)
+
+
 async def handle_step_backward(ctx: Any, *, session_id: str) -> dict:
     """Handle step_backward tool call."""
     try:
