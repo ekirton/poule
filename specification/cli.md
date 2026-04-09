@@ -333,8 +333,8 @@ Vocabulary built.
 ### 4.11 train(traces, vocabulary, db, output, hyperparams)
 
 - REQUIRES: `traces` is a non-empty list of paths to JSON Lines extraction output files. `vocabulary` points to a valid vocabulary JSON file. `db` points to a valid index database. `output` is a writable path.
-- ENSURES: Validates training data. Loads dataset with train/val/test split. Trains a bi-encoder model using the closed vocabulary. Saves the best checkpoint to `output`. Prints training progress (epoch, loss, validation R@32) to stderr. Exits with code 0.
-- Delegates to: `TrainingDataValidator.validate`, `TrainingDataLoader.load`, `BiEncoderTrainer.train`.
+- ENSURES: Validates training data. Loads dataset with train/val/test split. Trains a hierarchical tactic classifier using the closed vocabulary. Saves the best checkpoint to `output`. Prints training progress (epoch, loss, validation acc@5) to stderr. Exits with code 0.
+- Delegates to: `TrainingDataValidator.validate`, `TrainingDataLoader.load`, `TacticClassifierTrainer.train`.
 
 | Option | Type | Default | Validation |
 |--------|------|---------|------------|
@@ -353,26 +353,11 @@ Vocabulary built.
 > **When** `train small.jsonl --vocabulary coq-vocabulary.json --db index.db --output model.pt` is run
 > **Then** `"Insufficient training data"` is printed to stderr and exit code is 1
 
-### 4.12 fine-tune(checkpoint, data, db, output, hyperparams)
-
-- REQUIRES: `checkpoint` points to a valid training checkpoint. `data` points to a JSON Lines extraction file. `db` points to a valid index database. `output` is a writable path.
-- ENSURES: Fine-tunes the pre-trained model on the project data. Saves the fine-tuned checkpoint. Exits with code 0.
-- Delegates to: `BiEncoderTrainer.fine_tune`.
-
-| Option | Type | Default | Validation |
-|--------|------|---------|------------|
-| `--checkpoint` | path | required | File must exist |
-| `--data` | path | required | File must exist |
-| `--db` | path | required | File must exist |
-| `--output` | path | required | Parent directory must exist |
-| `--epochs` | integer | 10 | Must be positive |
-| `--lr` | float | 5e-6 | Must be positive |
-
-### 4.13 evaluate(checkpoint, test_data, db)
+### 4.12 evaluate(checkpoint, test_data, db)
 
 - REQUIRES: `checkpoint` points to a valid model checkpoint. `test_data` points to a JSON Lines extraction file. `db` points to a valid index database.
-- ENSURES: Prints an EvaluationReport (R@1, R@10, R@32, MRR, test count, mean latency) to stdout. Prints a warning to stderr if R@32 < 50%. Exits with code 0.
-- Delegates to: `RetrievalEvaluator.evaluate`.
+- ENSURES: Prints an EvaluationReport (accuracy@1, accuracy@5, category accuracy@1, per-family precision/recall) to stdout. Exits with code 0.
+- Delegates to: `TacticEvaluator.evaluate`.
 
 | Option | Type | Default | Validation |
 |--------|------|---------|------------|
@@ -385,20 +370,7 @@ Vocabulary built.
 > **When** `evaluate --checkpoint model.pt --test-data test.jsonl --db index.db` is run
 > **Then** retrieval metrics are printed to stdout and exit code is 0
 
-### 4.14 compare(checkpoint, test_data, db)
-
-- REQUIRES: Same as `evaluate`.
-- ENSURES: Prints a ComparisonReport (neural R@32, symbolic R@32, union R@32, relative improvement, overlap, exclusivity) to stdout. Prints a warning to stderr if relative improvement < 15%. Exits with code 0.
-- Delegates to: `RetrievalEvaluator.compare`.
-
-| Option | Type | Default | Validation |
-|--------|------|---------|------------|
-| `--checkpoint` | path | required | File must exist |
-| `--test-data` | path | required | File must exist |
-| `--db` | path | required | File must exist |
-| `--json` | flag | false | — |
-
-### 4.15 quantize(checkpoint, output)
+### 4.13 quantize(checkpoint, output)
 
 - REQUIRES: `checkpoint` points to a valid PyTorch training checkpoint. `output` is a writable path.
 - ENSURES: Exports to ONNX, applies INT8 quantization, validates quality (max cosine distance < 0.02), writes ONNX model to `output`. Exits with code 0.
@@ -417,7 +389,7 @@ Vocabulary built.
 > **When** `quantize --checkpoint model.pt --output model.onnx` is run
 > **Then** the max cosine distance is printed to stderr and exit code is 1
 
-### 4.16 validate-training-data(traces)
+### 4.14 validate-training-data(traces)
 
 - REQUIRES: `traces` is a non-empty list of paths to JSON Lines extraction output files.
 - ENSURES: Prints a ValidationReport to stdout. Exits with code 0 (even when warnings are present — validation warnings are informational, not failures).
@@ -427,7 +399,7 @@ Vocabulary built.
 > **When** `validate-training-data stdlib.jsonl mathcomp.jsonl` is run
 > **Then** a validation report is printed to stdout and exit code is 0
 
-### 4.17 download-index(output, include_model, model_dir, force)
+### 4.15 download-index(output, include_model, model_dir, force)
 
 Specified in [prebuilt-distribution.md](prebuilt-distribution.md) §4.7. This subcommand downloads prebuilt index databases and model checkpoints from GitHub Releases. It does not require `--db` or any index state checks — it produces the index rather than consuming it.
 
@@ -682,6 +654,6 @@ Top premises:
 - For proof replay: use `SessionManager` from `poule.session.manager`, `serialize_proof_trace` and `serialize_premise_annotation` from `poule.serialization.serialize`.
 - For extraction: use `ExtractionCampaignOrchestrator` from `poule.extraction.campaign`, `extract_dependency_graph` from `poule.extraction.dependency_graph`, `generate_quality_report` from `poule.extraction.reporting`.
 - Use `asyncio.run()` to bridge Click's sync execution model to the async `SessionManager` API.
-- For neural subcommands: use `VocabularyBuilder`, `TrainingDataValidator`, `TrainingDataLoader`, `BiEncoderTrainer`, `RetrievalEvaluator`, `ModelQuantizer` from `poule.neural.training`.
+- For neural subcommands: use `VocabularyBuilder`, `TrainingDataValidator`, `TrainingDataLoader`, `TacticClassifierTrainer`, `TacticEvaluator`, `ModelQuantizer` from `poule.neural.training`.
 - Neural subcommands do not require `PipelineContext` (except `compare`, which needs the symbolic retrieval pipeline for comparison).
 - Package location: `src/poule/cli/`.
