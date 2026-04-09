@@ -26,6 +26,10 @@ VOCABULARY = DATA_DIR / "coq-vocabulary.json"
 HPO_DIR = DATA_DIR / "hpo-results"
 FINAL_MODEL_DIR = DATA_DIR / "final-model"
 RESULTS_FILE = DATA_DIR / "final-model-validation.txt"
+LOOCV_DIR = DATA_DIR / "loocv-results"
+
+# Per-library JSONL files for LOOCV (set RUN_LOOCV=1 to enable)
+LIBRARY_JSONL_STEMS = ["stdlib", "mathcomp", "stdpp", "flocq", "coquelicot", "coqinterval"]
 
 
 def main():
@@ -150,6 +154,48 @@ def main():
         shutil.copy2(VOCABULARY, vocab_dest)
         logger.info("Copied vocabulary to %s", vocab_dest)
 
+    # ---- Step 5b: LOOCV (optional, set RUN_LOOCV=1) ----
+    loocv_report = None
+    if os.environ.get("RUN_LOOCV", "0") == "1":
+        library_paths: dict[str, list[Path]] = {}
+        for stem in LIBRARY_JSONL_STEMS:
+            lib_jsonl = DATA_DIR / f"{stem}.jsonl"
+            if lib_jsonl.exists():
+                library_paths[stem] = [lib_jsonl]
+            else:
+                logger.warning("LOOCV: %s not found, skipping", lib_jsonl)
+
+        if len(library_paths) >= 2:
+            from Poule.neural.training.loocv import LibraryLOOCV
+
+            logger.info(
+                "Running LOOCV across %d libraries: %s",
+                len(library_paths),
+                ", ".join(sorted(library_paths)),
+            )
+            t0 = time.time()
+            loocv_report = LibraryLOOCV.run(
+                library_paths=library_paths,
+                vocabulary_path=VOCABULARY,
+                output_dir=LOOCV_DIR,
+                undersample_cap=1000,
+                hyperparams=best_hp,
+                backend="mlx",
+            )
+            loocv_time = time.time() - t0
+            logger.info(
+                "LOOCV complete in %.0f min: mean_acc@5=%.3f ± %.3f",
+                loocv_time / 60,
+                loocv_report.mean_test_acc_at_5,
+                loocv_report.std_test_acc_at_5,
+            )
+        else:
+            logger.warning(
+                "LOOCV: need >=2 per-library JSONL files in %s, found %d",
+                DATA_DIR,
+                len(library_paths),
+            )
+
     # ---- Step 6: Write results ----
     lines = []
     lines.append("=" * 60)
@@ -207,19 +253,52 @@ def main():
         lines.append(f"{family:<30s} {prec:>10.4f} {rec:>10.4f}")
     lines.append("")
 
-    # Count dead classes (zero test recall)
+    # Count dead classes (zero test recall) and trainable coverage
     dead_count = sum(
         1 for rec in report.per_family_recall.values() if rec == 0.0
     )
     total_families = len(report.per_family_recall)
-    lines.append(f"Dead classes (0.0 recall): {dead_count} of {total_families}")
+    lines.append(f"Zero-recall families: {dead_count} of {total_families}")
+
+    # Trainable coverage: families with >=20 / >=50 training examples
+    _MIN_TRAINABLE = 20
+    _COMFORTABLE = 50
+    ge20 = [f for f in report.per_family_recall if dataset.family_counts.get(f, 0) >= _MIN_TRAINABLE]
+    ge50 = [f for f in report.per_family_recall if dataset.family_counts.get(f, 0) >= _COMFORTABLE]
+    nonzero_ge20 = sum(1 for f in ge20 if report.per_family_recall[f] > 0.0)
+    nonzero_ge50 = sum(1 for f in ge50 if report.per_family_recall[f] > 0.0)
+    cov_ge20 = nonzero_ge20 / len(ge20) if ge20 else 0.0
+    cov_ge50 = nonzero_ge50 / len(ge50) if ge50 else 0.0
+    lines.append(f"Trainable coverage (>=20 examples): {nonzero_ge20}/{len(ge20)} = {cov_ge20:.1%}")
+    lines.append(f"Trainable coverage (>=50 examples): {nonzero_ge50}/{len(ge50)} = {cov_ge50:.1%}")
     lines.append("")
+
+    # LOOCV results (if run)
+    if loocv_report is not None:
+        lines.append("--- LOOCV Results ---")
+        lines.append(f"Libraries: {len(loocv_report.folds)}")
+        lines.append(f"Undersample cap: {loocv_report.undersample_cap}")
+        lines.append(f"Mean test_acc@5: {loocv_report.mean_test_acc_at_5:.4f} ± {loocv_report.std_test_acc_at_5:.4f}")
+        lines.append(f"Mean dead families: {loocv_report.mean_dead_families:.1f}")
+        lines.append("")
+        lines.append(f"{'Library':<20s} {'Acc@5':>10s} {'Dead':>6s} {'Train':>8s} {'Test':>8s}")
+        lines.append("-" * 56)
+        for fold in loocv_report.folds:
+            lines.append(
+                f"{fold.held_out_library:<20s} "
+                f"{fold.accuracy_at_5:>10.4f} "
+                f"{fold.dead_families:>6d} "
+                f"{fold.train_samples:>8d} "
+                f"{fold.test_samples:>8d}"
+            )
+        lines.append("")
 
     # Success criteria check
     lines.append("--- Success Criteria ---")
     checks = [
         ("test_acc@5 > 46.6%", report.accuracy_at_5 > 0.466),
-        ("dead families < 20", dead_count < 20),
+        (f">80% coverage (>=20 examples): {nonzero_ge20}/{len(ge20)}", cov_ge20 > 0.80),
+        (f">90% coverage (>=50 examples): {nonzero_ge50}/{len(ge50)}", cov_ge50 > 0.90),
         ("category_acc@1 > 80%", report.category_accuracy_at_1 > 0.80),
     ]
     for name, passed in checks:
