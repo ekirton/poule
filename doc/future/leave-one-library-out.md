@@ -20,7 +20,7 @@ The core question: **is library-level leakage the bottleneck, or are the dead fa
 
 ### Design
 
-**Leave-one-library-out cross-validation (LOOCV)** across the 6 known libraries: stdlib, mathcomp, stdpp, flocq, coquelicot, coqinterval.
+**Leave-one-library-out cross-validation (LOOCV)** across the 5 vanilla-Coq libraries: stdlib, stdpp, flocq, coquelicot, coqinterval. MathComp is excluded: 71% of its steps use SSReflect-dialect tactics (`by` alone is 42.5%), making it a different tactic language rather than a transferable signal.
 
 For each fold:
 1. Hold out one library entirely as the test set
@@ -35,14 +35,14 @@ For each fold:
 
 ### Expected libraries and approximate sizes
 
-| Library | Est. steps | Notes |
-|---------|-----------|-------|
-| stdlib | ~80K | Largest; core Coq tactics |
-| mathcomp | ~20K | SSReflect-heavy |
-| stdpp | ~15K | Iris-style automation |
-| flocq | ~5K | Floating-point arithmetic |
-| coquelicot | ~5K | Real analysis |
-| coqinterval | ~3K | Interval arithmetic |
+| Library | Est. steps | Vanilla % | Notes |
+|---------|-----------|-----------|-------|
+| stdlib | ~44K | 99% | Largest; core Coq tactics |
+| flocq | ~24K | 99% | Floating-point arithmetic |
+| coquelicot | ~23K | 78% | Real analysis; moderate SSReflect usage |
+| stdpp | ~9K | 86% | Iris-style automation |
+| coqinterval | ~8K | 88% | Interval arithmetic |
+| ~~mathcomp~~ | ~~~33K~~ | ~~29%~~ | **Excluded** — 71% SSReflect dialect |
 
 Holding out stdlib is the easiest test (most training data remains). Holding out a small library like coqinterval is the hardest test (model must generalize from very different libraries to a specialized domain).
 
@@ -52,7 +52,7 @@ Holding out stdlib is the easiest test (most training data remains). Holding out
 |---------|---------|-----------|
 | Mean test_acc@5 ≈ 57% (current baseline) | Library leakage is not the bottleneck; dead families are a class-imbalance/data-scarcity problem | Focus on data augmentation, focal loss, or more training data for rare families |
 | Mean test_acc@5 drops to 30-40% | Library conventions dominate; model learns library style, not proof structure | Adopt a library-aware split (Option D hybrid) for the production model; consider library-adversarial training |
-| High variance across folds (e.g., 60% on stdlib-held-out, 20% on mathcomp-held-out) | Some libraries transfer well, others don't | Investigate which libraries are "hard" and why; may need library-specific heads or adapters |
+| High variance across folds (e.g., 60% on stdlib-held-out, 30% on coqinterval-held-out) | Some libraries transfer well, others don't | Investigate which libraries are "hard" and why; may need library-specific heads or adapters |
 | Dead families decrease when their library is in training | Confirms the dead families are library-specific, not universally rare | Library-balanced training data is the fix |
 
 ## Implementation

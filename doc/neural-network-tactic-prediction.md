@@ -677,11 +677,13 @@ Note: families with fewer than 20 training examples are too sparse to be trainab
 
 ### Motivation
 
-The current file-level split (`position % 10`) scatters files from the same library across train/val/test. Libraries share tactic conventions — MathComp uses SSReflect idioms, stdlib favors `destruct`/`induction`, stdpp has its own automation patterns. The 6pp val-test gap after undersampling measures within-library generalization, not cross-library transfer. LOOCV holds out each library in turn to diagnose whether library-level data leakage is the bottleneck.
+The current file-level split (`position % 10`) scatters files from the same library across train/val/test. Libraries share tactic conventions — stdlib favors `destruct`/`induction`, stdpp has its own automation patterns. The 6pp val-test gap after undersampling measures within-library generalization, not cross-library transfer. LOOCV holds out each library in turn to diagnose whether library-level data leakage is the bottleneck.
+
+MathComp is excluded: 71% of its steps use SSReflect-dialect tactics (`by` alone is 42.5%), making it a different tactic language. The remaining 5 vanilla-Coq libraries (stdlib, stdpp, flocq, coquelicot, coqinterval) are 78–99% vanilla Coq.
 
 ### Design
 
-6-fold cross-validation across stdlib, mathcomp, stdpp, flocq, coquelicot, coqinterval. Each fold holds out one library entirely as the test set, trains on the remaining libraries (with cap=1000 undersampling), and evaluates. Best HPO hyperparameters from the undersampled experiment are used (6 layers, lr=1.07e-5, batch_size=64, alpha=0.065, label_smoothing=0.190, sam_rho=0.180, lambda_within=1.93, embedding_dim=128).
+5-fold cross-validation across stdlib, stdpp, flocq, coquelicot, coqinterval (vanilla-Coq libraries only; MathComp excluded). Each fold holds out one library entirely as the test set, trains on the remaining libraries (with cap=1000 undersampling), and evaluates. Best HPO hyperparameters from the undersampled experiment are used (6 layers, lr=1.07e-5, batch_size=64, alpha=0.065, label_smoothing=0.190, sam_rho=0.180, lambda_within=1.93, embedding_dim=128).
 
 ### Results
 

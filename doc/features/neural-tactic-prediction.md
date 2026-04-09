@@ -107,6 +107,36 @@ The six most frequent tactic families (rewrite, intros, apply, auto, destruct, s
 - GIVEN a tactic family below the cap WHEN undersampling is enabled THEN all its examples are retained
 - GIVEN undersampling with a fixed seed WHEN run twice on the same data THEN the same samples are selected
 
+### Leave-One-Library-Out Cross-Validation
+
+**Priority:** P1
+**Stability:** Draft
+**Traces to:** R6-P1-9
+
+The current file-level split scatters files from the same library across train, validation, and test splits. Libraries share tactic conventions — stdlib favors `destruct`/`induction`, stdpp has its own automation patterns. The model may learn library identity rather than generalizable proof-state-to-tactic mappings. Leave-one-library-out cross-validation (LOOCV) diagnoses whether library-level data leakage is the bottleneck for generalization.
+
+MathComp is excluded from LOOCV: 71% of its steps use SSReflect-dialect tactics, making it a different tactic language rather than a transferable signal. The remaining 5 vanilla-Coq libraries (stdlib, stdpp, flocq, coquelicot, coqinterval) are 78–99% vanilla Coq.
+
+For each of the 5 vanilla-Coq libraries, one fold holds out that library entirely as the test set and trains on the remaining libraries. Validation comes from the training-distribution libraries (not the held-out library) so early stopping gets a proper signal. The test set is a completely unseen library — true cross-library generalization.
+
+**What this provides:**
+- A CLI command to run LOOCV across all libraries, producing a per-fold and aggregate report
+- Library-level data loading that assigns files to train/val/test by library membership rather than file position
+- Per-fold metrics: accuracy@1, accuracy@5, category accuracy@1, dead family count, per-family recall
+- Aggregate metrics: mean and standard deviation of test accuracy@5 across folds, per-library accuracy comparison
+
+**What this does not provide:**
+- A new production training split (LOOCV is a diagnostic experiment, not a replacement for the file-level split)
+- Changes to the existing training pipeline or model architecture
+- Automatic selection of the best split strategy based on LOOCV results
+
+- GIVEN per-library JSONL files for 5 vanilla-Coq libraries (excluding MathComp) WHEN the LOOCV command runs THEN 5 folds are trained and evaluated, each holding out one library as the test set
+- GIVEN a LOOCV fold WHEN the held-out library's files are inspected THEN none appear in the training or validation splits
+- GIVEN a LOOCV fold WHEN validation files are inspected THEN they come only from the non-held-out libraries
+- GIVEN a LOOCV fold WHEN undersampling is applied THEN it uses the configured cap (default 1000) on the training split only
+- GIVEN all 5 folds complete WHEN the aggregate report is generated THEN it contains mean test_acc@5, std test_acc@5, and per-library accuracy
+- GIVEN a fixed seed and identical input WHEN LOOCV is run twice THEN the same train/val splits and results are produced
+
 ### Collapse Training Data
 
 **Priority:** P1
