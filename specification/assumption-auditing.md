@@ -152,7 +152,7 @@ The registry shall also include module-prefix mappings for Stage 2 classificatio
 #### audit_module(module, flag_categories)
 
 - REQUIRES: `module` is a non-empty string containing a fully qualified Coq module name. An active Coq session exists with the module loaded. `flag_categories` is a list of valid AxiomCategory values; defaults to `["classical", "choice", "proof_irrelevance", "custom"]`.
-- ENSURES: Enumerates all proof-carrying declarations in the module by sending `Print Module <module>.` to the Coq backend via `submit_command` (coqtop subprocess routing per [proof-session.md](proof-session.md) §4.4.1) and parsing the response. Calls `audit_assumptions` for each declaration sequentially. Aggregates results into a ModuleAuditResult. Theorems with axioms in `flag_categories` appear in `flagged_theorems`. The `axiom_summary` is sorted by `dependent_count` descending.
+- ENSURES: Enumerates all proof-carrying declarations using a three-strategy cascade via `submit_command` (coqtop subprocess routing per [proof-session.md](proof-session.md) §4.4.1): (1) send `Print Module <module>.` and parse the response; (2) if `Print Module` fails or returns zero declarations, send `Search _ inside <module>.` and parse each result line; (3) if `Search _ inside <module>.` also fails, send `Search _ inside Top.` and parse each result line — this covers local `.v` files loaded as scripts whose declarations reside in the default `Top` module. If all three strategies return zero declarations, a `NOT_FOUND` error is raised. Calls `audit_assumptions` for each declaration sequentially. Aggregates results into a ModuleAuditResult. Theorems with axioms in `flag_categories` appear in `flagged_theorems`. The `axiom_summary` is sorted by `dependent_count` descending.
 - MAINTAINS: A single-theorem error does not abort the batch. The failed theorem's AssumptionResult includes an `error` field with the failure reason, and auditing continues with the remaining declarations.
 
 > **Given** a module `MyLib.Foo` containing 3 theorems, 2 of which use `classic`
@@ -163,7 +163,11 @@ The registry shall also include module-prefix mappings for Stage 2 classificatio
 > **When** `audit_module("MyLib.Bar")` is called
 > **Then** the batch completes with `theorem_count = 50`, theorem 23's result contains an `error` field, and the remaining 49 theorems have normal results
 
-> **Given** a non-existent module `NoSuch.Module`
+> **Given** a local `.v` file defining 3 lemmas, loaded into a proof session without a logical path (declarations reside in `Top`)
+> **When** `audit_module("algebra")` is called and both `Print Module algebra.` and `Search _ inside algebra.` fail
+> **Then** the component falls back to `Search _ inside Top.`, enumerates the 3 declarations, and returns a ModuleAuditResult with `theorem_count = 3`
+
+> **Given** a non-existent module `NoSuch.Module` where `Print Module`, `Search _ inside <module>`, and `Search _ inside Top.` all return no results
 > **When** `audit_module("NoSuch.Module")` is called
 > **Then** a `NOT_FOUND` error is returned
 

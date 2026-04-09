@@ -239,15 +239,19 @@ The three-stage cascade ensures high accuracy on standard library axioms (exact 
 
 ### Module Enumeration
 
-Batch auditing iterates over all declarations in a module:
+Batch auditing iterates over all declarations in a module. Three enumeration strategies are attempted in sequence:
 
 ```
 audit_module(module, flag_categories)
   │
-  ├─ Enumerate declarations in module
-  │    Send `Print Module <module>.` to the Coq backend
-  │    Parse the response to extract theorem/lemma names
-  │    Filter to proof-carrying declarations (exclude definitions, notations, etc.)
+  ├─ Enumerate declarations in module (three-strategy cascade)
+  │    1. Send `Print Module <module>.` to the Coq backend
+  │       Parse the response to extract declaration names
+  │    2. If `Print Module` fails or returns zero declarations,
+  │       send `Search _ inside <module>.` and parse result lines
+  │    3. If `Search _ inside <module>.` also fails (e.g., local .v files
+  │       without a logical path), send `Search _ inside Top.`
+  │       and parse result lines (covers default Top module)
   │
   ├─ For each declaration name:
   │    ├─ Call audit_assumptions(name)

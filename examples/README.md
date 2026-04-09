@@ -616,3 +616,181 @@ I'm trying to prove that n + 0 = n. Can you try to prove it automatically? Open 
 ```
 Open a proof session on hammer_app_nil_r in examples/hammer_goals.v. Can you try auto_hammer first, and if it fails, explain what I should try instead?
 ```
+
+---
+
+## 12. Axiom Auditing
+
+Audit axiom dependencies for individual theorems, modules, and comparisons.
+
+**Single theorem — axiom-free:**
+```
+Audit the axiom dependencies of ring_morph in examples/algebra.v
+```
+
+**Single theorem — with axioms:**
+```
+Audit add_0_r_v1 in examples/algebra.v — what axioms does it depend on, and are any of them classical?
+```
+
+**Module-wide audit:**
+```
+Audit all theorems in examples/algebra.v for axiom dependencies — how many are axiom-free?
+```
+
+**Module-wide audit with flag filtering:**
+```
+Audit examples/algebra.v and flag any theorems that use classical or choice axioms
+```
+
+**Constructive shorthand flag:**
+```
+Audit examples/algebra.v --constructive — which theorems block extraction to constructive code?
+```
+
+**Comparison audit — shared and unique axioms:**
+```
+Compare the axiom profiles of add_0_r_v1, add_0_r_v2, and add_0_r_v3 in examples/algebra.v — which has the weakest assumptions?
+```
+
+**Comparison audit — mixed constructivity:**
+```
+Compare the axiom dependencies of ring_morph and zmul_expand in examples/algebra.v — is one more constructive than the other?
+```
+
+**Single theorem — implications and suggestions:**
+```
+Audit Nat.add_comm — is it constructive? Can it be extracted to OCaml?
+```
+
+**Error handling — theorem not found:**
+```
+Audit nonexistent_theorem_xyz in examples/algebra.v
+```
+
+---
+
+## 13. Visualization
+
+Generate visual diagrams of proof states, proof trees, dependencies, and proof evolution.
+
+**Proof state — current step:**
+```
+Open a proof session on app_nil_r in examples/lists.v, apply intros, then visualize the proof state
+```
+
+**Proof state — at a specific step:**
+```
+Open a proof session on add_comm in examples/arith.v, step through 2 tactics, then visualize the proof state at step 0
+```
+
+**Proof state — detail levels:**
+```
+Open a proof session on rev_involutive in examples/lists.v, apply intros, then visualize the proof state with detail level "detailed"
+```
+
+**Proof tree — complete proof:**
+```
+Open a proof session on app_nil_r in examples/lists.v, step through the entire proof, then visualize the proof tree
+```
+
+**Dependency graph — default depth:**
+```
+Visualize the dependency graph for Nat.add_comm
+```
+
+**Dependency graph — custom depth and max nodes:**
+```
+Visualize dependencies for Nat.add_0_r with depth 3 and max 30 nodes
+```
+
+**Proof sequence — step-by-step evolution:**
+```
+Open a proof session on modus_ponens in examples/logic.v, step through the whole proof, then visualize the proof sequence
+```
+
+**Proof sequence — with detail level:**
+```
+Open a proof session on app_nil_r in examples/lists.v, step through the proof, then visualize the proof sequence with summary detail
+```
+
+**No arguments — infer from context:**
+```
+Open a proof session on add_comm in examples/arith.v, apply intros, then run /visualize with no arguments
+```
+
+**HTML output confirmation:**
+```
+Visualize dependencies for Nat.add_comm — confirm that proof-diagram.html was written and tell me to open it in a browser
+```
+
+---
+
+## 14. Module and Library Browsing
+
+Explore Coq modules, typeclasses, dependency structure, and impact analysis.
+
+**No arguments — top-level overview:**
+```
+Browse the available Coq libraries — what's installed?
+```
+
+**Browse a specific module prefix:**
+```
+Browse Coq.Arith — what submodules and key declarations are available?
+```
+
+**Browse a third-party library module:**
+```
+Browse mathcomp.algebra.ssralg — what's in it?
+```
+
+**List all typeclasses:**
+```
+Open a proof session on add_comm in examples/arith.v, then browse typeclasses — what typeclasses are registered?
+```
+
+**List instances of a typeclass:**
+```
+Browse instances of Decidable — what types have decidable equality?
+```
+
+**Dependency traversal — transitive closure:**
+```
+Browse deps Nat.add_comm — what does it transitively depend on?
+```
+
+**Dependency traversal — with depth limit:**
+```
+Browse deps Nat.add_comm --depth 1 — show only direct dependencies
+```
+
+**Dependency traversal — with scope filter:**
+```
+Browse deps Nat.add_comm --scope Coq.Arith — only show dependencies within Coq.Arith
+```
+
+**Impact analysis — what depends on a declaration:**
+```
+Browse impact Nat.add_0_r — what is the blast radius if I change it?
+```
+
+**Cycle detection:**
+```
+Browse cycles — are there any circular dependencies in the project?
+```
+
+**Error handling — unknown module prefix:**
+```
+Browse Nonexistent.Module.Xyz — what happens?
+```
+
+**Error handling — typeclass not found:**
+```
+Browse instances of NonexistentTypeclass — what error do I get?
+```
+
+**Interactive navigation — drill deeper:**
+```
+Browse Coq.Arith, then drill into Coq.Arith.PeanoNat — show me the key lemmas
+```

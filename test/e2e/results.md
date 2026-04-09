@@ -1,10 +1,10 @@
 # E2E Test Results
 
-Tested: 2026-04-07 (full retest of all prompts)
+Tested: 2026-04-09 (partial retest — added sections 12-14; retested 12.3-12.5, 12.10, 13.5 after fixes)
 
 Run `/run-e2e` to retest prompts and update this file.
 
-**Summary: 129 PASS, 0 FAIL, 0 SKIP (129 total)**
+**Summary: 162 PASS, 1 FAIL, 0 SKIP (163 total)**
 
 | Section | PASS | FAIL | SKIP |
 |---------|------|------|------|
@@ -19,6 +19,9 @@ Run `/run-e2e` to retest prompts and update this file.
 | 9. Textbook / Education RAG | 10 | 0 | 0 |
 | 10. Tactic Suggestion | 9 | 0 | 0 |
 | 11. Hammer Automation | 21 | 0 | 0 |
+| 12. Axiom Auditing | 9 | 1 | 0 |
+| 13. Visualization | 11 | 0 | 0 |
+| 14. Module and Library Browsing | 13 | 0 | 0 |
 
 ---
 
@@ -206,8 +209,61 @@ Run `/run-e2e` to retest prompts and update this file.
 | 11.20 | auto_hammer on hammer_add_0_r (conversational) | PASS | Success via strategy "hammer" |
 | 11.21 | auto_hammer on hammer_app_nil_r then explain | PASS | All strategies properly failed on induction-requiring goal; structured failure diagnostics returned |
 
+## 12. Axiom Auditing
+
+| # | Prompt | Result | Reason |
+|---|--------|--------|--------|
+| 12.1 | Audit ring_morph in examples/algebra.v | PASS | audit_assumptions returned is_closed=true, axioms=[] — ring_morph is axiom-free |
+| 12.2 | Audit add_0_r_v1 — classical axioms? | PASS | audit_assumptions returned is_closed=true, axioms=[] — no classical axioms |
+| 12.3 | Audit all theorems in examples/algebra.v | PASS | audit_module via Search _ inside Top fallback found 9 declarations, all axiom-free (theorem_count=9, axiom_free_count=9) |
+| 12.4 | Audit examples/algebra.v flag classical/choice | PASS | audit_module found 9 declarations, flagged_theorems=[] — no classical or choice axioms used |
+| 12.5 | Audit --constructive flag | PASS | /audit skill maps --constructive to flag_categories=["classical", "choice"]; audit_module found 9 declarations, flagged_theorems=[] — none use classical or choice axioms |
+| 12.6 | Compare add_0_r_v1/v2/v3 — weakest assumptions | PASS | compare_assumptions returned all axiom-free, weakest=all three tied |
+| 12.7 | Compare ring_morph vs zmul_expand constructivity | PASS | compare_assumptions returned both axiom-free — equally constructive |
+| 12.8 | Audit Nat.add_comm — constructive/extractable? | PASS | audit_assumptions returned is_closed=true, axioms=[] — constructive and extractable |
+| 12.9 | Audit nonexistent_theorem_xyz (error handling) | PASS | PARSE_ERROR returned: "reference nonexistent_theorem_xyz was not found" |
+| 12.10 | Audit Coq.Arith.PeanoNat module summary | FAIL | Print Module enumeration works (4 declarations), but Print Assumptions fails — short names (lt_n_Sm_le) not in scope from algebra.v session context |
+
+## 13. Visualization
+
+| # | Prompt | Result | Reason |
+|---|--------|--------|--------|
+| 13.1 | Proof state app_nil_r after intros | PASS | visualize_proof_state returned mermaid flowchart with A:Type, l:list A hypotheses and goal l++[]=l |
+| 13.2 | Proof state add_comm at step 0 | PASS | visualize_proof_state step=0 returned initial goal forall n m, n+m=m+n at step_index=0 |
+| 13.3 | Proof state rev_involutive detailed | PASS | visualize_proof_state detail_level="detailed" returned mermaid with hypotheses and goal |
+| 13.4 | Proof tree app_nil_r complete | PASS | visualize_proof_tree returned 8-step tree with branching for induction base/step cases |
+| 13.5 | Proof tree add_comm incomplete (should warn) | PASS | visualize_proof_tree correctly returns original file proof tree — spec defines "incomplete" as file-level (Admitted), not user's interactive progress |
+| 13.6 | Dependency graph Nat.add_comm | PASS | visualize_dependencies returned mermaid flowchart with root node |
+| 13.7 | Dependencies Nat.add_0_r depth 3, max 30 | PASS | visualize_dependencies accepted max_depth=3, max_nodes=30 parameters, returned mermaid |
+| 13.8 | Proof sequence modus_ponens | PASS | visualize_proof_sequence returned 4 step diagrams: intros -> apply Hpq -> exact Hp -> Qed |
+| 13.9 | Proof sequence app_nil_r summary | PASS | visualize_proof_sequence detail_level="summary" returned 9 step diagrams with summary format |
+| 13.10 | /visualize no args — infer from context | PASS | visualize_proof_state on active session returned mermaid for current state without explicit mode |
+| 13.11 | HTML output confirmation | PASS | proof-diagram.html exists in project directory after visualization calls |
+
+## 14. Module and Library Browsing
+
+| # | Prompt | Result | Reason |
+|---|--------|--------|--------|
+| 14.1 | Browse top-level libraries | PASS | list_modules returned all libraries: Coquelicot, Flocq, Interval, Stdlib, mathcomp, stdpp |
+| 14.2 | Browse Coq.Arith submodules | PASS | list_modules prefix="Coq.Arith" returned 13 submodules including PeanoNat (1145 decls) |
+| 14.3 | Browse mathcomp.algebra.ssralg | PASS | list_modules returned 1 result with 9991 declarations |
+| 14.4 | Browse typeclasses | PASS | list_typeclasses returned 30+ typeclasses (Proper, Reflexive, Decidable, Equivalence, etc.) |
+| 14.5 | Browse instances of Decidable | PASS | list_instances returned 5 Decidable instances (bool eq, not, nat le, nat eq) |
+| 14.6 | Browse deps Nat.add_comm transitive | PASS | transitive_closure returned 3 nodes (add_comm, nat, add) with 3 edges |
+| 14.7 | Browse deps --depth 1 | PASS | transitive_closure max_depth=1 returned direct dependencies only (nat, add) |
+| 14.8 | Browse deps --scope Coq.Arith | PASS | transitive_closure scope_filter=["module_prefix:Coq.Arith"] returned root only — deps are in Init |
+| 14.9 | Browse impact Nat.add_0_r | PASS | impact_analysis returned root with hint about needing DOT file for proof-body deps |
+| 14.10 | Browse cycles | PASS | detect_cycles returned is_acyclic=true, 0 cycles, 0 nodes in cycles |
+| 14.11 | Browse unknown module prefix | PASS | list_modules returned empty array [] for "Nonexistent.Module.Xyz" |
+| 14.12 | Browse instances nonexistent typeclass | PASS | NOT_FOUND error returned for "NonexistentTypeclass" — expected error handling |
+| 14.13 | Browse drill-down Coq.Arith -> PeanoNat | PASS | list_modules Coq.Arith -> 13 modules; drill into PeanoNat -> 1145 declarations |
+
 ---
 
 ## Remaining Issues
 
-None.
+### Issue 1: audit_module FQN resolution for stdlib sub-modules
+
+**Affects:** 12.10
+
+`Print Module Coq.Arith.PeanoNat.` correctly enumerates 4 declarations (regex fix works), but `Print Assumptions` fails because: (1) constructed FQNs use the deprecated `Coq.*` prefix, and (2) the short name retry doesn't account for sub-module nesting — declarations like `lt_n_Sm_le` require `Nat.lt_n_Sm_le` or `PeanoNat.Nat.lt_n_Sm_le` to resolve. Low priority — module auditing works for project-local files via the Search fallback.

@@ -689,6 +689,228 @@ class TestSingleTheoremAuditing:
 
 
 # ===========================================================================
+# 5b. Module Declaration Parsing -- _parse_module_theorems
+# ===========================================================================
+
+class TestParseModuleTheorems:
+    """Test _parse_module_theorems with realistic Print Module output."""
+
+    def test_definition_keyword_extracted(self):
+        """Real Coq Print Module uses 'Definition' for all declarations."""
+        from Poule.auditing.engine import _parse_module_theorems
+        output = (
+            "Module\nInit.Nat\n:= Struct\n"
+            "     Definition add : nat -> nat -> nat.\n"
+            "     Definition mul : nat -> nat -> nat.\n"
+            "     Definition sub : nat -> nat -> nat.\n"
+            "   End"
+        )
+        result = _parse_module_theorems("Init.Nat", output)
+        assert result == ["Init.Nat.add", "Init.Nat.mul", "Init.Nat.sub"]
+
+    def test_submodule_declarations_excluded(self):
+        """Sub-module entries (Module X) should not appear as declarations."""
+        from Poule.auditing.engine import _parse_module_theorems
+        output = (
+            "Module\nPeanoNat\n:= Struct\n"
+            "     Module Nat\n"
+            "     Definition lt_n_Sm_le : forall n m : nat, n < S m -> n <= m.\n"
+            "   End"
+        )
+        result = _parse_module_theorems("PeanoNat", output)
+        assert "PeanoNat.Nat" not in result
+        assert "PeanoNat.lt_n_Sm_le" in result
+
+    def test_parameter_keyword_extracted(self):
+        """'Parameter' declarations (abstract module types) should be extracted."""
+        from Poule.auditing.engine import _parse_module_theorems
+        output = (
+            "Module\nMyLib\n:= Struct\n"
+            "     Parameter my_axiom : forall P : Prop, P \\/ ~ P.\n"
+            "   End"
+        )
+        result = _parse_module_theorems("MyLib", output)
+        assert result == ["MyLib.my_axiom"]
+
+    def test_empty_module(self):
+        """Empty module produces empty list."""
+        from Poule.auditing.engine import _parse_module_theorems
+        output = "Module\nEmpty\n:= Struct\n   End"
+        result = _parse_module_theorems("Empty", output)
+        assert result == []
+
+    def test_inductive_and_record_extracted(self):
+        """Inductive and Record declarations are also extracted."""
+        from Poule.auditing.engine import _parse_module_theorems
+        output = (
+            "Module\nMyLib\n:= Struct\n"
+            "     Inductive color : Set.\n"
+            "     Record point : Set.\n"
+            "     Definition foo : nat.\n"
+            "   End"
+        )
+        result = _parse_module_theorems("MyLib", output)
+        assert "MyLib.color" in result
+        assert "MyLib.point" in result
+        assert "MyLib.foo" in result
+
+
+# ===========================================================================
+# 5c. Search Fallback Parsing -- _parse_search_results
+# ===========================================================================
+
+class TestParseSearchResults:
+    """Test _parse_search_results with realistic Search _ inside output."""
+
+    def test_basic_search_output(self):
+        """Parse standard Search output: 'name: type' per line."""
+        from Poule.auditing.engine import _parse_search_results
+        output = (
+            "my_lemma: forall (A : Type) (f : A -> A) (x : A), f x = f x\n"
+            "add_0_r_v1: forall n : nat, (n + 0)%nat = n\n"
+            "ring_morph: forall a b c : nat, (a * (b + c))%nat = (a * b + a * c)%nat"
+        )
+        result = _parse_search_results(output)
+        assert result == ["my_lemma", "add_0_r_v1", "ring_morph"]
+
+    def test_empty_output(self):
+        """Empty search output returns empty list."""
+        from Poule.auditing.engine import _parse_search_results
+        assert _parse_search_results("") == []
+
+    def test_coq_error_message_skipped(self):
+        """Coq error messages like 'Error: ...' must not be parsed as declarations."""
+        from Poule.auditing.engine import _parse_search_results
+        output = "Error: Module/Section algebra not found."
+        result = _parse_search_results(output)
+        assert result == []
+
+    def test_rocq_prefix_stripped(self):
+        """Lines prefixed with 'Rocq < ' are handled."""
+        from Poule.auditing.engine import _parse_search_results
+        output = "Rocq < my_lemma: forall n : nat, n = n\nadd_0_r: forall n : nat, n + 0 = n"
+        result = _parse_search_results(output)
+        assert "my_lemma" in result
+        assert "add_0_r" in result
+
+
+# ===========================================================================
+# 5d. Audit Module Fallback -- Search fallback cascade
+# ===========================================================================
+
+class TestAuditModuleFallback:
+    """Section 4.6: audit_module falls back from Print Module to Search."""
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_search_inside_top(self):
+        """When Print Module and Search inside <module> both fail,
+        fall back to Search _ inside Top."""
+        _, audit_module, _ = _import_engine()
+
+        call_log = []
+
+        async def _send_command(session_id, command, *, prefer_coqtop=False):
+            call_log.append(command)
+            if command == "Print Module algebra.":
+                raise Exception("Unknown Module algebra")
+            if command == "Search _ inside algebra.":
+                raise Exception("Module/Section algebra not found")
+            if command == "Search _ inside Top.":
+                return (
+                    "my_lemma: forall (A : Type) (f : A -> A) (x : A), f x = f x\n"
+                    "add_0_r_v1: forall n : nat, (n + 0)%nat = n"
+                )
+            if "Print Assumptions" in command:
+                return "Closed under the global context"
+            return ""
+
+        manager = AsyncMock()
+        manager.send_command.side_effect = _send_command
+        manager.query_declaration_kind = AsyncMock(return_value=None)
+
+        result = await audit_module(manager, "algebra")
+        assert result.theorem_count == 2
+        assert result.axiom_free_count == 2
+        assert "Print Module algebra." in call_log
+        assert "Search _ inside algebra." in call_log
+        assert "Search _ inside Top." in call_log
+
+    @pytest.mark.asyncio
+    async def test_not_found_when_all_strategies_fail(self):
+        """When all three strategies return no results, raise NOT_FOUND."""
+        _, audit_module, _ = _import_engine()
+        AuditError = _import_errors()
+
+        async def _send_command(session_id, command, *, prefer_coqtop=False):
+            if "Print Module" in command:
+                raise Exception("Unknown Module")
+            if "Search" in command:
+                raise Exception("Module/Section not found")
+            return ""
+
+        manager = AsyncMock()
+        manager.send_command.side_effect = _send_command
+
+        with pytest.raises(AuditError) as exc_info:
+            await audit_module(manager, "NoSuch.Module")
+        assert exc_info.value.code == "NOT_FOUND"
+
+    @pytest.mark.asyncio
+    async def test_print_module_success_no_fallback(self):
+        """When Print Module succeeds, no fallback is needed."""
+        _, audit_module, _ = _import_engine()
+
+        call_log = []
+
+        async def _send_command(session_id, command, *, prefer_coqtop=False):
+            call_log.append(command)
+            if command == "Print Module Stdlib.Arith.PeanoNat.":
+                return (
+                    "Module\nPeanoNat\n:= Struct\n"
+                    "     Definition lt_n_Sm_le : forall n m : nat, n < S m -> n <= m.\n"
+                    "   End"
+                )
+            if "Print Assumptions" in command:
+                return "Closed under the global context"
+            return ""
+
+        manager = AsyncMock()
+        manager.send_command.side_effect = _send_command
+        manager.query_declaration_kind = AsyncMock(return_value=None)
+
+        result = await audit_module(manager, "Stdlib.Arith.PeanoNat")
+        assert result.theorem_count == 1
+        assert not any("Search" in cmd for cmd in call_log)
+
+    @pytest.mark.asyncio
+    async def test_fqn_retry_with_short_name(self):
+        """When Print Assumptions fails with a FQN, retry with short name."""
+        _, audit_module, _ = _import_engine()
+
+        async def _send_command(session_id, command, *, prefer_coqtop=False):
+            if command == "Print Module Coq.Arith.PeanoNat.":
+                return (
+                    "Module\nPeanoNat\n:= Struct\n"
+                    "     Definition lt_n_Sm_le : forall n m : nat, n < S m -> n <= m.\n"
+                    "   End"
+                )
+            if command == "Print Assumptions Coq.Arith.PeanoNat.lt_n_Sm_le.":
+                raise Exception("not found in the current environment")
+            if command == "Print Assumptions lt_n_Sm_le.":
+                return "Closed under the global context"
+            return ""
+
+        manager = AsyncMock()
+        manager.send_command.side_effect = _send_command
+        manager.query_declaration_kind = AsyncMock(return_value=None)
+
+        result = await audit_module(manager, "Coq.Arith.PeanoNat")
+        assert result.theorem_count == 1
+        assert result.axiom_free_count == 1
+        assert result.per_theorem[0].error is None
+
+
+# ===========================================================================
 # 6. Batch Module Auditing -- Section 4.6
 # ===========================================================================
 
@@ -710,11 +932,11 @@ class TestBatchModuleAuditing:
         manager = _make_mock_session_manager(
             print_module_output={
                 "MyLib.Foo": (
-                    "Module MyLib.Foo\n"
-                    "  Theorem thm_a : ...\n"
-                    "  Theorem thm_b : ...\n"
-                    "  Theorem thm_c : ...\n"
-                    "End MyLib.Foo"
+                    "Module\nMyLib.Foo\n:= Struct\n"
+                    "     Definition thm_a : nat -> Prop.\n"
+                    "     Definition thm_b : nat -> Prop.\n"
+                    "     Definition thm_c : nat -> Prop.\n"
+                    "   End"
                 ),
             },
             print_assumptions_output={
@@ -745,10 +967,10 @@ class TestBatchModuleAuditing:
         manager = _make_mock_session_manager(
             print_module_output={
                 "MyLib.Bar": (
-                    "Module MyLib.Bar\n"
-                    "  Theorem thm_ok : ...\n"
-                    "  Theorem thm_bad : ...\n"
-                    "End MyLib.Bar"
+                    "Module\nMyLib.Bar\n:= Struct\n"
+                    "     Definition thm_ok : nat -> Prop.\n"
+                    "     Definition thm_bad : nat -> Prop.\n"
+                    "   End"
                 ),
             },
             print_assumptions_output={
@@ -778,10 +1000,10 @@ class TestBatchModuleAuditing:
         manager = _make_mock_session_manager(
             print_module_output={
                 "MyLib.Baz": (
-                    "Module MyLib.Baz\n"
-                    "  Theorem thm_closed : ...\n"
-                    "  Theorem thm_err : ...\n"
-                    "End MyLib.Baz"
+                    "Module\nMyLib.Baz\n:= Struct\n"
+                    "     Definition thm_closed : nat -> Prop.\n"
+                    "     Definition thm_err : nat -> Prop.\n"
+                    "   End"
                 ),
             },
             print_assumptions_output={
@@ -830,9 +1052,9 @@ class TestBatchModuleAuditing:
         manager = _make_mock_session_manager(
             print_module_output={
                 "MyLib.Defaults": (
-                    "Module MyLib.Defaults\n"
-                    "  Theorem thm_ext : ...\n"
-                    "End MyLib.Defaults"
+                    "Module\nMyLib.Defaults\n:= Struct\n"
+                    "     Definition thm_ext : nat -> Prop.\n"
+                    "   End"
                 ),
             },
             print_assumptions_output={
@@ -870,11 +1092,11 @@ class TestBatchModuleAuditing:
         manager = _make_mock_session_manager(
             print_module_output={
                 "MyLib.Sorted": (
-                    "Module MyLib.Sorted\n"
-                    "  Theorem t1 : ...\n"
-                    "  Theorem t2 : ...\n"
-                    "  Theorem t3 : ...\n"
-                    "End MyLib.Sorted"
+                    "Module\nMyLib.Sorted\n:= Struct\n"
+                    "     Definition t1 : nat -> Prop.\n"
+                    "     Definition t2 : nat -> Prop.\n"
+                    "     Definition t3 : nat -> Prop.\n"
+                    "   End"
                 ),
             },
             print_assumptions_output={

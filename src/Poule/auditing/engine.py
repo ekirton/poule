@@ -119,20 +119,101 @@ async def audit_assumptions(
 
 
 def _parse_module_theorems(module: str, output: str) -> list[str]:
-    """Extract theorem/lemma names from Print Module output.
+    """Extract declaration names from Print Module output.
 
-    Parses lines like '  Theorem thm_name : ...' and qualifies them
-    with the module prefix.
+    Coq's ``Print Module`` uses ``Definition`` for all proof-carrying
+    declarations (theorems, lemmas, fixpoints) and ``Parameter`` for
+    axioms in abstract module types.  Sub-module entries (``Module X``)
+    are excluded.
     """
-    theorems: list[str] = []
-    # Match Theorem, Lemma declarations
+    declarations: list[str] = []
     pattern = re.compile(
-        r"^\s*(?:Theorem|Lemma)\s+(\w+)\s*:", re.MULTILINE
+        r"^\s*(?:Definition|Parameter|Inductive|Record|Fixpoint|CoFixpoint"
+        r"|Theorem|Lemma)\s+(\w+)\s*:",
+        re.MULTILINE,
     )
     for match in pattern.finditer(output):
-        theorem_name = match.group(1)
-        theorems.append(f"{module}.{theorem_name}")
-    return theorems
+        decl_name = match.group(1)
+        declarations.append(f"{module}.{decl_name}")
+    return declarations
+
+
+def _parse_search_results(output: str) -> list[str]:
+    """Extract declaration names from ``Search _ inside`` output.
+
+    Each result line has the form ``name: type``.  Continuation lines
+    (indented) are skipped.  A leading ``Rocq < `` prompt prefix is
+    stripped if present.  Coq error lines (starting with ``Error:``)
+    are skipped.
+    """
+    declarations: list[str] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Skip indented continuation lines (multi-line types)
+        if line and line[0] in (" ", "\t"):
+            continue
+        # Strip Rocq prompt prefix
+        if stripped.startswith("Rocq < "):
+            stripped = stripped[len("Rocq < "):]
+        # Skip Coq error/warning lines
+        if stripped.startswith("Error:") or stripped.startswith("Warning:"):
+            continue
+        # Match name: type
+        colon_idx = stripped.find(":")
+        if colon_idx > 0:
+            name = stripped[:colon_idx].strip()
+            if name and name.isidentifier():
+                declarations.append(name)
+    return declarations
+
+
+async def _enumerate_declarations(
+    session_manager: Any,
+    module: str,
+    session_id: str,
+) -> list[str]:
+    """Enumerate declarations using a three-strategy cascade.
+
+    1. ``Print Module <module>.`` — for compiled modules
+    2. ``Search _ inside <module>.`` — for named modules/sections in scope
+    3. ``Search _ inside Top.`` — for local .v files without a logical path
+    """
+    # Strategy 1: Print Module
+    try:
+        module_output = await session_manager.send_command(
+            session_id, f"Print Module {module}.", prefer_coqtop=True,
+        )
+        names = _parse_module_theorems(module, module_output)
+        if names:
+            return names
+    except Exception:
+        pass  # Fall through to strategy 2
+
+    # Strategy 2: Search _ inside <module>
+    try:
+        search_output = await session_manager.send_command(
+            session_id, f"Search _ inside {module}.", prefer_coqtop=True,
+        )
+        names = _parse_search_results(search_output)
+        if names:
+            return names
+    except Exception:
+        pass  # Fall through to strategy 3
+
+    # Strategy 3: Search _ inside Top (for local .v files)
+    try:
+        top_output = await session_manager.send_command(
+            session_id, "Search _ inside Top.", prefer_coqtop=True,
+        )
+        names = _parse_search_results(top_output)
+        if names:
+            return names
+    except Exception:
+        pass
+
+    return []
 
 
 async def audit_module(
@@ -143,8 +224,8 @@ async def audit_module(
 ) -> ModuleAuditResult:
     """Audit all theorems in a module.
 
-    Enumerates declarations, calls audit_assumptions for each,
-    aggregates results.
+    Enumerates declarations using a three-strategy cascade, calls
+    audit_assumptions for each, aggregates results.
     """
     if not module or not module.strip():
         raise AuditError("INVALID_INPUT", "Module name must be non-empty.")
@@ -161,19 +242,16 @@ async def audit_module(
                 "classical, extensionality, choice, proof_irrelevance, custom.",
             )
 
-    # Enumerate module declarations
-    try:
-        module_output = await session_manager.send_command(
-            session_id, f"Print Module {module}.", prefer_coqtop=True,
-        )
-    except AuditError:
-        raise
-    except Exception as exc:
-        code = getattr(exc, "code", "UNKNOWN")
-        message = getattr(exc, "message", str(exc))
-        raise AuditError(code, message) from exc
+    # Enumerate module declarations via three-strategy cascade
+    theorem_names = await _enumerate_declarations(
+        session_manager, module, session_id,
+    )
 
-    theorem_names = _parse_module_theorems(module, module_output)
+    if not theorem_names:
+        raise AuditError(
+            "NOT_FOUND",
+            f"Module `{module}` not found in the current Coq environment.",
+        )
 
     # Audit each theorem with error isolation
     per_theorem: list[AssumptionResult] = []
@@ -184,7 +262,17 @@ async def audit_module(
 
     for thm_name in theorem_names:
         try:
-            result = await audit_assumptions(session_manager, thm_name, session_id)
+            try:
+                result = await audit_assumptions(session_manager, thm_name, session_id)
+            except Exception:
+                # FQN may use a deprecated path — retry with short name
+                short_name = thm_name.rsplit(".", 1)[-1] if "." in thm_name else thm_name
+                if short_name != thm_name:
+                    result = await audit_assumptions(
+                        session_manager, short_name, session_id,
+                    )
+                else:
+                    raise
             per_theorem.append(result)
 
             if result.is_closed:
