@@ -47,7 +47,7 @@ Audit Nat.add_comm — is it constructive? Can it be extracted to OCaml?
 Audit nonexistent_theorem_xyz in examples/algebra.v
 ```
 
-**Large module — summary not exhaustive list:**
+**Large module — summary not exhaustive list (known limitation: Print Module does not track sub-module nesting, so declarations inside `Module Nat` get wrong FQNs):**
 ```
 Audit the Coq.Arith.PeanoNat module — give me a summary, not a listing of every theorem
 ```

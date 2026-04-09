@@ -222,7 +222,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 12.7 | Compare ring_morph vs zmul_expand constructivity | PASS | compare_assumptions returned both axiom-free — equally constructive |
 | 12.8 | Audit Nat.add_comm — constructive/extractable? | PASS | audit_assumptions returned is_closed=true, axioms=[] — constructive and extractable |
 | 12.9 | Audit nonexistent_theorem_xyz (error handling) | PASS | PARSE_ERROR returned: "reference nonexistent_theorem_xyz was not found" |
-| 12.10 | Audit Coq.Arith.PeanoNat module summary | FAIL | Print Module enumeration works (4 declarations), but Print Assumptions fails — short names (lt_n_Sm_le) not in scope from algebra.v session context |
+| 12.10 | Audit Coq.Arith.PeanoNat module summary | FAIL | Known limitation: Print Module parser does not track sub-module nesting — declarations inside `Module Nat` get FQN `PeanoNat.lt_n_Sm_le` instead of correct `PeanoNat.Nat.lt_n_Sm_le` |
 
 ## 13. Visualization
 
@@ -266,4 +266,4 @@ Run `/run-e2e` to retest prompts and update this file.
 
 **Affects:** 12.10
 
-`Print Module Coq.Arith.PeanoNat.` correctly enumerates 4 declarations (regex fix works), but `Print Assumptions` fails because: (1) constructed FQNs use the deprecated `Coq.*` prefix, and (2) the short name retry doesn't account for sub-module nesting — declarations like `lt_n_Sm_le` require `Nat.lt_n_Sm_le` or `PeanoNat.Nat.lt_n_Sm_le` to resolve. Low priority — module auditing works for project-local files via the Search fallback.
+Known limitation. `Print Module` output nests declarations inside sub-modules (e.g., `Module Nat` inside `PeanoNat`), but `_parse_module_theorems` does not track `Module`/`End` pairs, so it constructs `PeanoNat.lt_n_Sm_le` instead of the correct `PeanoNat.Nat.lt_n_Sm_le`. Fixing this requires sub-module context tracking in the parser. Low priority — module auditing works for the primary use case (project-local files) via the Search fallback.
