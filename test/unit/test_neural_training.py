@@ -682,9 +682,17 @@ class TestLabelMapConstruction:
         _write_step_records(data_path, steps)
 
         dataset = TrainingDataLoader.load([data_path])
-        assert len(dataset.category_names) == 8
+        assert len(dataset.category_names) == 6
         assert "introduction" in dataset.category_names
         assert "rewriting" in dataset.category_names
+        assert "other" in dataset.category_names
+
+    def test_rare_categories_map_to_other(self, tmp_path):
+        """spec §4.0.7: arithmetic/contradiction/ssreflect tactics map to 'other' category."""
+        from Poule.neural.training.taxonomy import TACTIC_TO_CATEGORY
+        assert TACTIC_TO_CATEGORY["lia"] == "other"
+        assert TACTIC_TO_CATEGORY["exfalso"] == "other"
+        assert TACTIC_TO_CATEGORY["move"] == "other"
 
     def test_skips_steps_without_tactic(self, tmp_path):
         """Steps with empty tactic text are skipped."""
