@@ -497,9 +497,9 @@ All steps from the same file go into the same split.
 - MAINTAINS: Each fold trains a fresh model from scratch (no transfer between folds).
 - MAINTAINS: Checkpoints are deleted after evaluation; only the report persists.
 
-> **Given** 5 vanilla-Coq libraries (excluding MathComp)
+> **Given** 4 vanilla-Coq libraries (excluding MathComp and CoqInterval)
 > **When** `LibraryLOOCV.run()` completes
-> **Then** the report contains exactly 5 FoldResult entries, one per library
+> **Then** the report contains exactly 4 FoldResult entries, one per library
 
 > **Given** a fold with held_out_library="stdlib"
 > **When** the fold trains

@@ -685,7 +685,9 @@ Note: families with fewer than 20 training examples are too sparse to be trainab
 
 The current file-level split (`position % 10`) scatters files from the same library across train/val/test. Libraries share tactic conventions — stdlib favors `destruct`/`induction`, stdpp has its own automation patterns. The 6pp val-test gap after undersampling measures within-library generalization, not cross-library transfer. LOOCV holds out each library in turn to diagnose whether library-level data leakage is the bottleneck.
 
-MathComp is excluded: 71% of its steps use SSReflect-dialect tactics (`by` alone is 42.5%), making it a different tactic language. The remaining 5 vanilla-Coq libraries (stdlib, stdpp, flocq, coquelicot, coqinterval) are 78–99% vanilla Coq.
+MathComp is excluded: 71% of its steps use SSReflect-dialect tactics (`by` alone is 42.5%), making it a different tactic language. CoqInterval is also excluded: its specialized interval-arithmetic proof style transfers poorly (64/65 dead families in LOOCV, see results below). The remaining 4 vanilla-Coq libraries (stdlib, stdpp, flocq, coquelicot) are 78–99% vanilla Coq.
+
+> **Note:** The LOOCV results below were computed with 5 libraries (including CoqInterval). CoqInterval was subsequently excluded from training based on these findings.
 
 ### Design
 

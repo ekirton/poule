@@ -277,12 +277,12 @@ After the file-level split, the training split is optionally undersampled to cap
 
 ### Leave-One-Library-Out Cross-Validation
 
-A diagnostic evaluation mode that replaces the file-level split with a library-level split. For each fold, one of the 5 vanilla-Coq libraries is held out entirely as the test set, and the remaining 4 libraries provide training and validation data. This isolates whether the model generalizes across library boundaries or memorizes library-specific tactic conventions.
+A diagnostic evaluation mode that replaces the file-level split with a library-level split. For each fold, one of the 4 vanilla-Coq libraries is held out entirely as the test set, and the remaining 3 libraries provide training and validation data. This isolates whether the model generalizes across library boundaries or memorizes library-specific tactic conventions.
 
-MathComp is excluded: 71% of its steps use SSReflect-dialect tactics (`by`, `move=>`, `exact:`, `apply:`, `case:`), making it a different tactic language rather than a transferable signal. The remaining 5 libraries are 78–99% vanilla Coq.
+MathComp and CoqInterval are excluded: MathComp's steps are 71% SSReflect-dialect tactics (`by`, `move=>`, `exact:`, `apply:`, `case:`), making it a different tactic language. CoqInterval's specialized interval-arithmetic proof style does not transfer (64/65 dead families in LOOCV). The remaining 4 libraries are 78–99% vanilla Coq.
 
 ```
-poule loocv stdlib.jsonl stdpp.jsonl flocq.jsonl coquelicot.jsonl coqinterval.jsonl \
+poule loocv stdlib.jsonl stdpp.jsonl flocq.jsonl coquelicot.jsonl \
   --output-dir loocv-results/ --vocabulary coq-vocabulary.json --undersample-cap 1000
 ```
 
@@ -303,7 +303,7 @@ The same `TacticDataset` structure is returned — downstream training code is u
 `LibraryLOOCV.run()` iterates over all libraries:
 
 ```
-For each library L in {stdlib, stdpp, flocq, coquelicot, coqinterval}:
+For each library L in {stdlib, stdpp, flocq, coquelicot}:
     1. Load data with L held out
     2. Undersample training split at configured cap
     3. Train model with fixed hyperparameters (best from undersampled HPO)

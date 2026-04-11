@@ -65,10 +65,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Collect input files
+# Libraries excluded from training: different tactic distributions.
+EXCLUDED_LIBS="mathcomp|coqinterval"
+
+# Collect input files, skipping excluded libraries
 INPUT_FILES=()
 for f in "${INPUT_DIR}"/training-*.jsonl; do
-    if [[ -f "$f" ]]; then
+    if [[ -f "$f" ]] && ! [[ "$(basename "$f")" =~ ${EXCLUDED_LIBS} ]]; then
         INPUT_FILES+=("$f")
     fi
 done

@@ -11,7 +11,7 @@ Coq projects (.v)
 Proof traces (JSONL) — "s" records with (proof_state, tactic_text)
   │  poule validate-training-data
   ▼
-Validated training data (~140K steps from 6 libraries)
+Validated training data (from 4 vanilla-Coq libraries)
   │  poule build-vocabulary
   ▼
 Closed vocabulary (coq-vocabulary.json)
@@ -188,19 +188,19 @@ The study uses TPE sampling with a MedianPruner (3 startup trials, 3 warmup epoc
 
 ### Leave-one-library-out cross-validation
 
-The file-level split scatters files from the same library across train/val/test. Libraries share tactic conventions (stdlib favors `destruct`/`induction`, stdpp has its own automation), so the model may memorize library identity rather than learning generalizable proof structure. LOOCV diagnoses this by holding out each vanilla-Coq library in turn as the test set. MathComp is excluded because 71% of its steps use SSReflect-dialect tactics, making it a different tactic language rather than a transferable signal.
+The file-level split scatters files from the same library across train/val/test. Libraries share tactic conventions (stdlib favors `destruct`/`induction`, stdpp has its own automation), so the model may memorize library identity rather than learning generalizable proof structure. LOOCV diagnoses this by holding out each vanilla-Coq library in turn as the test set. MathComp and CoqInterval are excluded: MathComp uses SSReflect-dialect tactics (71% of steps) and CoqInterval's specialized proof style does not transfer.
 
 ```bash
-# Run LOOCV across all 5 vanilla-Coq libraries (MathComp excluded)
+# Run LOOCV across all 4 vanilla-Coq libraries (MathComp, CoqInterval excluded)
 poule loocv \
   stdlib.jsonl stdpp.jsonl \
-  flocq.jsonl coquelicot.jsonl coqinterval.jsonl \
+  flocq.jsonl coquelicot.jsonl \
   --output-dir loocv-results/ \
   --vocabulary coq-vocabulary.json \
   --undersample-cap 1000
 ```
 
-Each JSONL file's stem is used as the library name. For each of the 5 libraries, the command:
+Each JSONL file's stem is used as the library name. For each of the 4 libraries, the command:
 1. Holds out that library entirely as the test set
 2. Splits the remaining libraries' files 90/10 (seeded shuffle) for train/val
 3. Undersamples training at cap=1000 per family
@@ -346,7 +346,7 @@ poule quantize --checkpoint model.pt --output tactic-predictor.onnx
 # 9. (Optional) LOOCV diagnostic — diagnose library-level leakage
 poule loocv \
   stdlib.jsonl stdpp.jsonl \
-  flocq.jsonl coquelicot.jsonl coqinterval.jsonl \
+  flocq.jsonl coquelicot.jsonl \
   --output-dir loocv-results/ \
   --vocabulary coq-vocabulary.json \
   --undersample-cap 1000

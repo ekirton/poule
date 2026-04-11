@@ -10,7 +10,7 @@ When a student is stuck mid-proof, they need more than a list of possible tactic
 
 The existing `suggest_tactics` MCP tool uses rule-based goal classification: it inspects the goal type for structural patterns (conjunction, disjunction, equality, existential, etc.) and suggests tactics accordingly. This approach is limited to a fixed set of goal shapes and cannot learn from proof patterns across libraries. It misses tactic choices that depend on hypothesis context, mathematical domain conventions, or library-specific idioms.
 
-Meanwhile, the extraction pipeline captures ~105,000 (proof_state, tactic) pairs from six Coq libraries — each goal state paired with the tactic that was actually applied. This data represents the collective proof strategies of library authors across diverse mathematical domains.
+Meanwhile, the extraction pipeline captures (proof_state, tactic) pairs from four vanilla-Coq libraries (stdlib, stdpp, flocq, coquelicot) — each goal state paired with the tactic that was actually applied. This data represents the collective proof strategies of library authors across diverse mathematical domains. MathComp and CoqInterval are excluded: MathComp uses a different tactic dialect (71% SSReflect) and CoqInterval's specialized interval-arithmetic proof style does not transfer to other libraries.
 
 ## Solution
 
@@ -119,7 +119,7 @@ The six most frequent tactic families (rewrite, intros, apply, auto, destruct, s
 
 The current file-level split scatters files from the same library across train, validation, and test splits. Libraries share tactic conventions — stdlib favors `destruct`/`induction`, stdpp has its own automation patterns. The model may learn library identity rather than generalizable proof-state-to-tactic mappings. Leave-one-library-out cross-validation (LOOCV) diagnoses whether library-level data leakage is the bottleneck for generalization.
 
-MathComp is excluded from LOOCV: 71% of its steps use SSReflect-dialect tactics, making it a different tactic language rather than a transferable signal. The remaining 5 vanilla-Coq libraries (stdlib, stdpp, flocq, coquelicot, coqinterval) are 78–99% vanilla Coq.
+MathComp and CoqInterval are excluded from both training and LOOCV: MathComp uses SSReflect-dialect tactics (71% of its steps) and CoqInterval's specialized proof style does not transfer. The remaining 4 vanilla-Coq libraries (stdlib, stdpp, flocq, coquelicot) are 78–99% vanilla Coq.
 
 For each of the 5 vanilla-Coq libraries, one fold holds out that library entirely as the test set and trains on the remaining libraries. Validation comes from the training-distribution libraries (not the held-out library) so early stopping gets a proper signal. The test set is a completely unseen library — true cross-library generalization.
 
