@@ -585,7 +585,7 @@ All steps from the same file go into the same split.
 | `undersample_cap` | None | When not None, must be a positive integer. Passed to `undersample_train()` before training begins. |
 | `undersample_seed` | 42 | Integer seed for reproducible undersampling. |
 
-#### Model architecture: TacticClassifier
+#### Model architecture: HierarchicalTacticClassifier
 
 ```
 Input: input_ids [B, 512], attention_mask [B, 512]
@@ -593,52 +593,53 @@ Input: input_ids [B, 512], attention_mask [B, 512]
   |-- nn.Embedding(vocab_size, embedding_dim)         [B, 512, D]
   |-- nn.Linear(embedding_dim, 768, bias=False)       [B, 512, 768]  (only when D < 768)
   |-- CodeBERT encoder (num_hidden_layers layers, 768 hidden, 12 heads)
-  |-- Mean pooling (attention-masked)
-  |-- nn.Linear(768, num_classes)
-  |-- Output: logits [B, num_classes]
+  |-- Mean pooling (attention-masked)                  [B, 768]
+  |
+  |-- Category head (MLP):
+  |     nn.Linear(768, 384) → ReLU → Dropout(0.1) → nn.Linear(384, num_categories)
+  |     Output: category_logits [B, num_categories]
+  |
+  |-- Per-category within-heads (one per category):
+  |     nn.Linear(768, num_tactics_in_category)
+  |     Output: within_logits dict[str, [B, cat_size]]
 ```
 
-Default `num_hidden_layers` is 6, `embedding_dim` is 128. When `embedding_dim` equals 768 (the hidden size), the projection layer is omitted and the model behaves identically to the standard architecture. Single forward pass per batch. No premise encoding, no contrastive pairs, no hard negatives.
+Default `num_hidden_layers` is 6, `embedding_dim` is 128. The category head uses a 2-layer MLP with intermediate dimension `hidden_size // 2` (384). All within-heads are single linear layers. All heads share the same pooled encoder representation. Single forward pass per batch.
 
 #### Construction
 
-`TacticClassifier(model_name, num_classes, vocab_size, num_hidden_layers=6, embedding_dim=128)`
+`HierarchicalTacticClassifier(model_name, per_category_sizes, num_categories, vocab_size, num_hidden_layers=6, embedding_dim=128)`
 
-- REQUIRES: `model_name` is a valid HuggingFace model name (default: `"microsoft/codebert-base"`). `num_classes` is a positive integer. `vocab_size` is `None` or a positive integer. `num_hidden_layers` is in {4, 6, 12}. `embedding_dim` is a positive integer.
-- ENSURES: Loads the pretrained model, then applies layer dropping if `num_hidden_layers` < 12. Layer dropping selects `num_hidden_layers` layers at evenly spaced indices from the 12-layer source: `indices = [i * 12 // num_hidden_layers for i in range(num_hidden_layers)]`. Builds a new encoder with only the selected layers. Updates the model config's `num_hidden_layers`. When `vocab_size` is not `None`, replaces the embedding layer with `nn.Embedding(vocab_size, embedding_dim)`. When `embedding_dim` < 768 (the hidden size), creates a bias-free projection layer `nn.Linear(embedding_dim, 768, bias=False)` to expand token embeddings to the transformer's hidden dimension. The projection layer is stored as `self.embedding_projection`. When `embedding_dim` == 768, no projection layer is created. Creates the classification head `nn.Linear(768, num_classes)`.
-- When `num_hidden_layers` is 12: no layer dropping; loads all pretrained layers (backward compatible).
-- When `embedding_dim` is 768: no factorization; the model behaves identically to the standard architecture (backward compatible).
+- REQUIRES: `model_name` is a valid HuggingFace model name (default: `"microsoft/codebert-base"`). `per_category_sizes` is a `dict[str, int]` mapping category names to their within-category tactic count. `num_categories` is a positive integer. `vocab_size` is `None` or a positive integer. `num_hidden_layers` is in {4, 6, 12}. `embedding_dim` is a positive integer.
+- ENSURES: Loads the pretrained model, then applies layer dropping if `num_hidden_layers` < 12. Layer dropping selects `num_hidden_layers` layers at evenly spaced indices from the 12-layer source: `indices = [i * 12 // num_hidden_layers for i in range(num_hidden_layers)]`. Builds a new encoder with only the selected layers. Updates the model config's `num_hidden_layers`. When `vocab_size` is not `None`, replaces the embedding layer with `nn.Embedding(vocab_size, embedding_dim)`. When `embedding_dim` < 768 (the hidden size), creates a bias-free projection layer `nn.Linear(embedding_dim, 768, bias=False)`. Creates the category head as `nn.Sequential(nn.Linear(768, 384), nn.ReLU(), nn.Dropout(0.1), nn.Linear(384, num_categories))`. Creates per-category within-heads as `nn.ModuleDict` mapping each category name to `nn.Linear(768, per_category_sizes[cat])`.
 
 > **Given** `num_hidden_layers=6`
-> **When** `TacticClassifier` is constructed
+> **When** `HierarchicalTacticClassifier` is constructed
 > **Then** layer indices [0, 2, 4, 6, 8, 10] are selected from CodeBERT's 12 layers
 
 > **Given** `num_hidden_layers=4`
-> **When** `TacticClassifier` is constructed
+> **When** `HierarchicalTacticClassifier` is constructed
 > **Then** layer indices [0, 3, 6, 9] are selected from CodeBERT's 12 layers
 
 #### from_checkpoint(checkpoint)
 
-- REQUIRES: `checkpoint` is a dict containing `model_state_dict`, `num_classes`, and optionally `num_hidden_layers` and `embedding_dim`.
-- ENSURES: Reads `num_hidden_layers` from the checkpoint (default 12 for backward compatibility). Reads `embedding_dim` from the checkpoint (default 768 for backward compatibility with pre-factorization checkpoints). Builds a `RobertaModel` with the specified layer count and embedding dimension. When `embedding_dim` < 768, creates the projection layer. Loads weights with `strict=False`.
+- REQUIRES: `checkpoint` is a dict containing `model_state_dict`, `per_category_sizes`, `num_categories`, and optionally `num_hidden_layers` and `embedding_dim`.
+- ENSURES: Reads `num_hidden_layers` from the checkpoint. Reads `embedding_dim` from the checkpoint. Reads `per_category_sizes` and `num_categories` from the checkpoint. Builds a `RobertaModel` with the specified layer count and embedding dimension. When `embedding_dim` < 768, creates the projection layer. Reconstructs the category head as `nn.Sequential(nn.Linear(768, 384), nn.ReLU(), nn.Dropout(0.1), nn.Linear(384, num_categories))`. Reconstructs per-category within-heads from `per_category_sizes`. Loads weights with `strict=False`.
 
-> **Given** a checkpoint saved with `num_hidden_layers=6` and `embedding_dim=128`
+> **Given** a checkpoint saved with `num_hidden_layers=6`, `embedding_dim=128`, and `per_category_sizes={"rewriting": 12, "elimination": 7}`
 > **When** `from_checkpoint` reconstructs the model
-> **Then** the encoder has 6 transformer layers and a 128→768 projection layer
-
-> **Given** a checkpoint saved before embedding factorization was introduced (no `embedding_dim` key)
-> **When** `from_checkpoint` reconstructs the model
-> **Then** `embedding_dim` defaults to 768 (no projection layer, backward compatible)
+> **Then** the encoder has 6 transformer layers, a 128→768 projection layer, a 2-layer MLP category head, and 2 within-heads
 
 #### forward(input_ids, attention_mask)
 
 - REQUIRES: `input_ids` is a tensor of shape `[B, seq_len]`. `attention_mask` is a tensor of shape `[B, seq_len]` with values 0 or 1.
-- ENSURES: Returns logits of shape `[B, num_classes]`.
+- ENSURES: Returns `(category_logits, within_logits)` where `category_logits` has shape `[B, num_categories]` and `within_logits` is a `dict[str, Tensor]` mapping each category name to `[B, cat_size]`.
   1. Token embeddings: `embedding(input_ids)` → `[B, seq_len, embedding_dim]`
   2. Embedding projection (when `embedding_dim` < 768): `embedding_projection(embeddings)` → `[B, seq_len, 768]`
   3. Transformer encoding (`num_hidden_layers` layers)
-  4. Mean pooling: `sum(output * mask.unsqueeze(-1)) / sum(mask).unsqueeze(-1)` per sequence
-  5. Linear projection: `nn.Linear(768, num_classes)` → `[B, num_classes]`
+  4. Mean pooling: `sum(output * mask.unsqueeze(-1)) / sum(mask).unsqueeze(-1)` per sequence → `[B, 768]`
+  5. Category head: `Linear(768, 384) → ReLU → Dropout → Linear(384, num_categories)` → `[B, num_categories]`
+  6. Per-category within-heads: for each category, `Linear(768, cat_size)` → `[B, cat_size]`
 
 #### Class-weighted cross-entropy loss with class-conditional label smoothing
 
@@ -920,26 +921,28 @@ MLX port of the tactic classifier model, architecturally identical to the PyTorc
 
 #### Construction
 
-`MLXTacticClassifier(vocab_size, num_classes, num_layers=6, hidden_size=768, num_heads=12, embedding_dim=128)`
+`MLXTacticClassifier(vocab_size, num_classes, num_layers=6, hidden_size=768, num_heads=12, embedding_dim=128, per_category_sizes=None, num_categories=8)`
 
-- REQUIRES: `vocab_size` is a positive integer matching the closed vocabulary size. `num_classes` is a positive integer matching the number of tactic families. `num_layers` is in {4, 6, 12}. `embedding_dim` is a positive integer.
+- REQUIRES: `vocab_size` is a positive integer matching the closed vocabulary size. `num_classes` is a positive integer matching the total number of tactic families. `num_layers` is in {4, 6, 12}. `embedding_dim` is a positive integer. `per_category_sizes` is a `dict[str, int]` mapping category names to within-category tactic counts.
 - ENSURES: Creates an `mlx.nn.Module` with:
   - `mlx.nn.Embedding(vocab_size, embedding_dim)` — token embedding layer
   - When `embedding_dim` < `hidden_size`: `mlx.nn.Linear(embedding_dim, hidden_size, bias=False)` — embedding projection layer (`self.embedding_projection`)
   - Transformer encoder with `num_layers` `mlx.nn.TransformerEncoderLayer` blocks, each with `hidden_size` hidden dimension and `num_heads` attention heads
   - No positional encoding module — position IDs are added as a learned embedding (position embedding remains at `hidden_size` dimensions)
-  - `mlx.nn.Linear(hidden_size, num_classes)` — classification head
+  - Category head (2-layer MLP): `mlx.nn.Linear(hidden_size, hidden_size // 2)` (`category_head_fc1`), `mlx.nn.Dropout(0.1)` (`category_dropout`), `mlx.nn.Linear(hidden_size // 2, num_categories)` (`category_head_fc2`). Forward: `ReLU(fc1(x)) → Dropout → fc2`
+  - Per-category within-heads: `dict[str, mlx.nn.Linear(hidden_size, cat_size)]`
 
 #### forward(input_ids, attention_mask)
 
 - REQUIRES: `input_ids` is an `mx.array` of shape `[B, seq_len]`. `attention_mask` is an `mx.array` of shape `[B, seq_len]` with values 0 or 1.
-- ENSURES: Returns logits of shape `[B, num_classes]`.
+- ENSURES: Returns `(category_logits, within_logits)` where `category_logits` has shape `[B, num_categories]` and `within_logits` is a `dict[str, mx.array]` mapping each category name to `[B, cat_size]`.
   1. Token embeddings: `embedding(input_ids)` → `[B, seq_len, embedding_dim]`
   2. Embedding projection (when `embedding_dim` < `hidden_size`): `embedding_projection(embeddings)` → `[B, seq_len, 768]`
   3. Add positional embeddings
   4. Transformer encoding (`num_layers` layers)
-  5. Mean pooling: `sum(output * mask) / sum(mask)` per sequence
-  6. Linear projection: `linear(pooled)` → `[B, num_classes]`
+  5. Mean pooling: `sum(output * mask) / sum(mask)` per sequence → `[B, 768]`
+  6. Category head: `ReLU(category_head_fc1(pooled)) → category_dropout → category_head_fc2` → `[B, num_categories]`
+  7. Per-category within-heads: for each category, `linear(pooled)` → `[B, cat_size]`
 
 #### load_codebert_weights(pytorch_model_name="microsoft/codebert-base")
 
@@ -1024,7 +1027,7 @@ Checkpoints are saved as a directory:
 ```
 <output_dir>/
 ├── model.safetensors       # MLX model weights (mx.save_safetensors)
-├── config.json             # {"vocab_size": int, "num_classes": int, "num_layers": 6, "hidden_size": 768, "num_heads": 12, "embedding_dim": 128}
+├── config.json             # {"vocab_size": int, "num_classes": int, "num_layers": 6, "hidden_size": 768, "num_heads": 12, "embedding_dim": 128, "per_category_sizes": dict, "num_categories": int}
 ├── hyperparams.json        # Training hyperparameters used
 ├── label_map.json          # Tactic family name → class index mapping
 ├── vocabulary_path.txt     # Path to vocabulary JSON (single line)
@@ -1051,7 +1054,18 @@ Converts MLX-trained checkpoints to PyTorch format for the quantization and infe
 #### convert(mlx_checkpoint_dir, output_path)
 
 - REQUIRES: `mlx_checkpoint_dir` is a directory containing `model.safetensors`, `config.json`, `hyperparams.json`, `label_map.json`, and `vocabulary_path.txt` (as produced by `MLXTrainer`). `output_path` is a writable path. Both `mlx` and `torch` are installed.
-- ENSURES: Loads MLX weights from safetensors. Maps parameter names from MLX convention to PyTorch/HuggingFace convention (reverse of the table in 4.10). Converts each parameter: `mx.array` → `numpy` → `torch.Tensor`. Reads `embedding_dim` from `config.json` (default 768). Creates a PyTorch `TacticClassifier` with the same architecture, vocabulary size, `num_classes`, and `embedding_dim`. When `embedding_dim` < 768, the `embedding_projection.weight` parameter is included in the conversion. Loads the converted state dict. Validates conversion quality. Saves as a PyTorch checkpoint (`.pt`) with `model_state_dict`, `hyperparams`, `vocabulary_path`, `label_map`, `embedding_dim`, `epoch`, and `best_accuracy_5`.
+- ENSURES: Loads MLX weights from safetensors. Maps parameter names from MLX convention to PyTorch/HuggingFace convention (reverse of the table in 4.10, plus category head mapping below). Converts each parameter: `mx.array` → `numpy` → `torch.Tensor`. Reads `embedding_dim` and `per_category_sizes` from `config.json`. Creates a PyTorch `HierarchicalTacticClassifier` with the same architecture. When `embedding_dim` < 768, the `embedding_projection.weight` parameter is included in the conversion. Loads the converted state dict. Validates conversion quality. Saves as a PyTorch checkpoint (`.pt`) with `model_state_dict`, `hyperparams`, `vocabulary_path`, `label_map`, `embedding_dim`, `per_category_sizes`, `num_categories`, `epoch`, and `best_accuracy_5`.
+
+**Category head parameter mapping (MLX → PyTorch):**
+
+| MLX name | PyTorch name |
+|----------|-------------|
+| `category_head_fc1.weight` | `category_head.0.weight` |
+| `category_head_fc1.bias` | `category_head.0.bias` |
+| `category_head_fc2.weight` | `category_head.3.weight` |
+| `category_head_fc2.bias` | `category_head.3.bias` |
+
+PyTorch `nn.Sequential` indices: 0=Linear, 1=ReLU, 2=Dropout, 3=Linear. Within-heads (`within_heads.<category>.{weight,bias}`) use identical names in both frameworks.
 
 **Validation step:**
 

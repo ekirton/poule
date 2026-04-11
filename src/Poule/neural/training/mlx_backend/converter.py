@@ -57,8 +57,10 @@ _DIRECT_MAPPING = {
     "classifier.weight": "classifier.weight",
     "classifier.bias": "classifier.bias",
     "embedding_projection.weight": "embedding_projection.weight",
-    "category_head.weight": "category_head.weight",
-    "category_head.bias": "category_head.bias",
+    "category_head_fc1.weight": "category_head.0.weight",
+    "category_head_fc1.bias": "category_head.0.bias",
+    "category_head_fc2.weight": "category_head.3.weight",
+    "category_head_fc2.bias": "category_head.3.bias",
 }
 
 # within_heads.<category>.{weight,bias} are mapped dynamically since
