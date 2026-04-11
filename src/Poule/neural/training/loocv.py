@@ -177,12 +177,12 @@ def _train_and_evaluate_fold(
     if backend == "mlx":
         from Poule.neural.training.mlx_backend.trainer import MLXTrainer
 
-        trainer = MLXTrainer(hyperparams=hyperparams or None)
+        trainer = MLXTrainer()
         trainer.train(
             dataset,
-            tokenizer,
-            output_path=checkpoint_path.parent,
+            output_dir=checkpoint_path.parent,
             vocabulary_path=vocabulary_path,
+            hyperparams=hyperparams or None,
         )
     else:
         from Poule.neural.training.trainer import TacticClassifierTrainer
@@ -196,16 +196,27 @@ def _train_and_evaluate_fold(
         )
 
     # Evaluate on the test split (held-out library)
+    import torch
     from Poule.neural.training.evaluator import TacticEvaluator
+    from Poule.neural.training.model import HierarchicalTacticClassifier
+    from Poule.neural.training.trainer import load_checkpoint
 
-    evaluator = TacticEvaluator()
-    report = evaluator.evaluate(
-        checkpoint_path=checkpoint_path,
-        test_pairs=dataset.test_pairs,
-        label_names=dataset.label_names,
+    # The MLX backend converts to PyTorch checkpoint as "model.pt" in the output dir;
+    # checkpoint_path may be "checkpoint.pt" which doesn't exist after MLX training.
+    pt_path = checkpoint_path.parent / "model.pt" if not checkpoint_path.exists() else checkpoint_path
+    ckpt = load_checkpoint(pt_path)
+    label_map = ckpt.get("label_map", {})
+    label_names = sorted(label_map.keys(), key=lambda k: label_map[k])
+    device = torch.device("cpu")
+    model = HierarchicalTacticClassifier.from_checkpoint(ckpt)
+    model = model.to(device)
+    model.eval()
+    evaluator = TacticEvaluator(
+        model, tokenizer, label_names, device,
         category_names=dataset.category_names,
-        per_category_label_names=dataset.per_category_label_names,
+        per_category_label_names=dict(dataset.per_category_label_names),
     )
+    report = evaluator.evaluate(dataset.test_pairs)
 
     # Compute per-family recall and dead families
     per_family_recall: dict[str, float] = {}
