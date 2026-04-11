@@ -51,6 +51,7 @@ TUNABLE_HYPERPARAMS: dict[str, dict[str, Any]] = {
     "label_smoothing": {"low": 0.0, "high": 0.2},
     "sam_rho": {"low": 0.01, "high": 0.2, "log": True},
     "lambda_within": {"low": 0.3, "high": 3.0, "log": True},
+    "focal_gamma": {"low": 0.0, "high": 5.0},
 }
 
 
@@ -181,6 +182,11 @@ class HyperparameterTuner:
                     TUNABLE_HYPERPARAMS["lambda_within"]["low"],
                     TUNABLE_HYPERPARAMS["lambda_within"]["high"],
                     log=TUNABLE_HYPERPARAMS["lambda_within"].get("log", False),
+                ),
+                "focal_gamma": trial.suggest_float(
+                    "focal_gamma",
+                    TUNABLE_HYPERPARAMS["focal_gamma"]["low"],
+                    TUNABLE_HYPERPARAMS["focal_gamma"]["high"],
                 ),
             }
 

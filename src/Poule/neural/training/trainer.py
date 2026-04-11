@@ -33,6 +33,7 @@ DEFAULT_HYPERPARAMS = {
     "sam_rho": 0.05,
     "embedding_dim": 128,
     "lambda_within": 1.0,
+    "focal_gamma": 0.0,
 }
 
 
@@ -434,6 +435,7 @@ class TacticClassifierTrainer:
         alpha = hp.get("class_weight_alpha", 0.5)
         label_smoothing = hp.get("label_smoothing", 0.1)
         lambda_within = hp.get("lambda_within", 1.0)
+        focal_gamma = hp.get("focal_gamma", 0.0)
 
         if is_hierarchical:
             from Poule.neural.training.loss import hierarchical_loss
@@ -462,7 +464,7 @@ class TacticClassifierTrainer:
                 return hierarchical_loss(
                     cat_logits, within_logits, cat_labels, within_labels,
                     category_weights, per_cat_weights, dataset.category_names,
-                    label_smoothing, lambda_within,
+                    label_smoothing, lambda_within, focal_gamma,
                 )
         else:
             num_classes = len(label_names)
@@ -471,7 +473,7 @@ class TacticClassifierTrainer:
             ).to(device)
             from Poule.neural.training.loss import class_conditional_cross_entropy
             criterion = lambda logits, labels: class_conditional_cross_entropy(
-                logits, labels, class_weights, label_smoothing,
+                logits, labels, class_weights, label_smoothing, focal_gamma,
             )
 
         # Optimizer: SAM-AdamW or plain AdamW

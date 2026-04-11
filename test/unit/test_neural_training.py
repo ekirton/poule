@@ -1146,6 +1146,7 @@ class TestTacticClassifierTrainerHyperparams:
         assert trainer.hyperparams["label_smoothing"] == 0.1
         assert trainer.hyperparams["sam_rho"] == 0.05
         assert trainer.hyperparams["lambda_within"] == 1.0
+        assert trainer.hyperparams["focal_gamma"] == 0.0
 
     def test_custom_hyperparameters_override_defaults(self):
         """spec §4.3: Caller can override defaults."""
@@ -1241,6 +1242,100 @@ class TestClassConditionalLabelSmoothing:
 
         sums = targets.sum(dim=-1)
         assert torch.allclose(sums, torch.ones(3))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 7a-ii. Focal Loss Modulation
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestFocalLoss:
+    """spec §4.3: Focal modulation down-weights well-classified (easy) examples."""
+
+    def test_gamma_zero_matches_standard_loss(self):
+        """When focal_gamma=0, loss equals standard class-conditional cross-entropy."""
+        import torch
+
+        from Poule.neural.training.loss import class_conditional_cross_entropy
+
+        logits = torch.randn(8, 5)
+        labels = torch.randint(0, 5, (8,))
+        weights = torch.ones(5)
+
+        loss_no_focal = class_conditional_cross_entropy(logits, labels, weights, 0.1)
+        loss_focal_0 = class_conditional_cross_entropy(
+            logits, labels, weights, 0.1, focal_gamma=0.0,
+        )
+        assert torch.allclose(loss_no_focal, loss_focal_0)
+
+    def test_focal_reduces_easy_sample_loss(self):
+        """High-confidence predictions get lower loss with gamma > 0."""
+        import torch
+
+        from Poule.neural.training.loss import class_conditional_cross_entropy
+
+        # Create logits where model is very confident on true class
+        logits = torch.tensor([[10.0, -5.0, -5.0]])  # p_t ≈ 1.0
+        labels = torch.tensor([0])
+        weights = torch.ones(3)
+
+        loss_standard = class_conditional_cross_entropy(
+            logits, labels, weights, 0.0,
+        )
+        loss_focal = class_conditional_cross_entropy(
+            logits, labels, weights, 0.0, focal_gamma=2.0,
+        )
+        # Focal loss should be much smaller for easy examples
+        assert loss_focal < loss_standard * 0.1
+
+    def test_focal_preserves_hard_sample_loss(self):
+        """Low-confidence predictions get similar loss with gamma > 0."""
+        import torch
+
+        from Poule.neural.training.loss import class_conditional_cross_entropy
+
+        # Create logits where model is uncertain (uniform-ish)
+        logits = torch.tensor([[0.1, 0.0, -0.1]])  # p_t ≈ 0.33
+        labels = torch.tensor([0])
+        weights = torch.ones(3)
+
+        loss_standard = class_conditional_cross_entropy(
+            logits, labels, weights, 0.0,
+        )
+        loss_focal = class_conditional_cross_entropy(
+            logits, labels, weights, 0.0, focal_gamma=2.0,
+        )
+        # Hard sample loss should be within ~50% (modulator ≈ (1-0.33)^2 ≈ 0.45)
+        assert loss_focal > loss_standard * 0.3
+
+    def test_focal_weight_formula(self):
+        """Verify (1-p_t)^gamma scaling matches the spec formula."""
+        import torch
+
+        from Poule.neural.training.loss import class_conditional_cross_entropy
+
+        logits = torch.tensor([[2.0, 0.0, 0.0]])
+        labels = torch.tensor([0])
+        weights = torch.ones(3)
+
+        # Compute expected p_t
+        probs = torch.softmax(logits, dim=-1)
+        p_t = probs[0, 0].item()
+        expected_focal_weight = (1.0 - p_t) ** 2.0
+
+        loss_standard = class_conditional_cross_entropy(
+            logits, labels, weights, 0.0,
+        )
+        loss_focal = class_conditional_cross_entropy(
+            logits, labels, weights, 0.0, focal_gamma=2.0,
+        )
+        # focal_loss ≈ standard_loss * focal_weight
+        assert abs(loss_focal.item() - loss_standard.item() * expected_focal_weight) < 1e-5
+
+    def test_focal_gamma_in_default_hyperparams(self):
+        """focal_gamma appears in DEFAULT_HYPERPARAMS with default 0.0."""
+        assert "focal_gamma" in DEFAULT_HYPERPARAMS
+        assert DEFAULT_HYPERPARAMS["focal_gamma"] == 0.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════

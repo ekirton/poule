@@ -42,6 +42,7 @@ def class_conditional_cross_entropy(
     labels: torch.Tensor,
     class_weights: torch.Tensor,
     label_smoothing: float,
+    focal_gamma: float = 0.0,
 ) -> torch.Tensor:
     """Weighted cross-entropy with class-conditional label smoothing.
 
@@ -50,6 +51,8 @@ def class_conditional_cross_entropy(
         labels: [B] integer class labels.
         class_weights: [num_classes] per-class inverse-frequency weights.
         label_smoothing: smoothing parameter e in [0, 1).
+        focal_gamma: focusing parameter (Lin et al., 2017). When > 0,
+            down-weights easy examples via (1 - p_t)^gamma modulation.
 
     Returns:
         Scalar loss (weighted mean over batch).
@@ -57,6 +60,12 @@ def class_conditional_cross_entropy(
     targets = _smooth_targets(labels, class_weights, label_smoothing)  # [B, C]
     log_probs = F.log_softmax(logits, dim=-1)  # [B, C]
     per_sample_loss = -(targets * log_probs).sum(dim=-1)  # [B]
+
+    # Focal modulation: down-weight easy (high p_t) examples
+    if focal_gamma > 0.0:
+        probs = torch.softmax(logits, dim=-1)  # [B, C]
+        p_t = probs[torch.arange(logits.size(0)), labels]  # [B]
+        per_sample_loss = per_sample_loss * (1.0 - p_t) ** focal_gamma
 
     sample_weights = class_weights[labels]  # [B]
     return (per_sample_loss * sample_weights).sum() / sample_weights.sum()
@@ -72,6 +81,7 @@ def hierarchical_loss(
     category_names: list[str],
     label_smoothing: float,
     lambda_within: float = 1.0,
+    focal_gamma: float = 0.0,
 ) -> torch.Tensor:
     """Hierarchical loss: L = L_category + lambda * L_within(active head).
 
@@ -88,6 +98,7 @@ def hierarchical_loss(
         category_names: ordered list of category names (index -> name).
         label_smoothing: smoothing parameter.
         lambda_within: balancing weight for within-category loss.
+        focal_gamma: focusing parameter for focal loss modulation.
 
     Returns:
         Scalar combined loss.
@@ -95,6 +106,7 @@ def hierarchical_loss(
     # Category loss
     l_category = class_conditional_cross_entropy(
         category_logits, category_labels, category_weights, label_smoothing,
+        focal_gamma,
     )
 
     # Within-category loss: gather samples per true category
@@ -112,6 +124,7 @@ def hierarchical_loss(
 
         cat_loss = class_conditional_cross_entropy(
             cat_logits, cat_within_labels, cat_weights, label_smoothing,
+            focal_gamma,
         )
         n = mask.sum().item()
         l_within = l_within + cat_loss * n

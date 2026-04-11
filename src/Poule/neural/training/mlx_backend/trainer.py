@@ -104,6 +104,7 @@ class MLXTrainer:
         patience = hp["early_stopping_patience"]
         class_weight_alpha = hp.get("class_weight_alpha", 0.5)
         lambda_within = hp.get("lambda_within", 1.0)
+        focal_gamma = hp.get("focal_gamma", 0.0)
 
         train_pairs = dataset.train_pairs
         if len(train_pairs) < 1000:
@@ -299,13 +300,16 @@ class MLXTrainer:
                             category_weights, per_cat_weights,
                             dataset.category_names, lambda_within,
                             batch_cat_indices=batch_cat_idx,
+                            focal_gamma=focal_gamma,
                         )
                 else:
                     labels = all_labels[batch_start:end]
 
                     def loss_fn(model):
                         logits = model(s_ids, s_mask)
-                        return cross_entropy_loss(logits, labels, class_weights)
+                        return cross_entropy_loss(
+                            logits, labels, class_weights, focal_gamma,
+                        )
 
                 loss, grads = nn.value_and_grad(model, loss_fn)(model)
                 optimizer.update(model, grads)

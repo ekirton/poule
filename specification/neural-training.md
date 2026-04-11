@@ -584,6 +584,8 @@ All steps from the same file go into the same split.
 | `embedding_dim` | 128 | Must be positive. When equal to `hidden_size` (768), no projection is applied. |
 | `undersample_cap` | None | When not None, must be a positive integer. Passed to `undersample_train()` before training begins. |
 | `undersample_seed` | 42 | Integer seed for reproducible undersampling. |
+| `lambda_within` | 1.0 | Must be positive. Balancing weight for within-category loss in hierarchical mode. |
+| `focal_gamma` | 0.0 | Must be non-negative. When 0.0, no focal modulation (backward compatible). |
 
 #### Model architecture: HierarchicalTacticClassifier
 
@@ -661,8 +663,35 @@ loss = -sum(y_target * log_softmax(logits)) * class_weight[label] / mean(class_w
 
 This directs more smoothing probability mass toward minority classes (which have higher class weights). When `label_smoothing=0.0`, standard hard targets are used (backward compatible with uniform smoothing at ε=0).
 
+#### Focal modulation
+
+When `focal_gamma > 0`, the per-sample loss is modulated by a focal factor (Lin et al., 2017) that down-weights well-classified (easy) examples:
+
+```
+p_t = softmax(logits)[true_label]
+focal_weight = (1 - p_t) ^ focal_gamma
+per_sample_loss = focal_weight * cross_entropy
+```
+
+where `p_t` is the predicted probability of the true class. The focal weight is applied per-sample before the weighted mean reduction, composing with both class weighting and label smoothing. When `focal_gamma=0.0`, `focal_weight = 1` for all samples (no modulation, backward compatible).
+
+- MAINTAINS: Focal modulation is applied per-sample before the weighted mean reduction. It composes with both class weighting and label smoothing.
+- MAINTAINS: `p_t` is computed from the original logits via softmax, not from the smoothed targets.
+
+> **Given** `focal_gamma=0.0`
+> **When** the loss is computed
+> **Then** the result is identical to standard class-conditional cross-entropy (focal_weight = 1 for all samples)
+
+> **Given** `focal_gamma=2.0` and a sample predicted with `p_t=0.9`
+> **When** the focal weight is computed
+> **Then** `focal_weight = (1 - 0.9)^2 = 0.01` (loss scaled down 100×)
+
+> **Given** `focal_gamma=2.0` and a sample predicted with `p_t=0.1`
+> **When** the focal weight is computed
+> **Then** `focal_weight = (1 - 0.1)^2 = 0.81` (loss nearly unchanged)
+
 - MAINTAINS: Class weights are computed once from the training split before training begins and remain fixed throughout training.
-- MAINTAINS: The smooth distribution is derived from the same class weights used for loss weighting. No additional hyperparameters are introduced.
+- MAINTAINS: The smooth distribution is derived from the same class weights used for loss weighting.
 
 > **Given** a training set with 3 families: `apply` (5000), `intros` (4000), `simpl` (1000), alpha=0.5
 > **When** class weights are computed (total=10000, num_classes=3)
@@ -853,6 +882,8 @@ Automated hyperparameter optimization using Optuna to maximize validation accura
 | `class_weight_alpha` | Uniform | [0.0, 1.0] | 0.5 |
 | `label_smoothing` | Uniform | [0.0, 0.3] | 0.1 |
 | `sam_rho` | Log-uniform | [0.01, 0.2] | 0.05 |
+| `lambda_within` | Log-uniform | [0.3, 3.0] | 1.0 |
+| `focal_gamma` | Uniform | [0.0, 5.0] | 0.0 |
 
 All other hyperparameters (`max_seq_length`, `embedding_dim`, `max_epochs`, `early_stopping_patience`) are fixed at their default values and not tunable.
 

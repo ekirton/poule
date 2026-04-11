@@ -15,6 +15,7 @@ def cross_entropy_loss(
     logits: mx.array,
     labels: mx.array,
     class_weights: mx.array | None = None,
+    focal_gamma: float = 0.0,
 ) -> mx.array:
     """Compute weighted cross-entropy loss.
 
@@ -23,6 +24,8 @@ def cross_entropy_loss(
         labels: [B] integer class labels.
         class_weights: [num_classes] per-class inverse-frequency weights.
             If None, all classes are weighted equally.
+        focal_gamma: focusing parameter (Lin et al., 2017). When > 0,
+            down-weights easy examples via (1 - p_t)^gamma modulation.
 
     Returns:
         Scalar loss averaged over the batch (weighted mean).
@@ -38,6 +41,12 @@ def cross_entropy_loss(
     one_hot = mx.zeros((B, num_classes))
     one_hot = one_hot.at[mx.arange(B), labels].add(mx.ones((B,)))
     nll = -(one_hot * log_probs).sum(axis=-1)  # [B]
+
+    # Focal modulation: down-weight easy (high p_t) examples
+    if focal_gamma > 0.0:
+        probs = mx.softmax(logits, axis=-1)  # [B, C]
+        p_t = (one_hot * probs).sum(axis=-1)  # [B]
+        nll = nll * (1.0 - p_t) ** focal_gamma
 
     if class_weights is not None:
         # Per-sample weight from its true class
@@ -84,6 +93,7 @@ def hierarchical_loss_mlx(
     category_names: list[str],
     lambda_within: float = 1.0,
     batch_cat_indices: list[mx.array] | None = None,
+    focal_gamma: float = 0.0,
 ) -> mx.array:
     """Hierarchical loss: L = L_category + lambda * L_within(active head).
 
@@ -103,7 +113,9 @@ def hierarchical_loss_mlx(
     Returns:
         Scalar combined loss.
     """
-    l_category = cross_entropy_loss(category_logits, category_labels, category_weights)
+    l_category = cross_entropy_loss(
+        category_logits, category_labels, category_weights, focal_gamma,
+    )
 
     l_within = mx.array(0.0)
     total_weight = 0.0
@@ -118,7 +130,9 @@ def hierarchical_loss_mlx(
             cat_within_labels = within_labels[idx]
             cat_logits = within_logits[cat_name][idx]
             cat_weights = per_category_weights[cat_name]
-            cat_loss = cross_entropy_loss(cat_logits, cat_within_labels, cat_weights)
+            cat_loss = cross_entropy_loss(
+                cat_logits, cat_within_labels, cat_weights, focal_gamma,
+            )
             l_within = l_within + cat_loss * n
             total_weight += n
     else:
@@ -134,7 +148,9 @@ def hierarchical_loss_mlx(
             cat_within_labels = within_labels[idx]
             cat_logits = within_logits[cat_name][idx]
             cat_weights = per_category_weights[cat_name]
-            cat_loss = cross_entropy_loss(cat_logits, cat_within_labels, cat_weights)
+            cat_loss = cross_entropy_loss(
+                cat_logits, cat_within_labels, cat_weights, focal_gamma,
+            )
             l_within = l_within + cat_loss * n
             total_weight += n
 
