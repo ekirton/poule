@@ -64,10 +64,10 @@ Cross-references:
 | ID | Requirement |
 |----|-------------|
 | R6-P0-1 | Train a hierarchical tactic classifier on `(proof_state, tactic_text)` pairs extracted by the Training Data Extraction pipeline, predicting both tactic category and specific tactic family |
-| R6-P0-2 | Classify tactics into 8 categories (introduction, elimination, rewriting, hypothesis management, automation, arithmetic, contradiction, ssreflect) with ~65 within-category tactic families, covering >99% of extracted proof steps |
+| R6-P0-2 | Classify tactics into 6 categories (introduction, elimination, rewriting, hypothesis management, automation, other) with within-category tactic families, covering >99% of extracted proof steps. The "other" category is a catch-all for tactics not in the top 5 categories (arithmetic, contradiction, ssreflect tactics). |
 | R6-P0-3 | Handle class imbalance via hierarchical weighted cross-entropy loss with inverse-frequency class weights at both category and within-category levels |
 | R6-P0-16 | Exclude proof structure tokens (`-`, `+`, `*`, `{`, `}`) from training — they are not tactics and are trivially predictable from subgoal count |
-| R6-P0-17 | Eliminate the "other" catch-all class — every tactic maps to a known category via a canonical taxonomy |
+| R6-P0-17 | Every tactic maps to a known category via a canonical taxonomy. Tactics in rare categories (arithmetic, contradiction, ssreflect) are grouped into an "other" catch-all category. |
 | R6-P0-4 | Integrate neural predictions into the existing `suggest_tactics` MCP tool, ranking neural predictions above rule-based fallbacks |
 | R6-P0-5 | Inference latency < 50ms per proof state on CPU without GPU |
 | R6-P0-6 | Support INT8 quantized inference for the classifier model on CPU |

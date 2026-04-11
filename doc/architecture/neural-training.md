@@ -214,7 +214,7 @@ The tactic family is extracted from the raw tactic text:
 
 ### Hierarchical Tactic Taxonomy
 
-Every tactic maps to exactly one of 8 categories via a canonical taxonomy (`taxonomy.py`). The "other" catch-all class is eliminated. Proof structure tokens (`-`, `+`, `*`, `{`, `}`) are excluded from training.
+Every tactic maps to one of 6 categories via a canonical taxonomy (`taxonomy.py`). The top 5 categories cover >95% of extracted proof steps. Tactics from rare categories (arithmetic, contradiction, ssreflect) are grouped into an "other" catch-all. Proof structure tokens (`-`, `+`, `*`, `{`, `}`) are excluded from training.
 
 | Category | Example tactics | Estimated % |
 |----------|----------------|----------:|
@@ -223,28 +223,22 @@ Every tactic maps to exactly one of 8 categories via a canonical taxonomy (`taxo
 | Introduction | intros, split, left, right, exact | 12.2% |
 | Elimination | destruct, induction, case, inversion | 7.0% |
 | Automation | auto, eauto, trivial, tauto | 4.1% |
-| SSReflect | move, suff, wlog, congr | 3.9% |
-| Arithmetic | lia, omega, ring, field | 1-2% |
-| Contradiction | exfalso, absurd, contradiction | <1% |
-
-Cross-category IR drops from 26,950:1 to ~6:1. Within-category IR is at most ~14:1.
+| Other | lia, omega, ring, field, exfalso, absurd, contradiction, move, suff, wlog, congr | ~5% |
 
 ### Hierarchical Architecture
 
 ```
 Encoder (shared, factored embeddings D=128, CodeBERT) → representation z [B, 768]
     ↓
-Category Head: MLP(768 → 384 → 8) with ReLU + Dropout → category logits [B, 8]
+Category Head: MLP(768 → 384 → 6) with ReLU + Dropout → category logits [B, 6]
     ↓
-Per-Category Heads (8 heads):
+Per-Category Heads (6 heads):
     introduction_head:    nn.Linear(768, N_introduction)
     elimination_head:     nn.Linear(768, N_elimination)
     rewriting_head:       nn.Linear(768, N_rewriting)
     hypothesis_mgmt_head: nn.Linear(768, N_hypothesis_mgmt)
     automation_head:      nn.Linear(768, N_automation)
-    arithmetic_head:      nn.Linear(768, N_arithmetic)
-    contradiction_head:   nn.Linear(768, N_contradiction)
-    ssreflect_head:       nn.Linear(768, N_ssreflect)
+    other_head:           nn.Linear(768, N_other)
 ```
 
 Joint loss: `L = L_category + λ · L_within(active head)`, where λ balances category vs. within-category loss (default 1.0, tunable [0.3, 3.0]).

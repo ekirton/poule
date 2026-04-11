@@ -353,7 +353,7 @@ After all steps are extracted, build hierarchical labels from the taxonomy (§4.
 
 1. Import `CATEGORY_NAMES`, `TACTIC_CATEGORIES`, `TACTIC_TO_CATEGORY`, and `EXCLUDED_TOKENS` from the taxonomy module.
 2. Skip proof structure tokens listed in `EXCLUDED_TOKENS`.
-3. Skip tactics not present in `TACTIC_TO_CATEGORY`. There is no `"other"` catch-all.
+3. Skip tactics not present in `TACTIC_TO_CATEGORY`. Tactics from rare categories (arithmetic, contradiction, ssreflect) are mapped to the `"other"` category.
 4. For each tactic family, assign a `category_idx` (index into `CATEGORY_NAMES`) and a `within_idx` (index into that category's tactic list from `TACTIC_CATEGORIES`).
 5. Build a flat `label_map` for backward compatibility by concatenating all per-category tactic lists in category order.
 
@@ -362,7 +362,7 @@ After all steps are extracted, build hierarchical labels from the taxonomy (§4.
 
 > **Given** extracted steps with families: `apply` (5000), `rewrite` (3000), `lia` (10), `intros` (4000)
 > **When** hierarchical labels are built from the taxonomy
-> **Then** each family maps to its category (e.g., `apply` → `elimination`, `intros` → `introduction`) and within-category index. All families are included; `lia` is not collapsed to `"other"`.
+> **Then** each family maps to its category (e.g., `apply` → `hypothesis_mgmt`, `intros` → `introduction`, `lia` → `other`) and within-category index.
 
 #### TacticDataset
 
@@ -921,7 +921,7 @@ MLX port of the tactic classifier model, architecturally identical to the PyTorc
 
 #### Construction
 
-`MLXTacticClassifier(vocab_size, num_classes, num_layers=6, hidden_size=768, num_heads=12, embedding_dim=128, per_category_sizes=None, num_categories=8)`
+`MLXTacticClassifier(vocab_size, num_classes, num_layers=6, hidden_size=768, num_heads=12, embedding_dim=128, per_category_sizes=None, num_categories=6)`
 
 - REQUIRES: `vocab_size` is a positive integer matching the closed vocabulary size. `num_classes` is a positive integer matching the total number of tactic families. `num_layers` is in {4, 6, 12}. `embedding_dim` is a positive integer. `per_category_sizes` is a `dict[str, int]` mapping category names to within-category tactic counts.
 - ENSURES: Creates an `mlx.nn.Module` with:

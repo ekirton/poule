@@ -2,8 +2,8 @@
 
 Single source of truth for category mapping. All other files import from here.
 
-Eight categories derived from the Coq tactic reference
-(doc/background/coq-tactics.md).
+Six categories: top 5 by frequency plus "other" as catch-all for rare
+categories (arithmetic, contradiction, ssreflect).
 """
 
 from __future__ import annotations
@@ -16,9 +16,7 @@ CATEGORY_NAMES: list[str] = [
     "rewriting",
     "hypothesis_mgmt",
     "automation",
-    "arithmetic",
-    "contradiction",
-    "ssreflect",
+    "other",
 ]
 
 # Tactics per category. Each tactic maps to exactly one category.
@@ -45,13 +43,12 @@ TACTIC_CATEGORIES: dict[str, list[str]] = {
         "auto", "eauto", "trivial", "tauto", "intuition", "firstorder",
         "decide", "now", "easy", "assumption",
     ],
-    "arithmetic": [
+    "other": [
+        # Arithmetic (formerly its own category)
         "lia", "omega", "ring", "field",
-    ],
-    "contradiction": [
+        # Contradiction (formerly its own category)
         "exfalso", "absurd", "contradiction",
-    ],
-    "ssreflect": [
+        # SSReflect (formerly its own category)
         "move", "suff", "wlog", "congr", "unlock",
     ],
 }
