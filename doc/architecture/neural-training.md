@@ -234,7 +234,7 @@ Cross-category IR drops from 26,950:1 to ~6:1. Within-category IR is at most ~14
 ```
 Encoder (shared, factored embeddings D=128, CodeBERT) → representation z [B, 768]
     ↓
-Category Head: nn.Linear(768, 8) → category logits [B, 8]
+Category Head: MLP(768 → 384 → 8) with ReLU + Dropout → category logits [B, 8]
     ↓
 Per-Category Heads (8 heads):
     introduction_head:    nn.Linear(768, N_introduction)

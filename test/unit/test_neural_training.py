@@ -958,6 +958,101 @@ class TestEmbeddingFactorization:
         assert factored_params < standard_params
 
 
+class TestCategoryHeadMLP:
+    """spec §4.3: Category head is a 2-layer MLP with ReLU and Dropout."""
+
+    def test_category_head_is_sequential(self):
+        """spec §4.3: Category head is nn.Sequential, not nn.Linear."""
+        import torch.nn as nn
+        from Poule.neural.training.model import HierarchicalTacticClassifier
+
+        per_cat = {"rewriting": 3, "elimination": 2}
+        with patch("Poule.neural.training.model.AutoModel") as mock_auto:
+            mock_auto.from_pretrained.return_value = _mock_encoder()
+            model = HierarchicalTacticClassifier(
+                per_category_sizes=per_cat,
+                num_categories=2,
+                vocab_size=100,
+                num_hidden_layers=6,
+                embedding_dim=128,
+            )
+        assert isinstance(model.category_head, nn.Sequential)
+        # Sequential should have 4 modules: Linear, ReLU, Dropout, Linear
+        assert len(model.category_head) == 4
+        assert isinstance(model.category_head[0], nn.Linear)
+        assert isinstance(model.category_head[1], nn.ReLU)
+        assert isinstance(model.category_head[2], nn.Dropout)
+        assert isinstance(model.category_head[3], nn.Linear)
+
+    def test_category_head_dimensions(self):
+        """spec §4.3: Category head MLP is 768 → 384 → num_categories."""
+        from Poule.neural.training.model import HierarchicalTacticClassifier
+
+        per_cat = {"rewriting": 3, "elimination": 2}
+        with patch("Poule.neural.training.model.AutoModel") as mock_auto:
+            mock_auto.from_pretrained.return_value = _mock_encoder()
+            model = HierarchicalTacticClassifier(
+                per_category_sizes=per_cat,
+                num_categories=2,
+                vocab_size=100,
+                num_hidden_layers=6,
+                embedding_dim=128,
+            )
+        # First linear: 768 → 384
+        assert model.category_head[0].in_features == 768
+        assert model.category_head[0].out_features == 384
+        # Second linear: 384 → num_categories
+        assert model.category_head[3].in_features == 384
+        assert model.category_head[3].out_features == 2
+
+    def test_hierarchical_forward_shapes(self):
+        """spec §4.3: Forward returns (category_logits, within_logits) with correct shapes."""
+        import torch
+        from Poule.neural.training.model import HierarchicalTacticClassifier
+
+        per_cat = {"rewriting": 3, "elimination": 2}
+        with patch("Poule.neural.training.model.AutoModel") as mock_auto:
+            mock_auto.from_pretrained.return_value = _mock_encoder()
+            model = HierarchicalTacticClassifier(
+                per_category_sizes=per_cat,
+                num_categories=2,
+                vocab_size=100,
+                num_hidden_layers=6,
+                embedding_dim=128,
+            )
+        model.eval()
+        with torch.no_grad():
+            cat_logits, within_logits = model(
+                torch.randint(0, 100, (4, 16)),
+                torch.ones(4, 16, dtype=torch.long),
+            )
+        assert cat_logits.shape == (4, 2)
+        assert within_logits["rewriting"].shape == (4, 3)
+        assert within_logits["elimination"].shape == (4, 2)
+
+    def test_from_checkpoint_reconstructs_mlp_category_head(self):
+        """spec §4.3: from_checkpoint reconstructs the 2-layer MLP category head."""
+        import torch.nn as nn
+        from Poule.neural.training.model import HierarchicalTacticClassifier
+
+        per_cat = {"rewriting": 3, "elimination": 2}
+        checkpoint = {
+            "model_state_dict": {},
+            "num_hidden_layers": 6,
+            "embedding_dim": 128,
+            "per_category_sizes": per_cat,
+            "num_categories": 2,
+        }
+        with patch.object(HierarchicalTacticClassifier, "load_state_dict"):
+            model = HierarchicalTacticClassifier.from_checkpoint(checkpoint)
+        assert isinstance(model.category_head, nn.Sequential)
+        assert len(model.category_head) == 4
+        assert model.category_head[0].in_features == 768
+        assert model.category_head[0].out_features == 384
+        assert model.category_head[3].in_features == 384
+        assert model.category_head[3].out_features == 2
+
+
 def _mock_encoder():
     """Create a minimal mock encoder for model construction tests."""
     import torch
