@@ -691,9 +691,60 @@ MathComp is excluded: 71% of its steps use SSReflect-dialect tactics (`by` alone
 
 5-fold cross-validation across stdlib, stdpp, flocq, coquelicot, coqinterval (vanilla-Coq libraries only; MathComp excluded). Each fold holds out one library entirely as the test set, trains on the remaining libraries (with cap=1000 undersampling), and evaluates. Best HPO hyperparameters from the undersampled experiment are used (6 layers, lr=1.07e-5, batch_size=64, alpha=0.065, label_smoothing=0.190, sam_rho=0.180, lambda_within=1.93, embedding_dim=128).
 
+### Per-library category distribution
+
+The 5 vanilla-Coq libraries have distinct tactic profiles, which directly impacts cross-library transfer:
+
+| Category | stdlib | stdpp | flocq | coquelicot | coqinterval |
+|----------|--------|-------|-------|------------|-------------|
+| introduction | 21.9% | 26.1% | 12.7% | 14.7% | 16.9% |
+| elimination | 11.1% | 18.5% | 7.0% | 9.4% | 8.6% |
+| rewriting | 30.3% | 31.0% | 31.5% | 21.0% | 29.5% |
+| hypothesis_mgmt | 26.6% | 21.3% | 37.5% | 44.1% | 30.8% |
+| automation | 8.9% | 2.2% | 9.9% | 4.1% | 10.1% |
+| arithmetic | 0.9% | 0.9% | 1.3% | 0.6% | 0.9% |
+| contradiction | 0.3% | 0.1% | 0.2% | 0.1% | 0.0% |
+| ssreflect | 0.0% | 0.0% | 0.0% | 6.1% | 3.1% |
+| **Total samples** | **34,412** | **7,089** | **21,664** | **22,222** | **6,825** |
+
+Rewriting + hypothesis_mgmt account for 55–65% of all tactics across libraries, but the ratio shifts: flocq and coquelicot are hypothesis_mgmt-heavy (37–44%) while stdlib and stdpp are more balanced. SSReflect tactics appear only in coquelicot (6.1%) and coqinterval (3.1%) — when these libraries are held out, the training set has no SSReflect signal, and vice versa. Arithmetic and contradiction are vanishingly rare (<1.5%) everywhere, making them effectively unlearnable at this sample size.
+
 ### Results
 
-_Pending — run `poule loocv` to populate this section._
+LOOCV completed 2026-04-10. Each fold trains with cap=1000 undersampling using the best hyperparameters from the undersampled HPO (6 layers, lr=1.07e-5, batch_size=64, alpha=0.065, label_smoothing=0.190, sam_rho=0.180, lambda_within=1.93, embedding_dim=128). Total wall time: ~6.5 hours across 5 folds.
+
+**Final model evaluation** (cap=2000, random file-level split, 15,497 test samples):
+
+| Metric | Value |
+|--------|-------|
+| Category Accuracy@1 | 33.7% |
+| Accuracy@1 | 11.1% |
+| Accuracy@5 | 48.1% |
+| Zero-recall families | 43/65 |
+| Trainable coverage (≥20 examples) | 22/54 = 40.7% |
+
+**Per-fold results:**
+
+| Library | Acc@5 | Dead Families | Train | Test | Time |
+|---------|-------|---------------|-------|------|------|
+| stdlib | 37.4% | 52/65 | 20,381 | 34,412 | 70 min |
+| stdpp | 47.4% | 63/65 | 24,580 | 7,089 | 64 min |
+| flocq | 41.1% | 43/65 | 23,654 | 21,664 | 114 min |
+| coquelicot | 43.3% | 59/65 | 22,599 | 22,222 | 92 min |
+| coqinterval | 32.5% | 64/65 | 25,164 | 6,825 | 56 min |
+| **Mean** | **40.3% ± 5.7%** | **56.2** | | | |
+
+### Analysis: cross-library generalization
+
+The random-split acc@5 (48.1% with cap=2000) drops to 40.3% mean under LOOCV (cap=1000) — confirming that the model memorizes library-specific patterns rather than learning general tactic selection. The 8pp gap between the best fold (stdpp, 47.4%) and the overall mean is smaller than the 15pp gap between the best and worst folds (stdpp vs. coqinterval), indicating high variance across libraries.
+
+**Dead families are catastrophic.** The model averages 56.2 dead families per fold (of 65 total). Even the best fold (flocq, 43 dead) has two-thirds of families with zero recall. The model concentrates predictions on a handful of tactics and ignores the rest — the hierarchical structure and undersampling have not solved this.
+
+**coqinterval is a near-total failure** (64/65 dead families, only `unfold` has recall). Its proof style — interval arithmetic with specialized automation — is too different from the other 4 libraries. The model trained on stdlib/stdpp/flocq/coquelicot has essentially no transferable signal for coqinterval.
+
+**stdpp appears easiest despite having fewer families with recall (63 dead).** Its small test set (7,089) and overlap with stdlib-style tactics means the few families the model does predict cover a large fraction of stdpp's distribution.
+
+**flocq has the most diverse recall** (43 dead — the fewest). This library uses a wider range of tactics from multiple categories, and shares vocabulary with both stdlib and coquelicot, making it the best-connected node in the library graph.
 
 ## Implementation Scope
 
