@@ -472,12 +472,17 @@ class TrainingDataLoader:
         held_out_library: str,
         val_fraction: float = 0.1,
         seed: int = 42,
+        always_train_libraries: list[str] | None = None,
     ) -> TacticDataset:
         """Load training data with a library-level split.
 
         spec §4.1: Holds out one library entirely as the test set.
         Remaining libraries' files are shuffled and split into
         train/val by ``val_fraction``.
+
+        Libraries in ``always_train_libraries`` are always placed in the
+        training split, never in validation or test, regardless of the
+        held-out library.
         """
         import math
 
@@ -550,16 +555,21 @@ class TrainingDataLoader:
                         file_steps[source_file][1].append((state_text, family))
 
         # Phase 2: Split by library membership
+        always_train = set(always_train_libraries or [])
         held_out_files: list[str] = []
+        always_train_files: list[str] = []
         remaining_files: list[str] = []
 
         for filepath, (lib_name, _steps) in file_steps.items():
             if lib_name == held_out_library:
                 held_out_files.append(filepath)
+            elif lib_name in always_train:
+                always_train_files.append(filepath)
             else:
                 remaining_files.append(filepath)
 
         held_out_files.sort()
+        always_train_files.sort()
         remaining_files.sort()
 
         # Shuffle remaining files and split into train/val
@@ -568,7 +578,7 @@ class TrainingDataLoader:
         rng.shuffle(shuffled)
 
         split_idx = math.ceil(len(shuffled) * (1 - val_fraction))
-        train_file_set = set(shuffled[:split_idx])
+        train_file_set = set(shuffled[:split_idx]) | set(always_train_files)
         val_file_set = set(shuffled[split_idx:])
 
         # Build per-category counts

@@ -49,9 +49,10 @@ TUNABLE_HYPERPARAMS: dict[str, dict[str, Any]] = {
     "weight_decay": {"low": 1e-4, "high": 1e-1, "log": True},
     "class_weight_alpha": {"low": 0.0, "high": 1.0},
     "label_smoothing": {"low": 0.0, "high": 0.2},
-    "sam_rho": {"low": 0.01, "high": 0.2, "log": True},
+    "sam_rho": {"low": 0.15, "high": 0.3, "log": True},
     "lambda_within": {"low": 0.3, "high": 3.0, "log": True},
-    "focal_gamma": {"low": 0.0, "high": 5.0},
+    "ldam_C": {"low": 0.1, "high": 1.0},
+    "drw_start_fraction": {"low": 0.6, "high": 0.9},
 }
 
 
@@ -183,10 +184,15 @@ class HyperparameterTuner:
                     TUNABLE_HYPERPARAMS["lambda_within"]["high"],
                     log=TUNABLE_HYPERPARAMS["lambda_within"].get("log", False),
                 ),
-                "focal_gamma": trial.suggest_float(
-                    "focal_gamma",
-                    TUNABLE_HYPERPARAMS["focal_gamma"]["low"],
-                    TUNABLE_HYPERPARAMS["focal_gamma"]["high"],
+                "ldam_C": trial.suggest_float(
+                    "ldam_C",
+                    TUNABLE_HYPERPARAMS["ldam_C"]["low"],
+                    TUNABLE_HYPERPARAMS["ldam_C"]["high"],
+                ),
+                "drw_start_fraction": trial.suggest_float(
+                    "drw_start_fraction",
+                    TUNABLE_HYPERPARAMS["drw_start_fraction"]["low"],
+                    TUNABLE_HYPERPARAMS["drw_start_fraction"]["high"],
                 ),
             }
 

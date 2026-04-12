@@ -8,11 +8,11 @@ Lineage: Depends on Training Data Extraction for `(proof_state, tactic_text)` pa
 
 Students learning Coq need a thought partner who can suggest what tactic to try next and explain *why* it makes sense — linking the suggestion to proof strategy, mathematical intuition, and reference material so the student builds real understanding. Claude fills this role, but needs a signal for which tactics are most promising given the current proof state.
 
-The neural tactic predictor provides that signal. Trained on (proof_state, tactic) pairs from four vanilla-Coq libraries (stdlib, stdpp, flocq, coquelicot), it predicts which tactic family is most likely to make progress. MathComp and CoqInterval are excluded from training: MathComp uses a different tactic dialect (71% SSReflect) and CoqInterval's proof style is too specialized to transfer. Claude uses these predictions as a starting point to explain the reasoning behind each suggestion, linking to relevant textbook material and proof techniques as needed.
+The neural tactic predictor provides that signal. Trained on (proof_state, tactic) pairs from five Coq libraries (stdlib, stdpp, flocq, coquelicot, MathComp), it predicts which tactic family is most likely to make progress. MathComp is included because it provides the SSReflect training signal needed by the dedicated SSReflect category head. CoqInterval is excluded — its specialized interval-arithmetic proof style does not transfer to other libraries (LOOCV showed 64/65 dead families). Claude uses these predictions as a starting point to explain the reasoning behind each suggestion, linking to relevant textbook material and proof techniques as needed.
 
 This is not an automated prover. CoqHammer, Tactician, and similar solvers are mature products that aim to close proof goals without human involvement. The goal here is the opposite: keep the student in the loop, help them build intuition about proof structure, and accelerate learning by offering contextual suggestions with explanations. The model provides the "what to try next" signal; Claude provides the "why" and the pedagogical scaffolding.
 
-**What this initiative does:** Train a tactic family classifier on (proof_state, tactic_text) pairs extracted from four vanilla-Coq libraries, and integrate neural predictions into the existing `suggest_tactics` MCP tool. Claude uses these ranked suggestions to offer explained, contextual proof guidance. The classifier predicts which tactic family to apply; argument selection (e.g., which lemma to `apply`) remains a separate concern addressed by the existing rule-based system and premise retrieval in future work.
+**What this initiative does:** Train a tactic family classifier on (proof_state, tactic_text) pairs extracted from five Coq libraries (excluding CoqInterval), and integrate neural predictions into the existing `suggest_tactics` MCP tool. Claude uses these ranked suggestions to offer explained, contextual proof guidance. The classifier predicts which tactic family to apply; argument selection (e.g., which lemma to `apply`) remains a separate concern addressed by the existing rule-based system and premise retrieval in future work.
 
 **What this initiative does not do:** It does not compete with automated provers. It does not add a neural retrieval channel to Semantic Lemma Search. It does not predict full tactic text with arguments (that is a future generation task). It does not replace the rule-based `suggest_tactics` — it enhances it with learned predictions that rank above rule-based fallbacks.
 
@@ -64,10 +64,10 @@ Cross-references:
 | ID | Requirement |
 |----|-------------|
 | R6-P0-1 | Train a hierarchical tactic classifier on `(proof_state, tactic_text)` pairs extracted by the Training Data Extraction pipeline, predicting both tactic category and specific tactic family |
-| R6-P0-2 | Classify tactics into 6 categories (introduction, elimination, rewriting, hypothesis management, automation, other) with within-category tactic families, covering >99% of extracted proof steps. The "other" category is a catch-all for tactics not in the top 5 categories (arithmetic, contradiction, ssreflect tactics). |
-| R6-P0-3 | Handle class imbalance via hierarchical weighted cross-entropy loss with inverse-frequency class weights at both category and within-category levels |
+| R6-P0-2 | Classify tactics into 8 categories (introduction, elimination, rewriting, hypothesis management, automation, arithmetic, contradiction, ssreflect) with within-category tactic families, covering >99% of extracted proof steps |
+| R6-P0-3 | Handle class imbalance via LDAM (label-distribution-aware margin loss) with deferred re-balancing (DRW): class-dependent margin offsets penalize misclassification of rare tactics more heavily, combined with a two-phase training schedule that uses instance-balanced sampling initially and class-balanced sampling for the final training phase |
 | R6-P0-16 | Exclude proof structure tokens (`-`, `+`, `*`, `{`, `}`) from training — they are not tactics and are trivially predictable from subgoal count |
-| R6-P0-17 | Every tactic maps to a known category via a canonical taxonomy. Tactics in rare categories (arithmetic, contradiction, ssreflect) are grouped into an "other" catch-all category. |
+| R6-P0-17 | Every tactic maps to a known category via a canonical taxonomy. All 8 categories have dedicated classification heads. |
 | R6-P0-4 | Integrate neural predictions into the existing `suggest_tactics` MCP tool, ranking neural predictions above rule-based fallbacks |
 | R6-P0-5 | Inference latency < 50ms per proof state on CPU without GPU |
 | R6-P0-6 | Support INT8 quantized inference for the classifier model on CPU |
@@ -93,7 +93,7 @@ Cross-references:
 | R6-P1-5 | Report per-family precision and recall in evaluation, identifying which tactic families the model predicts well vs. poorly |
 | R6-P1-6 | Support fine-tuning the pre-trained classifier on a user's project-specific extracted data |
 | R6-P1-8 | Cap dominant tactic families in the training split to a configurable maximum number of examples per family, reducing head-class redundancy and increasing tail-class exposure per epoch |
-| R6-P1-9 | Provide a leave-one-library-out cross-validation mode across vanilla-Coq libraries (excluding MathComp) that holds out each library in turn as the test set, training on the remaining libraries, to diagnose whether library-level data leakage is the bottleneck for generalization |
+| R6-P1-9 | Provide a leave-one-library-out cross-validation mode across vanilla-Coq libraries (excluding MathComp and CoqInterval) that holds out each library in turn as the test set, training on the remaining libraries, to diagnose whether library-level data leakage is the bottleneck for generalization |
 
 ### P2 — Nice to Have
 

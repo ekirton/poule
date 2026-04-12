@@ -353,16 +353,16 @@ After all steps are extracted, build hierarchical labels from the taxonomy (§4.
 
 1. Import `CATEGORY_NAMES`, `TACTIC_CATEGORIES`, `TACTIC_TO_CATEGORY`, and `EXCLUDED_TOKENS` from the taxonomy module.
 2. Skip proof structure tokens listed in `EXCLUDED_TOKENS`.
-3. Skip tactics not present in `TACTIC_TO_CATEGORY`. Tactics from rare categories (arithmetic, contradiction, ssreflect) are mapped to the `"other"` category.
+3. Skip tactics not present in `TACTIC_TO_CATEGORY`.
 4. For each tactic family, assign a `category_idx` (index into `CATEGORY_NAMES`) and a `within_idx` (index into that category's tactic list from `TACTIC_CATEGORIES`).
 5. Build a flat `label_map` for backward compatibility by concatenating all per-category tactic lists in category order.
 
 - MAINTAINS: Every tactic family in the dataset maps to exactly one (category_idx, within_idx) pair.
 - MAINTAINS: No frequency thresholding — all taxonomy-listed tactics are included regardless of count.
 
-> **Given** extracted steps with families: `apply` (5000), `rewrite` (3000), `lia` (10), `intros` (4000)
+> **Given** extracted steps with families: `apply` (5000), `rewrite` (3000), `lia` (10), `intros` (4000), `move` (500)
 > **When** hierarchical labels are built from the taxonomy
-> **Then** each family maps to its category (e.g., `apply` → `hypothesis_mgmt`, `intros` → `introduction`, `lia` → `other`) and within-category index.
+> **Then** each family maps to its category (e.g., `apply` → `hypothesis_mgmt`, `intros` → `introduction`, `lia` → `arithmetic`, `move` → `ssreflect`) and within-category index.
 
 #### TacticDataset
 
@@ -431,22 +431,24 @@ All steps from the same file go into the same split.
 
 #### Library-level split: load_by_library()
 
-`TrainingDataLoader.load_by_library(library_paths, held_out_library, val_fraction, seed)`
+`TrainingDataLoader.load_by_library(library_paths, held_out_library, val_fraction, seed, always_train_libraries)`
 
-- REQUIRES: `library_paths` is a `dict[str, list[Path]]` mapping library name strings to non-empty lists of JSONL file paths. `held_out_library` is a key in `library_paths`. `val_fraction` is a float in (0.0, 1.0), default 0.1. `seed` is an integer, default 42.
+- REQUIRES: `library_paths` is a `dict[str, list[Path]]` mapping library name strings to non-empty lists of JSONL file paths. `held_out_library` is a key in `library_paths` and not in `always_train_libraries`. `val_fraction` is a float in (0.0, 1.0), default 0.1. `seed` is an integer, default 42. `always_train_libraries` is a list of library name strings (default: `[]`).
 - ENSURES: Returns a `TacticDataset` where:
   - `test_pairs` contains all steps from the held-out library (and only those steps).
-  - `val_pairs` contains steps from `val_fraction` of files in the non-held-out libraries.
-  - `train_pairs` contains steps from the remaining files in the non-held-out libraries.
+  - Steps from `always_train_libraries` always go to `train_pairs` (never held out, never used as validation).
+  - `val_pairs` contains steps from `val_fraction` of files in the remaining libraries (not held-out, not always-train).
+  - `train_pairs` contains steps from the remaining files plus all always-train library steps.
   - All hierarchical label maps, taxonomy filtering, and label construction are identical to `load()`.
 
 **Procedure:**
 
 1. Parse all JSONL files from all libraries identically to `load()`: extract `"s"` records, apply `extract_tactic_family()`, filter through taxonomy, build hierarchical labels.
 2. Collect all steps from the held-out library → `test_pairs`.
-3. Collect all files from the remaining libraries. Shuffle the file list using `random.Random(seed)`. Split at index `ceil(len(files) * (1 - val_fraction))`: files before → train, files at and after → val.
-4. Assign all steps from each file to the corresponding split.
-5. Return a `TacticDataset` with the same structure as `load()`.
+3. Collect all steps from `always_train_libraries` → `train_pairs` (these are never split into validation).
+4. Collect all files from the remaining libraries (not held-out, not always-train). Shuffle the file list using `random.Random(seed)`. Split at index `ceil(len(files) * (1 - val_fraction))`: files before → train, files at and after → val.
+5. Assign all steps from each file to the corresponding split, combining with always-train steps for `train_pairs`.
+6. Return a `TacticDataset` with the same structure as `load()`.
 
 - MAINTAINS: No file from the held-out library appears in train or val.
 - MAINTAINS: No file appears in more than one split.
@@ -464,8 +466,8 @@ All steps from the same file go into the same split.
 
 `LibraryLOOCV.run(library_paths, vocabulary_path, output_dir, undersample_cap, hyperparams, backend)`
 
-- REQUIRES: `library_paths` is a `dict[str, list[Path]]` with at least 2 libraries. Only vanilla-Coq libraries should be included (MathComp is excluded — 71% SSReflect dialect). `vocabulary_path` points to a valid vocabulary JSON. `output_dir` is a writable directory path. `undersample_cap` is a positive integer (default 1000). `hyperparams` is an optional dict of training hyperparameters (defaults to the best undersampled HPO configuration). `backend` is `"mlx"` or `"pytorch"` (default `"mlx"`).
-- ENSURES: Runs one fold per library. For each fold: loads data with `load_by_library()`, applies `undersample_train()` with `undersample_cap`, trains a model with the specified hyperparameters, evaluates on the held-out library, collects a `FoldResult`, and deletes the checkpoint. After all folds, aggregates into an `LOOCVReport`. Writes the report as JSON to `output_dir/loocv-report.json`.
+- REQUIRES: `library_paths` is a `dict[str, list[Path]]` with at least 2 libraries. CoqInterval is excluded. `always_train_libraries` is a list of library names that are always included in training but never held out (default: `["mathcomp"]`). `vocabulary_path` points to a valid vocabulary JSON. `output_dir` is a writable directory path. `undersample_cap` is a positive integer (default 1000). `hyperparams` is an optional dict of training hyperparameters (defaults to the best undersampled HPO configuration). `backend` is `"mlx"` or `"pytorch"` (default `"mlx"`).
+- ENSURES: Runs one fold per holdable library (all libraries except those in `always_train_libraries`). For each fold: loads data with `load_by_library()` (always-train libraries are included in training), applies `undersample_train()` with `undersample_cap`, trains a model with the specified hyperparameters, evaluates on the held-out library, collects a `FoldResult`, and deletes the checkpoint. After all folds, aggregates into an `LOOCVReport`. Writes the report as JSON to `output_dir/loocv-report.json`.
 
 **FoldResult fields:**
 
@@ -497,9 +499,9 @@ All steps from the same file go into the same split.
 - MAINTAINS: Each fold trains a fresh model from scratch (no transfer between folds).
 - MAINTAINS: Checkpoints are deleted after evaluation; only the report persists.
 
-> **Given** 4 vanilla-Coq libraries (excluding MathComp and CoqInterval)
-> **When** `LibraryLOOCV.run()` completes
-> **Then** the report contains exactly 4 FoldResult entries, one per library
+> **Given** 4 vanilla-Coq libraries plus MathComp (excluding CoqInterval)
+> **When** `LibraryLOOCV.run()` completes with `always_train_libraries=["mathcomp"]`
+> **Then** the report contains exactly 4 FoldResult entries (one per vanilla-Coq library; MathComp is always in training, never held out)
 
 > **Given** a fold with held_out_library="stdlib"
 > **When** the fold trains
@@ -577,7 +579,7 @@ All steps from the same file go into the same split.
 | `weight_decay` | 1e-2 | Must be non-negative |
 | `class_weight_alpha` | 0.5 | Must be in [0.0, 1.0] |
 | `label_smoothing` | 0.1 | Must be in [0.0, 1.0) |
-| `sam_rho` | 0.05 | Must be positive. When 0.0, SAM is disabled (plain AdamW). |
+| `sam_rho` | 0.15 | Must be >= 0.15. Experimentally critical for generalization (collapsed val–test gap from 35pp to 6pp). When 0.0, SAM is disabled (plain AdamW). |
 | `max_seq_length` | 512 | Must be positive |
 | `max_epochs` | 20 | Must be positive |
 | `early_stopping_patience` | 3 | Must be positive |
@@ -585,7 +587,8 @@ All steps from the same file go into the same split.
 | `undersample_cap` | None | When not None, must be a positive integer. Passed to `undersample_train()` before training begins. |
 | `undersample_seed` | 42 | Integer seed for reproducible undersampling. |
 | `lambda_within` | 1.0 | Must be positive. Balancing weight for within-category loss in hierarchical mode. |
-| `focal_gamma` | 0.0 | Must be non-negative. When 0.0, no focal modulation (backward compatible). |
+| `ldam_C` | 0.3 | Must be positive. LDAM margin scaling constant (Cao et al., 2019). |
+| `drw_start_fraction` | 0.8 | Must be in (0.0, 1.0). Fraction of training epochs before switching to class-balanced sampling. |
 
 #### Model architecture: HierarchicalTacticClassifier
 
@@ -597,8 +600,8 @@ Input: input_ids [B, 512], attention_mask [B, 512]
   |-- CodeBERT encoder (num_hidden_layers layers, 768 hidden, 12 heads)
   |-- Mean pooling (attention-masked)                  [B, 768]
   |
-  |-- Category head (MLP):
-  |     nn.Linear(768, 384) → ReLU → Dropout(0.1) → nn.Linear(384, num_categories)
+  |-- Category head:
+  |     nn.Linear(768, num_categories)
   |     Output: category_logits [B, num_categories]
   |
   |-- Per-category within-heads (one per category):
@@ -606,14 +609,14 @@ Input: input_ids [B, 512], attention_mask [B, 512]
   |     Output: within_logits dict[str, [B, cat_size]]
 ```
 
-Default `num_hidden_layers` is 6, `embedding_dim` is 128. The category head uses a 2-layer MLP with intermediate dimension `hidden_size // 2` (384). All within-heads are single linear layers. All heads share the same pooled encoder representation. Single forward pass per batch.
+Default `num_hidden_layers` is 6, `embedding_dim` is 128. The category head is a single linear layer (the 2-layer MLP did not improve category accuracy — it dropped from 34.9% with 8 categories to 31.5% with 6 categories, indicating the bottleneck is encoder representation quality, not head capacity). All within-heads are single linear layers. All heads share the same pooled encoder representation. Single forward pass per batch.
 
 #### Construction
 
 `HierarchicalTacticClassifier(model_name, per_category_sizes, num_categories, vocab_size, num_hidden_layers=6, embedding_dim=128)`
 
 - REQUIRES: `model_name` is a valid HuggingFace model name (default: `"microsoft/codebert-base"`). `per_category_sizes` is a `dict[str, int]` mapping category names to their within-category tactic count. `num_categories` is a positive integer. `vocab_size` is `None` or a positive integer. `num_hidden_layers` is in {4, 6, 12}. `embedding_dim` is a positive integer.
-- ENSURES: Loads the pretrained model, then applies layer dropping if `num_hidden_layers` < 12. Layer dropping selects `num_hidden_layers` layers at evenly spaced indices from the 12-layer source: `indices = [i * 12 // num_hidden_layers for i in range(num_hidden_layers)]`. Builds a new encoder with only the selected layers. Updates the model config's `num_hidden_layers`. When `vocab_size` is not `None`, replaces the embedding layer with `nn.Embedding(vocab_size, embedding_dim)`. When `embedding_dim` < 768 (the hidden size), creates a bias-free projection layer `nn.Linear(embedding_dim, 768, bias=False)`. Creates the category head as `nn.Sequential(nn.Linear(768, 384), nn.ReLU(), nn.Dropout(0.1), nn.Linear(384, num_categories))`. Creates per-category within-heads as `nn.ModuleDict` mapping each category name to `nn.Linear(768, per_category_sizes[cat])`.
+- ENSURES: Loads the pretrained model, then applies layer dropping if `num_hidden_layers` < 12. Layer dropping selects `num_hidden_layers` layers at evenly spaced indices from the 12-layer source: `indices = [i * 12 // num_hidden_layers for i in range(num_hidden_layers)]`. Builds a new encoder with only the selected layers. Updates the model config's `num_hidden_layers`. When `vocab_size` is not `None`, replaces the embedding layer with `nn.Embedding(vocab_size, embedding_dim)`. When `embedding_dim` < 768 (the hidden size), creates a bias-free projection layer `nn.Linear(embedding_dim, 768, bias=False)`. Creates the category head as `nn.Linear(768, num_categories)`. Creates per-category within-heads as `nn.ModuleDict` mapping each category name to `nn.Linear(768, per_category_sizes[cat])`.
 
 > **Given** `num_hidden_layers=6`
 > **When** `HierarchicalTacticClassifier` is constructed
@@ -626,11 +629,11 @@ Default `num_hidden_layers` is 6, `embedding_dim` is 128. The category head uses
 #### from_checkpoint(checkpoint)
 
 - REQUIRES: `checkpoint` is a dict containing `model_state_dict`, `per_category_sizes`, `num_categories`, and optionally `num_hidden_layers` and `embedding_dim`.
-- ENSURES: Reads `num_hidden_layers` from the checkpoint. Reads `embedding_dim` from the checkpoint. Reads `per_category_sizes` and `num_categories` from the checkpoint. Builds a `RobertaModel` with the specified layer count and embedding dimension. When `embedding_dim` < 768, creates the projection layer. Reconstructs the category head as `nn.Sequential(nn.Linear(768, 384), nn.ReLU(), nn.Dropout(0.1), nn.Linear(384, num_categories))`. Reconstructs per-category within-heads from `per_category_sizes`. Loads weights with `strict=False`.
+- ENSURES: Reads `num_hidden_layers` from the checkpoint. Reads `embedding_dim` from the checkpoint. Reads `per_category_sizes` and `num_categories` from the checkpoint. Builds a `RobertaModel` with the specified layer count and embedding dimension. When `embedding_dim` < 768, creates the projection layer. Reconstructs the category head as `nn.Linear(768, num_categories)`. Reconstructs per-category within-heads from `per_category_sizes`. Loads weights with `strict=False`.
 
 > **Given** a checkpoint saved with `num_hidden_layers=6`, `embedding_dim=128`, and `per_category_sizes={"rewriting": 12, "elimination": 7}`
 > **When** `from_checkpoint` reconstructs the model
-> **Then** the encoder has 6 transformer layers, a 128→768 projection layer, a 2-layer MLP category head, and 2 within-heads
+> **Then** the encoder has 6 transformer layers, a 128→768 projection layer, a single-linear category head, and 2 within-heads
 
 #### forward(input_ids, attention_mask)
 
@@ -640,62 +643,77 @@ Default `num_hidden_layers` is 6, `embedding_dim` is 128. The category head uses
   2. Embedding projection (when `embedding_dim` < 768): `embedding_projection(embeddings)` → `[B, seq_len, 768]`
   3. Transformer encoding (`num_hidden_layers` layers)
   4. Mean pooling: `sum(output * mask.unsqueeze(-1)) / sum(mask).unsqueeze(-1)` per sequence → `[B, 768]`
-  5. Category head: `Linear(768, 384) → ReLU → Dropout → Linear(384, num_categories)` → `[B, num_categories]`
+  5. Category head: `Linear(768, num_categories)` → `[B, num_categories]`
   6. Per-category within-heads: for each category, `Linear(768, cat_size)` → `[B, cat_size]`
 
-#### Class-weighted cross-entropy loss with class-conditional label smoothing
+#### LDAM loss with class-conditional label smoothing
 
-Class weights are computed from inverse frequency:
+**LDAM margin offsets** (Cao et al., 2019). Class-dependent margins encourage larger decision boundaries for minority classes:
+
+```
+margin[c] = ldam_C / n_c^(1/4)
+```
+
+where `ldam_C` is a scaling constant (default 0.3, tunable via HPO) and `n_c` is the class count. During training, the margin is subtracted from the logit of the true class before the loss computation:
+
+```
+adjusted_logit[y] = logit[y] - margin[y]
+loss = cross_entropy(adjusted_logits, labels)
+```
+
+- REQUIRES: `ldam_C` is a positive float. `class_counts` is a tensor of per-class sample counts.
+- ENSURES: `margin[c]` is inversely proportional to `n_c^(1/4)`. Classes with fewer examples have larger margins, requiring the model to be more confident to classify them correctly.
+
+> **Given** `ldam_C=0.3` and class counts `[5000, 100, 10]`
+> **When** LDAM margins are computed
+> **Then** `margin[0] = 0.3 / 5000^0.25 ≈ 0.036`, `margin[1] = 0.3 / 100^0.25 ≈ 0.095`, `margin[2] = 0.3 / 10^0.25 ≈ 0.169`
+
+> **Given** a sample with true class `c` and logits `[2.0, 1.5, 0.5]`
+> **When** LDAM adjustment is applied with `margin[c] = 0.1`
+> **Then** `adjusted_logits[c] = logits[c] - 0.1`; non-true-class logits are unchanged
+
+**Class-conditional label smoothing.** Class weights for smoothing are computed from inverse frequency:
 
 ```
 weight[c] = (total_samples / (num_classes * count[c])) ^ alpha
 ```
 
-where `alpha` is `class_weight_alpha` (default 0.5). When `alpha=0`, all weights are 1.0 (no rebalancing). When `alpha=1`, weights are fully inverse-frequency.
-
-Label smoothing parameter `label_smoothing` (default 0.1) replaces hard targets with class-conditional soft targets. The smoothing mass ε is distributed proportionally to the class weights rather than uniformly:
+where `alpha` is `class_weight_alpha` (default 0.5). Label smoothing distributes the smoothing mass ε proportionally to these weights:
 
 ```
-smooth_dist[c] = class_weight[c] / sum(class_weights)
+smooth_dist[c] = weight[c] / sum(weights)
 y_target = (1 - ε) * one_hot(label) + ε * smooth_dist
-loss = -sum(y_target * log_softmax(logits)) * class_weight[label] / mean(class_weight[labels])
 ```
 
-This directs more smoothing probability mass toward minority classes (which have higher class weights). When `label_smoothing=0.0`, standard hard targets are used (backward compatible with uniform smoothing at ε=0).
+When `label_smoothing=0.0`, standard hard targets are used (backward compatible).
 
-#### Focal modulation
-
-When `focal_gamma > 0`, the per-sample loss is modulated by a focal factor (Lin et al., 2017) that down-weights well-classified (easy) examples:
-
-```
-p_t = softmax(logits)[true_label]
-focal_weight = (1 - p_t) ^ focal_gamma
-per_sample_loss = focal_weight * cross_entropy
-```
-
-where `p_t` is the predicted probability of the true class. The focal weight is applied per-sample before the weighted mean reduction, composing with both class weighting and label smoothing. When `focal_gamma=0.0`, `focal_weight = 1` for all samples (no modulation, backward compatible).
-
-- MAINTAINS: Focal modulation is applied per-sample before the weighted mean reduction. It composes with both class weighting and label smoothing.
-- MAINTAINS: `p_t` is computed from the original logits via softmax, not from the smoothed targets.
-
-> **Given** `focal_gamma=0.0`
-> **When** the loss is computed
-> **Then** the result is identical to standard class-conditional cross-entropy (focal_weight = 1 for all samples)
-
-> **Given** `focal_gamma=2.0` and a sample predicted with `p_t=0.9`
-> **When** the focal weight is computed
-> **Then** `focal_weight = (1 - 0.9)^2 = 0.01` (loss scaled down 100×)
-
-> **Given** `focal_gamma=2.0` and a sample predicted with `p_t=0.1`
-> **When** the focal weight is computed
-> **Then** `focal_weight = (1 - 0.1)^2 = 0.81` (loss nearly unchanged)
-
-- MAINTAINS: Class weights are computed once from the training split before training begins and remain fixed throughout training.
-- MAINTAINS: The smooth distribution is derived from the same class weights used for loss weighting.
+- MAINTAINS: LDAM margins are computed once from the training split class counts before training begins and remain fixed throughout training.
+- MAINTAINS: The smooth distribution is derived from the same class weights used for label smoothing.
 
 > **Given** a training set with 3 families: `apply` (5000), `intros` (4000), `simpl` (1000), alpha=0.5
-> **When** class weights are computed (total=10000, num_classes=3)
+> **When** class weights are computed for label smoothing (total=10000, num_classes=3)
 > **Then** weight[apply] = (10000 / (3 * 5000))^0.5 ≈ 0.816, weight[simpl] = (10000 / (3 * 1000))^0.5 ≈ 1.826
+
+#### Deferred re-balancing (DRW)
+
+A two-phase training schedule that transitions from instance-balanced to class-balanced sampling:
+
+- **Phase 1 (epochs 1 to `drw_epoch`):** Instance-balanced sampling. Each training example is sampled with equal probability. The model learns general representations from the natural data distribution.
+- **Phase 2 (epochs `drw_epoch + 1` to `max_epochs`):** Class-balanced sampling. Each class is sampled with probability `1/num_classes` regardless of its size. This corrects classifier bias toward head classes in the final training phase.
+
+The DRW transition epoch is computed as: `drw_epoch = int(max_epochs * drw_start_fraction)` where `drw_start_fraction` defaults to 0.8.
+
+- REQUIRES: `drw_start_fraction` is a float in (0.0, 1.0). `max_epochs` is a positive integer.
+- ENSURES: For epochs `<= drw_epoch`, the training DataLoader uses uniform sampling. For epochs `> drw_epoch`, the DataLoader uses a `WeightedRandomSampler` with per-sample weights `1 / class_count[sample_class]`.
+- MAINTAINS: Validation and test splits are never resampled — DRW affects only training.
+
+> **Given** `max_epochs=20` and `drw_start_fraction=0.8`
+> **When** the DRW epoch is computed
+> **Then** `drw_epoch = 16`; epochs 1–16 use instance-balanced sampling, epochs 17–20 use class-balanced sampling
+
+> **Given** a training set with 3 classes of sizes `[5000, 100, 10]`
+> **When** class-balanced sampling is active (phase 2)
+> **Then** per-sample weights are `[1/5000, 1/100, 1/10]` for samples of each class, resulting in roughly equal expected samples per class per epoch
 
 > **Given** `label_smoothing=0.1`, `num_classes=3`, and class weights [0.816, 1.0, 1.826]
 > **When** soft targets are computed for a sample with true class 0
@@ -707,7 +725,7 @@ where `p_t` is the predicted probability of the true class. The focal weight is 
 - ENSURES: When `sam_rho > 0`, each training step performs two forward-backward passes: (1) compute gradient at current parameters, perturb parameters by `rho * grad / ||grad||`, (2) compute gradient at perturbed parameters, apply AdamW step using this second gradient, restore original parameters. When `sam_rho == 0.0`, uses plain AdamW (no perturbation step).
 - MAINTAINS: SAM doubles the compute cost per batch. The perturbation is applied to all model parameters.
 
-> **Given** `sam_rho=0.05`
+> **Given** `sam_rho=0.15`
 > **When** a training step executes
 > **Then** the optimizer performs two forward-backward passes per batch
 
@@ -881,9 +899,10 @@ Automated hyperparameter optimization using Optuna to maximize validation accura
 | `weight_decay` | Log-uniform | [1e-4, 1e-1] | 1e-2 |
 | `class_weight_alpha` | Uniform | [0.0, 1.0] | 0.5 |
 | `label_smoothing` | Uniform | [0.0, 0.3] | 0.1 |
-| `sam_rho` | Log-uniform | [0.01, 0.2] | 0.05 |
+| `sam_rho` | Log-uniform | [0.15, 0.3] | 0.15 |
 | `lambda_within` | Log-uniform | [0.3, 3.0] | 1.0 |
-| `focal_gamma` | Uniform | [0.0, 5.0] | 0.0 |
+| `ldam_C` | Uniform | [0.1, 1.0] | 0.3 |
+| `drw_start_fraction` | Uniform | [0.6, 0.9] | 0.8 |
 
 All other hyperparameters (`max_seq_length`, `embedding_dim`, `max_epochs`, `early_stopping_patience`) are fixed at their default values and not tunable.
 
@@ -952,7 +971,7 @@ MLX port of the tactic classifier model, architecturally identical to the PyTorc
 
 #### Construction
 
-`MLXTacticClassifier(vocab_size, num_classes, num_layers=6, hidden_size=768, num_heads=12, embedding_dim=128, per_category_sizes=None, num_categories=6)`
+`MLXTacticClassifier(vocab_size, num_classes, num_layers=6, hidden_size=768, num_heads=12, embedding_dim=128, per_category_sizes=None, num_categories=8)`
 
 - REQUIRES: `vocab_size` is a positive integer matching the closed vocabulary size. `num_classes` is a positive integer matching the total number of tactic families. `num_layers` is in {4, 6, 12}. `embedding_dim` is a positive integer. `per_category_sizes` is a `dict[str, int]` mapping category names to within-category tactic counts.
 - ENSURES: Creates an `mlx.nn.Module` with:
@@ -960,7 +979,7 @@ MLX port of the tactic classifier model, architecturally identical to the PyTorc
   - When `embedding_dim` < `hidden_size`: `mlx.nn.Linear(embedding_dim, hidden_size, bias=False)` — embedding projection layer (`self.embedding_projection`)
   - Transformer encoder with `num_layers` `mlx.nn.TransformerEncoderLayer` blocks, each with `hidden_size` hidden dimension and `num_heads` attention heads
   - No positional encoding module — position IDs are added as a learned embedding (position embedding remains at `hidden_size` dimensions)
-  - Category head (2-layer MLP): `mlx.nn.Linear(hidden_size, hidden_size // 2)` (`category_head_fc1`), `mlx.nn.Dropout(0.1)` (`category_dropout`), `mlx.nn.Linear(hidden_size // 2, num_categories)` (`category_head_fc2`). Forward: `ReLU(fc1(x)) → Dropout → fc2`
+  - Category head: `mlx.nn.Linear(hidden_size, num_categories)` (`category_head`)
   - Per-category within-heads: `dict[str, mlx.nn.Linear(hidden_size, cat_size)]`
 
 #### forward(input_ids, attention_mask)
@@ -972,7 +991,7 @@ MLX port of the tactic classifier model, architecturally identical to the PyTorc
   3. Add positional embeddings
   4. Transformer encoding (`num_layers` layers)
   5. Mean pooling: `sum(output * mask) / sum(mask)` per sequence → `[B, 768]`
-  6. Category head: `ReLU(category_head_fc1(pooled)) → category_dropout → category_head_fc2` → `[B, num_categories]`
+  6. Category head: `category_head(pooled)` → `[B, num_categories]`
   7. Per-category within-heads: for each category, `linear(pooled)` → `[B, cat_size]`
 
 #### load_codebert_weights(pytorch_model_name="microsoft/codebert-base")
@@ -1091,12 +1110,10 @@ Converts MLX-trained checkpoints to PyTorch format for the quantization and infe
 
 | MLX name | PyTorch name |
 |----------|-------------|
-| `category_head_fc1.weight` | `category_head.0.weight` |
-| `category_head_fc1.bias` | `category_head.0.bias` |
-| `category_head_fc2.weight` | `category_head.3.weight` |
-| `category_head_fc2.bias` | `category_head.3.bias` |
+| `category_head.weight` | `category_head.weight` |
+| `category_head.bias` | `category_head.bias` |
 
-PyTorch `nn.Sequential` indices: 0=Linear, 1=ReLU, 2=Dropout, 3=Linear. Within-heads (`within_heads.<category>.{weight,bias}`) use identical names in both frameworks.
+The category head is a single linear layer in both frameworks. Within-heads (`within_heads.<category>.{weight,bias}`) use identical names in both frameworks.
 
 **Validation step:**
 

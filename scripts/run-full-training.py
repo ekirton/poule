@@ -28,9 +28,13 @@ FINAL_MODEL_DIR = DATA_DIR / "final-model"
 RESULTS_FILE = DATA_DIR / "final-model-validation.txt"
 LOOCV_DIR = DATA_DIR / "loocv-results"
 
-# Libraries included in training and LOOCV.
-# Excluded: MathComp (71% SSReflect dialect), CoqInterval (different distribution).
-LIBRARY_JSONL_STEMS = ["stdlib", "stdpp", "flocq", "coquelicot"]
+# Libraries included in training.
+# MathComp provides SSReflect training signal; always included in training,
+# excluded from LOOCV hold-out folds. CoqInterval excluded entirely (no transfer).
+LIBRARY_JSONL_STEMS = ["stdlib", "stdpp", "flocq", "coquelicot", "mathcomp"]
+
+# Libraries always included in training during LOOCV (never held out).
+ALWAYS_TRAIN_LIBRARIES = ["mathcomp"]
 
 
 def main():
@@ -182,6 +186,7 @@ def main():
                 undersample_cap=1000,
                 hyperparams=best_hp,
                 backend="mlx",
+                always_train_libraries=ALWAYS_TRAIN_LIBRARIES,
             )
             loocv_time = time.time() - t0
             logger.info(

@@ -64,7 +64,7 @@ See [neural-training.md](neural-training.md) for the training pipeline design.
 The model is an encoder + classification head:
 - **Encoder**: CodeBERT (microsoft/codebert-base), 125M parameters, with closed-vocabulary embedding layer
 - **Pooling**: Mean pooling over non-padding tokens
-- **Classification head**: `nn.Linear(768, num_classes)` mapping to ~30 tactic families
+- **Classification head**: `nn.Linear(768, num_categories)` mapping to 8 tactic categories, with per-category within-heads mapping to ~65 tactic families
 - **Output**: Logits `[B, num_classes]`
 
 At inference time, only the quantized ONNX export is used. The PyTorch model is used during training only.

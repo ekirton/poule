@@ -80,10 +80,7 @@ class MLXTacticClassifier(nn.Module):
         self.embedding_ln = nn.LayerNorm(hidden_size)
 
         if self._is_hierarchical:
-            cat_hidden = hidden_size // 2
-            self.category_head_fc1 = nn.Linear(hidden_size, cat_hidden)
-            self.category_head_fc2 = nn.Linear(cat_hidden, num_categories)
-            self.category_dropout = nn.Dropout(0.1)
+            self.category_head = nn.Linear(hidden_size, num_categories)
             self.within_heads = {
                 cat: nn.Linear(hidden_size, size)
                 for cat, size in per_category_sizes.items()
@@ -132,9 +129,7 @@ class MLXTacticClassifier(nn.Module):
         pooled = self._encode(input_ids, attention_mask)
 
         if self._is_hierarchical:
-            h = nn.relu(self.category_head_fc1(pooled))
-            h = self.category_dropout(h)
-            category_logits = self.category_head_fc2(h)
+            category_logits = self.category_head(pooled)
             within_logits = {
                 cat: head(pooled)
                 for cat, head in self.within_heads.items()

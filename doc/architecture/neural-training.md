@@ -214,7 +214,7 @@ The tactic family is extracted from the raw tactic text:
 
 ### Hierarchical Tactic Taxonomy
 
-Every tactic maps to one of 6 categories via a canonical taxonomy (`taxonomy.py`). The top 5 categories cover >95% of extracted proof steps. Tactics from rare categories (arithmetic, contradiction, ssreflect) are grouped into an "other" catch-all. Proof structure tokens (`-`, `+`, `*`, `{`, `}`) are excluded from training.
+Every tactic maps to one of 8 categories via a canonical taxonomy (`taxonomy.py`). All 8 categories have dedicated classification heads. Proof structure tokens (`-`, `+`, `*`, `{`, `}`) are excluded from training.
 
 | Category | Example tactics | Estimated % |
 |----------|----------------|----------:|
@@ -223,22 +223,26 @@ Every tactic maps to one of 6 categories via a canonical taxonomy (`taxonomy.py`
 | Introduction | intros, split, left, right, exact | 12.2% |
 | Elimination | destruct, induction, case, inversion | 7.0% |
 | Automation | auto, eauto, trivial, tauto | 4.1% |
-| Other | lia, omega, ring, field, exfalso, absurd, contradiction, move, suff, wlog, congr | ~5% |
+| SSReflect | move, suff, wlog, congr, unlock | ~3% |
+| Arithmetic | lia, omega, ring, field | ~1% |
+| Contradiction | exfalso, absurd, contradiction | <1% |
 
 ### Hierarchical Architecture
 
 ```
 Encoder (shared, factored embeddings D=128, CodeBERT) → representation z [B, 768]
     ↓
-Category Head: MLP(768 → 384 → 6) with ReLU + Dropout → category logits [B, 6]
+Category Head: nn.Linear(768, 8) → category logits [B, 8]
     ↓
-Per-Category Heads (6 heads):
+Per-Category Heads (8 heads):
     introduction_head:    nn.Linear(768, N_introduction)
     elimination_head:     nn.Linear(768, N_elimination)
     rewriting_head:       nn.Linear(768, N_rewriting)
     hypothesis_mgmt_head: nn.Linear(768, N_hypothesis_mgmt)
     automation_head:      nn.Linear(768, N_automation)
-    other_head:           nn.Linear(768, N_other)
+    ssreflect_head:       nn.Linear(768, N_ssreflect)
+    arithmetic_head:      nn.Linear(768, N_arithmetic)
+    contradiction_head:   nn.Linear(768, N_contradiction)
 ```
 
 Joint loss: `L = L_category + λ · L_within(active head)`, where λ balances category vs. within-category loss (default 1.0, tunable [0.3, 3.0]).
@@ -277,12 +281,12 @@ After the file-level split, the training split is optionally undersampled to cap
 
 ### Leave-One-Library-Out Cross-Validation
 
-A diagnostic evaluation mode that replaces the file-level split with a library-level split. For each fold, one of the 4 vanilla-Coq libraries is held out entirely as the test set, and the remaining 3 libraries provide training and validation data. This isolates whether the model generalizes across library boundaries or memorizes library-specific tactic conventions.
+A diagnostic evaluation mode that replaces the file-level split with a library-level split. For each fold, one of the 4 vanilla-Coq libraries is held out entirely as the test set, and the remaining 3 vanilla-Coq libraries plus MathComp provide training and validation data. This isolates whether the model generalizes across library boundaries or memorizes library-specific tactic conventions.
 
-MathComp and CoqInterval are excluded: MathComp's steps are 71% SSReflect-dialect tactics (`by`, `move=>`, `exact:`, `apply:`, `case:`), making it a different tactic language. CoqInterval's specialized interval-arithmetic proof style does not transfer (64/65 dead families in LOOCV). The remaining 4 libraries are 78–99% vanilla Coq.
+CoqInterval is excluded — its specialized interval-arithmetic proof style does not transfer (64/65 dead families in LOOCV). MathComp is included in training (it provides the SSReflect signal for the dedicated SSReflect head) but excluded from LOOCV hold-out because its SSReflect-dialect tactics (71% of steps) make it a poor hold-out candidate against vanilla-Coq libraries. The 4 vanilla-Coq libraries (stdlib, stdpp, flocq, coquelicot) are 78–99% vanilla Coq and serve as LOOCV folds.
 
 ```
-poule loocv stdlib.jsonl stdpp.jsonl flocq.jsonl coquelicot.jsonl \
+poule loocv stdlib.jsonl stdpp.jsonl flocq.jsonl coquelicot.jsonl mathcomp.jsonl \
   --output-dir loocv-results/ --vocabulary coq-vocabulary.json --undersample-cap 1000
 ```
 
@@ -290,21 +294,22 @@ poule loocv stdlib.jsonl stdpp.jsonl flocq.jsonl coquelicot.jsonl \
 
 An alternative to `TrainingDataLoader.load()` that splits by library membership:
 
-1. Accept a `library_paths: dict[str, list[Path]]` mapping library names to their JSONL files, and a `held_out_library: str`.
+1. Accept a `library_paths: dict[str, list[Path]]` mapping library names to their JSONL files, a `held_out_library: str`, and an optional `always_train_libraries: list[str]` (libraries that are always in the training set, never held out — default: `["mathcomp"]`).
 2. Parse all JSONL files identically to `load()` (step extraction, taxonomy filtering, hierarchical labeling).
 3. All steps from the held-out library → test set.
-4. Remaining libraries' files → shuffled (seeded) and split 90/10 for train/val at the file level.
-5. Apply undersampling to the training split (default cap=1000, lower than the standard 2000 because holding out a library shrinks the training pool).
+4. Steps from `always_train_libraries` always go to the training set (never held out, never used as validation).
+5. Remaining libraries' files → shuffled (seeded) and split 90/10 for train/val at the file level.
+6. Apply undersampling to the training split (default cap=1000, lower than the standard 2000 because holding out a library shrinks the training pool).
 
 The same `TacticDataset` structure is returned — downstream training code is unchanged.
 
 #### LOOCV Orchestration
 
-`LibraryLOOCV.run()` iterates over all libraries:
+`LibraryLOOCV.run()` iterates over the vanilla-Coq libraries (MathComp always trains, never held out):
 
 ```
 For each library L in {stdlib, stdpp, flocq, coquelicot}:
-    1. Load data with L held out
+    1. Load data with L held out (MathComp always in training set)
     2. Undersample training split at configured cap
     3. Train model with fixed hyperparameters (best from undersampled HPO)
     4. Evaluate on held-out library
@@ -324,28 +329,40 @@ Library name is inferred from each JSONL filename stem (e.g., `stdlib.jsonl` →
 
 ## Training
 
-### Objective: Class-Weighted Cross-Entropy with Label Smoothing
+### Objective: LDAM Loss with Deferred Re-Balancing
+
+Label-Distribution-Aware Margin Loss (Cao et al., 2019) with class-conditional label smoothing.
+
+**LDAM margin offsets.** Class-dependent margins encourage larger decision boundaries for minority classes:
 
 ```
-loss = CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)(logits, labels)
+margin[c] = C / n_c^(1/4)
 ```
 
-Class weights are computed from inverse frequency to handle the long-tailed tactic distribution:
+where `C` is a scaling constant (default 0.3, tunable via HPO) and `n_c` is the class count. During training, the margin is subtracted from the logit of the true class before softmax:
+
+```
+adjusted_logit[y] = logit[y] - margin[y]
+loss = CrossEntropyLoss(adjusted_logits, labels)
+```
+
+This penalizes the model more heavily when it misclassifies minority classes by requiring a larger margin of confidence.
+
+**Deferred re-balancing (DRW).** A two-phase training schedule:
+- **Phase 1 (first 80% of epochs):** Instance-balanced sampling (standard). The model learns general representations from the natural data distribution.
+- **Phase 2 (final 20% of epochs):** Class-balanced sampling. Each class is sampled with equal probability regardless of its size, correcting classifier bias toward head classes.
+
+The DRW transition epoch is computed as `int(max_epochs * drw_start_fraction)` where `drw_start_fraction` defaults to 0.8.
+
+**Class-conditional label smoothing.** Distributes smoothing mass ε proportionally to the inverse-frequency class weights rather than uniformly:
 
 ```
 weight[c] = (total_samples / (num_classes * count[c])) ^ alpha
-```
-
-where `alpha` controls the strength of rebalancing (default 0.5; tunable via HPO).
-
-Label smoothing replaces hard targets y=1 with soft targets. Class-conditional smoothing distributes the smoothing mass ε proportionally to the class weights rather than uniformly across classes:
-
-```
-smooth_distribution[c] = class_weight[c] / sum(class_weights)
+smooth_distribution[c] = weight[c] / sum(weights)
 y_target = (1 - ε) * one_hot(label) + ε * smooth_distribution
 ```
 
-This directs more smoothing probability mass toward minority classes (which have higher class weights), acting as targeted regularization against overfitting on underrepresented groups. Standard uniform smoothing distributes ε/K to every class regardless of frequency, wasting smoothing budget on already-overrepresented head classes. Shwartz-Ziv et al. (2023) confirm that class-conditional smoothing "prevents overfitting on underrepresented groups" and that its effect is "greatly amplified on imbalanced data."
+This directs more smoothing probability mass toward minority classes, acting as targeted regularization against overfitting on underrepresented groups (Shwartz-Ziv et al., 2023).
 
 When `label_smoothing=0.0`, standard hard targets are used (backward compatible).
 
@@ -411,9 +428,11 @@ This requires two training runs: (1) fine-tune the full 12-layer CodeBERT on Coq
 | Batch size | 16 | Smaller batches improve tail-class generalization under severe imbalance (Shwartz-Ziv et al., 2023) |
 | Learning rate | 2e-5 | Standard for BERT fine-tuning |
 | Weight decay | 1e-2 | Standard AdamW |
-| Class weight alpha | 0.5 | Moderate inverse-frequency rebalancing |
+| Class weight alpha | 0.5 | Moderate inverse-frequency rebalancing for label smoothing |
 | Label smoothing | 0.1 | Prevents overfitting on minority classes (Shwartz-Ziv et al., 2023) |
-| SAM rho | 0.05 | SAM perturbation radius; improves tail-class generalization |
+| SAM rho | 0.15 | SAM perturbation radius; experimentally critical for generalization (collapsed val–test gap from 35pp to 6pp) |
+| LDAM C | 0.3 | LDAM margin scaling constant (Cao et al., 2019) |
+| DRW start fraction | 0.8 | Fraction of training epochs before switching to class-balanced sampling |
 | Max sequence length | 512 tokens | Standard |
 | Training epochs | 20 | Early stopping on validation accuracy@5 |
 | Early stopping patience | 3 epochs | Stop if accuracy@5 does not improve |
@@ -422,8 +441,8 @@ This requires two training runs: (1) fine-tune the full 12-layer CodeBERT on Coq
 
 | Corpus size | Hardware | Estimated wall time | Estimated cost |
 |-------------|----------|---------------------|----------------|
-| 105K steps (all 6 libraries) | Any 16GB+ GPU | ~4 hours | $20-50 |
-| 105K steps (all 6 libraries) | M2 Pro, 32GB (MLX) | ~3 hours | $0 (local) |
+| ~140K steps (all 5 libraries) | Any 16GB+ GPU | ~4 hours | $20-50 |
+| ~140K steps (all 5 libraries) | M2 Pro, 32GB (MLX) | ~3 hours | $0 (local) |
 | 15K steps (stdlib only) | M2 Pro, 32GB (MLX) | ~30 min | $0 (local) |
 
 Training uses FP16 mixed precision on CUDA. On Apple Silicon with MLX, training runs in FP32 with lazy evaluation.
@@ -489,7 +508,9 @@ Optuna with TPE sampler, maximizing validation accuracy@5.
 | Weight decay | Log-uniform | [1e-4, 1e-1] | 1e-2 |
 | Class weight alpha | Uniform | [0.0, 1.0] | 0.5 |
 | Label smoothing | Uniform | [0.0, 0.3] | 0.1 |
-| SAM rho | Log-uniform | [0.01, 0.2] | 0.05 |
+| SAM rho | Log-uniform | [0.15, 0.3] | 0.15 |
+| LDAM C | Uniform | [0.1, 1.0] | 0.3 |
+| DRW start fraction | Uniform | [0.6, 0.9] | 0.8 |
 
 ### Pruning
 
@@ -548,9 +569,9 @@ poule validate-training-data <traces.jsonl>
 
 Tactic prediction is a classification problem, not a retrieval problem. Each proof state maps to exactly one tactic family. Cross-entropy is the standard loss for multi-class classification and is simpler, faster (single forward pass), and more data-efficient than contrastive learning.
 
-### Why class-weighted loss
+### Why LDAM + deferred re-balancing
 
-The tactic distribution is heavily long-tailed: `intros`, `apply`, `rewrite`, `simpl`, and `auto` dominate. Without class weighting, the model would achieve reasonable accuracy by always predicting the majority class. Inverse-frequency weighting forces the model to also learn minority tactic families. The alpha exponent controls the strength -- alpha=0 means no weighting, alpha=1 means full inverse frequency.
+The tactic distribution is heavily long-tailed: `intros`, `apply`, `rewrite`, `simpl`, and `auto` dominate. Previous experiments showed that class-weighted cross-entropy and focal loss are insufficient — focal loss suppressed high-frequency families without improving rare ones (intros recall: 53.7% → 3.5%), and balanced softmax overwhelmed the model's discriminative signal. LDAM addresses the problem structurally by enforcing class-dependent margin offsets (`C / n_c^{1/4}`), requiring the model to be more confident when predicting minority classes. Deferred re-balancing (DRW) trains with natural sampling initially (learning good representations) then switches to class-balanced sampling for the final 20% of epochs (correcting classifier bias). This two-phase approach avoids the early-training instability of full re-weighting while still correcting the decision boundary for rare classes.
 
 ### Why head-class undersampling
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -682,17 +683,19 @@ class TestLabelMapConstruction:
         _write_step_records(data_path, steps)
 
         dataset = TrainingDataLoader.load([data_path])
-        assert len(dataset.category_names) == 6
+        assert len(dataset.category_names) == 8
         assert "introduction" in dataset.category_names
         assert "rewriting" in dataset.category_names
-        assert "other" in dataset.category_names
+        assert "ssreflect" in dataset.category_names
+        assert "arithmetic" in dataset.category_names
+        assert "contradiction" in dataset.category_names
 
-    def test_rare_categories_map_to_other(self, tmp_path):
-        """spec §4.0.7: arithmetic/contradiction/ssreflect tactics map to 'other' category."""
+    def test_dedicated_category_heads(self, tmp_path):
+        """spec §4.0.7: arithmetic/contradiction/ssreflect have dedicated categories."""
         from Poule.neural.training.taxonomy import TACTIC_TO_CATEGORY
-        assert TACTIC_TO_CATEGORY["lia"] == "other"
-        assert TACTIC_TO_CATEGORY["exfalso"] == "other"
-        assert TACTIC_TO_CATEGORY["move"] == "other"
+        assert TACTIC_TO_CATEGORY["lia"] == "arithmetic"
+        assert TACTIC_TO_CATEGORY["exfalso"] == "contradiction"
+        assert TACTIC_TO_CATEGORY["move"] == "ssreflect"
 
     def test_skips_steps_without_tactic(self, tmp_path):
         """Steps with empty tactic text are skipped."""
@@ -966,11 +969,11 @@ class TestEmbeddingFactorization:
         assert factored_params < standard_params
 
 
-class TestCategoryHeadMLP:
-    """spec §4.3: Category head is a 2-layer MLP with ReLU and Dropout."""
+class TestCategoryHeadLinear:
+    """spec §4.3: Category head is a single nn.Linear layer."""
 
-    def test_category_head_is_sequential(self):
-        """spec §4.3: Category head is nn.Sequential, not nn.Linear."""
+    def test_category_head_is_linear(self):
+        """spec §4.3: Category head is nn.Linear, not nn.Sequential."""
         import torch.nn as nn
         from Poule.neural.training.model import HierarchicalTacticClassifier
 
@@ -984,16 +987,10 @@ class TestCategoryHeadMLP:
                 num_hidden_layers=6,
                 embedding_dim=128,
             )
-        assert isinstance(model.category_head, nn.Sequential)
-        # Sequential should have 4 modules: Linear, ReLU, Dropout, Linear
-        assert len(model.category_head) == 4
-        assert isinstance(model.category_head[0], nn.Linear)
-        assert isinstance(model.category_head[1], nn.ReLU)
-        assert isinstance(model.category_head[2], nn.Dropout)
-        assert isinstance(model.category_head[3], nn.Linear)
+        assert isinstance(model.category_head, nn.Linear)
 
     def test_category_head_dimensions(self):
-        """spec §4.3: Category head MLP is 768 → 384 → num_categories."""
+        """spec §4.3: Category head is Linear(768, num_categories)."""
         from Poule.neural.training.model import HierarchicalTacticClassifier
 
         per_cat = {"rewriting": 3, "elimination": 2}
@@ -1006,12 +1003,8 @@ class TestCategoryHeadMLP:
                 num_hidden_layers=6,
                 embedding_dim=128,
             )
-        # First linear: 768 → 384
-        assert model.category_head[0].in_features == 768
-        assert model.category_head[0].out_features == 384
-        # Second linear: 384 → num_categories
-        assert model.category_head[3].in_features == 384
-        assert model.category_head[3].out_features == 2
+        assert model.category_head.in_features == 768
+        assert model.category_head.out_features == 2
 
     def test_hierarchical_forward_shapes(self):
         """spec §4.3: Forward returns (category_logits, within_logits) with correct shapes."""
@@ -1038,8 +1031,8 @@ class TestCategoryHeadMLP:
         assert within_logits["rewriting"].shape == (4, 3)
         assert within_logits["elimination"].shape == (4, 2)
 
-    def test_from_checkpoint_reconstructs_mlp_category_head(self):
-        """spec §4.3: from_checkpoint reconstructs the 2-layer MLP category head."""
+    def test_from_checkpoint_reconstructs_linear_category_head(self):
+        """spec §4.3: from_checkpoint reconstructs the single-linear category head."""
         import torch.nn as nn
         from Poule.neural.training.model import HierarchicalTacticClassifier
 
@@ -1053,12 +1046,9 @@ class TestCategoryHeadMLP:
         }
         with patch.object(HierarchicalTacticClassifier, "load_state_dict"):
             model = HierarchicalTacticClassifier.from_checkpoint(checkpoint)
-        assert isinstance(model.category_head, nn.Sequential)
-        assert len(model.category_head) == 4
-        assert model.category_head[0].in_features == 768
-        assert model.category_head[0].out_features == 384
-        assert model.category_head[3].in_features == 384
-        assert model.category_head[3].out_features == 2
+        assert isinstance(model.category_head, nn.Linear)
+        assert model.category_head.in_features == 768
+        assert model.category_head.out_features == 2
 
 
 def _mock_encoder():
@@ -1144,9 +1134,10 @@ class TestTacticClassifierTrainerHyperparams:
         assert trainer.hyperparams["early_stopping_patience"] == 3
         assert trainer.hyperparams["class_weight_alpha"] == 0.4
         assert trainer.hyperparams["label_smoothing"] == 0.1
-        assert trainer.hyperparams["sam_rho"] == 0.05
+        assert trainer.hyperparams["sam_rho"] == 0.15
         assert trainer.hyperparams["lambda_within"] == 1.0
-        assert trainer.hyperparams["focal_gamma"] == 0.0
+        assert trainer.hyperparams["ldam_C"] == 0.3
+        assert trainer.hyperparams["drw_start_fraction"] == 0.8
 
     def test_custom_hyperparameters_override_defaults(self):
         """spec §4.3: Caller can override defaults."""
@@ -1164,8 +1155,10 @@ class TestTacticClassifierTrainerHyperparams:
         assert DEFAULT_HYPERPARAMS["learning_rate"] == 2e-5
         assert DEFAULT_HYPERPARAMS["early_stopping_patience"] == 3
         assert DEFAULT_HYPERPARAMS["label_smoothing"] == 0.1
-        assert DEFAULT_HYPERPARAMS["sam_rho"] == 0.05
+        assert DEFAULT_HYPERPARAMS["sam_rho"] == 0.15
         assert DEFAULT_HYPERPARAMS["lambda_within"] == 1.0
+        assert DEFAULT_HYPERPARAMS["ldam_C"] == 0.3
+        assert DEFAULT_HYPERPARAMS["drw_start_fraction"] == 0.8
 
     def test_sam_rho_zero_disables_sam(self):
         """spec §4.3: When sam_rho=0.0, SAM is disabled (plain AdamW)."""
@@ -1245,97 +1238,91 @@ class TestClassConditionalLabelSmoothing:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 7a-ii. Focal Loss Modulation
+# 7a-ii. LDAM Loss + Deferred Re-Balancing
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestFocalLoss:
-    """spec §4.3: Focal modulation down-weights well-classified (easy) examples."""
+class TestLDAMLoss:
+    """spec §4.3: LDAM margins penalize minority-class misclassification more heavily."""
 
-    def test_gamma_zero_matches_standard_loss(self):
-        """When focal_gamma=0, loss equals standard class-conditional cross-entropy."""
+    def test_ldam_margins_inversely_proportional_to_count(self):
+        """spec §4.3: margin[c] = C / n_c^(1/4). Rarer classes get larger margins."""
         import torch
 
-        from Poule.neural.training.loss import class_conditional_cross_entropy
+        from Poule.neural.training.loss import compute_ldam_margins
+
+        class_counts = torch.tensor([5000.0, 100.0, 10.0])
+        margins = compute_ldam_margins(class_counts, ldam_C=0.3)
+
+        # margin[2] > margin[1] > margin[0] (rarer class = larger margin)
+        assert margins[2] > margins[1] > margins[0]
+        # Check specific values: 0.3 / n^0.25
+        assert abs(margins[0].item() - 0.3 / 5000**0.25) < 1e-5
+        assert abs(margins[1].item() - 0.3 / 100**0.25) < 1e-5
+        assert abs(margins[2].item() - 0.3 / 10**0.25) < 1e-5
+
+    def test_ldam_adjusts_true_class_logit(self):
+        """spec §4.3: LDAM subtracts margin from the true class logit only."""
+        import torch
+
+        from Poule.neural.training.loss import ldam_cross_entropy
+
+        logits = torch.tensor([[2.0, 1.5, 0.5]])
+        labels = torch.tensor([0])
+        class_counts = torch.tensor([5000.0, 100.0, 10.0])
+        weights = torch.ones(3)
+
+        loss = ldam_cross_entropy(logits, labels, weights, class_counts, ldam_C=0.3, label_smoothing=0.0)
+        assert loss.item() > 0
+        assert torch.isfinite(loss)
+
+    def test_ldam_zero_C_matches_standard_loss(self):
+        """When ldam_C=0, margins are zero and loss equals standard cross-entropy."""
+        import torch
+
+        from Poule.neural.training.loss import ldam_cross_entropy, class_conditional_cross_entropy
 
         logits = torch.randn(8, 5)
         labels = torch.randint(0, 5, (8,))
         weights = torch.ones(5)
+        counts = torch.tensor([1000.0, 500.0, 200.0, 100.0, 50.0])
 
-        loss_no_focal = class_conditional_cross_entropy(logits, labels, weights, 0.1)
-        loss_focal_0 = class_conditional_cross_entropy(
-            logits, labels, weights, 0.1, focal_gamma=0.0,
-        )
-        assert torch.allclose(loss_no_focal, loss_focal_0)
+        loss_ldam = ldam_cross_entropy(logits, labels, weights, counts, ldam_C=0.0, label_smoothing=0.1)
+        loss_standard = class_conditional_cross_entropy(logits, labels, weights, 0.1)
+        assert torch.allclose(loss_ldam, loss_standard, atol=1e-5)
 
-    def test_focal_reduces_easy_sample_loss(self):
-        """High-confidence predictions get lower loss with gamma > 0."""
+    def test_ldam_C_in_default_hyperparams(self):
+        """ldam_C and drw_start_fraction appear in DEFAULT_HYPERPARAMS."""
+        assert "ldam_C" in DEFAULT_HYPERPARAMS
+        assert DEFAULT_HYPERPARAMS["ldam_C"] == 0.3
+        assert "drw_start_fraction" in DEFAULT_HYPERPARAMS
+        assert DEFAULT_HYPERPARAMS["drw_start_fraction"] == 0.8
+
+
+class TestDeferredReBalancing:
+    """spec §4.3: DRW transitions from instance-balanced to class-balanced sampling."""
+
+    def test_drw_epoch_computation(self):
+        """spec §4.3: drw_epoch = int(max_epochs * drw_start_fraction)."""
+        max_epochs = 20
+        drw_start_fraction = 0.8
+        drw_epoch = int(max_epochs * drw_start_fraction)
+        assert drw_epoch == 16
+
+    def test_drw_class_balanced_weights(self):
+        """spec §4.3: Class-balanced sampling weights are 1/class_count per sample."""
         import torch
 
-        from Poule.neural.training.loss import class_conditional_cross_entropy
+        from Poule.neural.training.loss import compute_drw_sample_weights
 
-        # Create logits where model is very confident on true class
-        logits = torch.tensor([[10.0, -5.0, -5.0]])  # p_t ≈ 1.0
-        labels = torch.tensor([0])
-        weights = torch.ones(3)
+        class_counts = torch.tensor([5000.0, 100.0, 10.0])
+        labels = torch.tensor([0, 0, 1, 2])  # 2 from class 0, 1 from class 1, 1 from class 2
 
-        loss_standard = class_conditional_cross_entropy(
-            logits, labels, weights, 0.0,
-        )
-        loss_focal = class_conditional_cross_entropy(
-            logits, labels, weights, 0.0, focal_gamma=2.0,
-        )
-        # Focal loss should be much smaller for easy examples
-        assert loss_focal < loss_standard * 0.1
-
-    def test_focal_preserves_hard_sample_loss(self):
-        """Low-confidence predictions get similar loss with gamma > 0."""
-        import torch
-
-        from Poule.neural.training.loss import class_conditional_cross_entropy
-
-        # Create logits where model is uncertain (uniform-ish)
-        logits = torch.tensor([[0.1, 0.0, -0.1]])  # p_t ≈ 0.33
-        labels = torch.tensor([0])
-        weights = torch.ones(3)
-
-        loss_standard = class_conditional_cross_entropy(
-            logits, labels, weights, 0.0,
-        )
-        loss_focal = class_conditional_cross_entropy(
-            logits, labels, weights, 0.0, focal_gamma=2.0,
-        )
-        # Hard sample loss should be within ~50% (modulator ≈ (1-0.33)^2 ≈ 0.45)
-        assert loss_focal > loss_standard * 0.3
-
-    def test_focal_weight_formula(self):
-        """Verify (1-p_t)^gamma scaling matches the spec formula."""
-        import torch
-
-        from Poule.neural.training.loss import class_conditional_cross_entropy
-
-        logits = torch.tensor([[2.0, 0.0, 0.0]])
-        labels = torch.tensor([0])
-        weights = torch.ones(3)
-
-        # Compute expected p_t
-        probs = torch.softmax(logits, dim=-1)
-        p_t = probs[0, 0].item()
-        expected_focal_weight = (1.0 - p_t) ** 2.0
-
-        loss_standard = class_conditional_cross_entropy(
-            logits, labels, weights, 0.0,
-        )
-        loss_focal = class_conditional_cross_entropy(
-            logits, labels, weights, 0.0, focal_gamma=2.0,
-        )
-        # focal_loss ≈ standard_loss * focal_weight
-        assert abs(loss_focal.item() - loss_standard.item() * expected_focal_weight) < 1e-5
-
-    def test_focal_gamma_in_default_hyperparams(self):
-        """focal_gamma appears in DEFAULT_HYPERPARAMS with default 0.0."""
-        assert "focal_gamma" in DEFAULT_HYPERPARAMS
-        assert DEFAULT_HYPERPARAMS["focal_gamma"] == 0.0
+        weights = compute_drw_sample_weights(labels, class_counts)
+        # Samples from class 0 get weight 1/5000, class 1 gets 1/100, class 2 gets 1/10
+        assert abs(weights[0].item() - 1.0 / 5000) < 1e-8
+        assert abs(weights[2].item() - 1.0 / 100) < 1e-8
+        assert abs(weights[3].item() - 1.0 / 10) < 1e-8
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1395,6 +1382,105 @@ class TestSAMOptimizer:
 
         # With rho=0, no perturbation — parameters unchanged
         assert torch.allclose(model.weight.data, original_weight)
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="MLX SAM requires macOS with Apple Silicon",
+)
+class TestMLXSAMOptimizer:
+    """spec §4.3: MLX SAM-AdamW performs two forward-backward passes."""
+
+    def test_sam_step_perturbs_and_updates(self):
+        """spec §4.3: SAM perturbs parameters, computes gradient at perturbed
+        point, restores, and applies optimizer step."""
+        import mlx.core as mx
+        import mlx.nn as nn
+        import mlx.optimizers as optim
+
+        from Poule.neural.training.mlx_backend.sam import sam_step
+
+        model = nn.Linear(4, 2)
+        mx.eval(model.parameters())
+        optimizer = optim.AdamW(learning_rate=1e-3)
+
+        original_weight = mx.array(model.weight)
+
+        def loss_fn(m):
+            x = mx.ones((2, 4))
+            return m(x).sum()
+
+        loss = sam_step(model, loss_fn, optimizer, rho=0.15)
+        mx.eval(loss)
+
+        # Parameters should have been updated (not equal to original)
+        updated_weight = model.weight
+        assert not mx.allclose(updated_weight, original_weight).item()
+
+    def test_sam_zero_rho_is_plain_adamw(self):
+        """spec §4.3: When rho=0.0, sam_step is equivalent to plain AdamW."""
+        import mlx.core as mx
+        import mlx.nn as nn
+        import mlx.optimizers as optim
+
+        from Poule.neural.training.mlx_backend.sam import sam_step
+
+        # Train two identical models: one with SAM rho=0, one with plain AdamW
+        model_sam = nn.Linear(4, 2)
+        mx.eval(model_sam.parameters())
+        model_plain = nn.Linear(4, 2)
+        # Copy weights
+        model_plain.weight = mx.array(model_sam.weight)
+        model_plain.bias = mx.array(model_sam.bias)
+        mx.eval(model_plain.parameters())
+
+        opt_sam = optim.AdamW(learning_rate=1e-3)
+        opt_plain = optim.AdamW(learning_rate=1e-3)
+
+        x = mx.ones((2, 4))
+
+        def loss_fn_sam(m):
+            return m(x).sum()
+
+        def loss_fn_plain(m):
+            return m(x).sum()
+
+        # SAM with rho=0
+        sam_step(model_sam, loss_fn_sam, opt_sam, rho=0.0)
+
+        # Plain AdamW step
+        loss, grads = nn.value_and_grad(model_plain, loss_fn_plain)(model_plain)
+        opt_plain.update(model_plain, grads)
+        mx.eval(model_plain.parameters(), opt_plain.state)
+
+        # Both should produce identical results
+        assert mx.allclose(model_sam.weight, model_plain.weight).item()
+        assert mx.allclose(model_sam.bias, model_plain.bias).item()
+
+    def test_sam_doubles_compute(self):
+        """spec §4.3: SAM with rho > 0 calls loss_fn twice (two forward passes)."""
+        import mlx.core as mx
+        import mlx.nn as nn
+        import mlx.optimizers as optim
+
+        from Poule.neural.training.mlx_backend.sam import sam_step
+
+        model = nn.Linear(4, 2)
+        mx.eval(model.parameters())
+        optimizer = optim.AdamW(learning_rate=1e-3)
+
+        call_count = 0
+
+        def loss_fn(m):
+            nonlocal call_count
+            call_count += 1
+            x = mx.ones((2, 4))
+            return m(x).sum()
+
+        sam_step(model, loss_fn, optimizer, rho=0.15)
+        # nn.value_and_grad wraps the function; count should be 2
+        # (once at original point, once at perturbed point)
+        assert call_count == 2
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -66,11 +66,15 @@ class LibraryLOOCV:
         undersample_cap: int = 1000,
         hyperparams: dict | None = None,
         backend: str = "mlx",
+        always_train_libraries: list[str] | None = None,
     ) -> LOOCVReport:
         """Run LOOCV across all libraries.
 
         For each library, holds it out as the test set, trains on the
         remaining libraries, evaluates, and collects a FoldResult.
+
+        Libraries in ``always_train_libraries`` are included in training
+        for every fold but are never held out as a fold themselves.
         """
         from Poule.neural.training.data import (
             TrainingDataLoader,
@@ -78,17 +82,21 @@ class LibraryLOOCV:
         )
 
         output_dir.mkdir(parents=True, exist_ok=True)
+        always_train = set(always_train_libraries or [])
 
         folds: list[FoldResult] = []
 
         for held_out in library_paths:
+            if held_out in always_train:
+                continue
             print(f"\n{'='*60}")
             print(f"LOOCV fold: holding out {held_out}")
             print(f"{'='*60}")
 
             # Load data with library-level split
             dataset = TrainingDataLoader.load_by_library(
-                library_paths, held_out_library=held_out
+                library_paths, held_out_library=held_out,
+                always_train_libraries=list(always_train),
             )
 
             # Undersample training split

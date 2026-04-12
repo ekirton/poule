@@ -8,7 +8,7 @@ Command-line tools for training, evaluating, and deploying the neural tactic pre
 
 Neural tactic prediction requires a trained classifier model. Training requires proof trace data (produced by the Training Data Extraction pipeline), compute resources, and expertise in configuring training runs. The project needs to support two distinct workflows:
 
-1. **Project maintainers** train the canonical model on data from six Coq libraries and ship the checkpoint with the tool
+1. **Project maintainers** train the canonical model on data from five Coq libraries (excluding CoqInterval) and ship the checkpoint with the tool
 2. **AI researchers** train experimental models with different architectures, hyperparameters, or training data and evaluate them against baselines
 
 ## Solution
@@ -23,7 +23,7 @@ A set of CLI commands that handle the full training lifecycle:
 
 ## Training Data Requirements
 
-The training pipeline consumes `(proof_state, tactic_text)` pairs in the JSON Lines format produced by the Training Data Extraction pipeline. The `"s"` (step) records contain a serialized proof state and the tactic command text. The six target libraries yield ~105,000 such pairs.
+The training pipeline consumes `(proof_state, tactic_text)` pairs in the JSON Lines format produced by the Training Data Extraction pipeline. The `"s"` (step) records contain a serialized proof state and the tactic command text. The five target libraries yield ~140,000 such pairs.
 
 The validation command checks the data before training starts, reporting:
 - Count of valid step records and records with missing tactic text

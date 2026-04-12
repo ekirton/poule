@@ -84,6 +84,7 @@ class MLXTrainer:
         import mlx.optimizers as optim
 
         from Poule.neural.training.mlx_backend.loss import (
+            compute_ldam_margins_mlx,
             cross_entropy_loss,
             hierarchical_loss_mlx,
             precompute_category_indices,
@@ -104,7 +105,7 @@ class MLXTrainer:
         patience = hp["early_stopping_patience"]
         class_weight_alpha = hp.get("class_weight_alpha", 0.5)
         lambda_within = hp.get("lambda_within", 1.0)
-        focal_gamma = hp.get("focal_gamma", 0.0)
+        ldam_C = hp.get("ldam_C", 0.3)
 
         train_pairs = dataset.train_pairs
         if len(train_pairs) < 1000:
@@ -168,14 +169,39 @@ class MLXTrainer:
                     cat_family_counts, cat_lm, n_cat, alpha=class_weight_alpha,
                 )
             class_weights = None  # not used for hierarchical
+
+            # Compute LDAM margins from raw category/within-category counts
+            if ldam_C > 0:
+                cat_counts_arr = mx.array([
+                    float(sum(dataset.per_category_counts.get(cat, {}).values()))
+                    for cat in dataset.category_names
+                ])
+                category_margins = compute_ldam_margins_mlx(cat_counts_arr, ldam_C)
+                per_cat_margins = {}
+                for cat in dataset.category_names:
+                    cat_family_counts = dataset.per_category_counts.get(cat, {})
+                    cat_lm = dataset.per_category_label_maps[cat]
+                    n_cat = len(dataset.per_category_label_names[cat])
+                    counts = mx.array([
+                        float(cat_family_counts.get(name, 1))
+                        for name in dataset.per_category_label_names[cat]
+                    ])
+                    per_cat_margins[cat] = compute_ldam_margins_mlx(counts, ldam_C)
+            else:
+                category_margins = None
+                per_cat_margins = None
         else:
             class_weights = self._compute_class_weights(
                 dataset.family_counts, dataset.label_map, num_classes,
                 alpha=class_weight_alpha,
             )
 
-        # Optimizer
+        # Optimizer: SAM-AdamW or plain AdamW
+        sam_rho = hp.get("sam_rho", 0.15)
         optimizer = optim.AdamW(learning_rate=lr, weight_decay=weight_decay)
+        use_sam = sam_rho > 0.0
+        if use_sam:
+            from Poule.neural.training.mlx_backend.sam import sam_step
 
         # Prepare output
         output_dir = Path(output_dir)
@@ -259,13 +285,47 @@ class MLXTrainer:
         batch_starts = list(range(0, n_train, micro_batch_size))
         total_micros = len(batch_starts)
 
+        # Deferred re-balancing (DRW): after drw_start_epoch, weight batch
+        # selection proportionally to the inverse-class-frequency of samples
+        # in each batch, biasing training toward minority classes.
+        drw_start_fraction = hp.get("drw_start_fraction", 0.8)
+        drw_start_epoch = max(1, int(max_epochs * drw_start_fraction))
+        batch_drw_weights = None
+        if is_hierarchical and ldam_C > 0:
+            # Compute per-sample inverse-class-frequency weight
+            sample_weights = np.ones(n_train, dtype=np.float32)
+            cat_labels_np = np.array(all_cat_labels)
+            within_labels_np = np.array(all_within_labels)
+            for i in range(n_train):
+                cat_idx = int(cat_labels_np[i])
+                cat_name = dataset.category_names[cat_idx]
+                within_idx = int(within_labels_np[i])
+                family = dataset.per_category_label_names[cat_name][within_idx]
+                count = dataset.per_category_counts.get(cat_name, {}).get(family, 1)
+                sample_weights[i] = 1.0 / max(count, 1)
+            # Aggregate per-batch weights (mean of sample weights in each batch)
+            batch_drw_weights = np.zeros(len(batch_starts), dtype=np.float64)
+            for bi, bs in enumerate(batch_starts):
+                end = min(bs + micro_batch_size, n_train)
+                batch_drw_weights[bi] = sample_weights[bs:end].mean()
+            batch_drw_weights /= batch_drw_weights.sum()
+
         for epoch in range(1, max_epochs + 1):
-            np.random.shuffle(batch_starts)
+            if batch_drw_weights is not None and epoch >= drw_start_epoch:
+                # DRW phase 2: class-balanced batch sampling with replacement
+                selected = np.random.choice(
+                    len(batch_starts), size=len(batch_starts),
+                    replace=True, p=batch_drw_weights,
+                )
+                epoch_batch_starts = [batch_starts[i] for i in selected]
+            else:
+                epoch_batch_starts = list(batch_starts)
+                np.random.shuffle(epoch_batch_starts)
 
             epoch_loss = 0.0
             num_batches = 0
 
-            for bi, batch_start in enumerate(batch_starts):
+            for bi, batch_start in enumerate(epoch_batch_starts):
                 if bi % 100 == 0:
                     print(f"  micro-batch {bi}/{total_micros}", flush=True)
 
@@ -300,7 +360,8 @@ class MLXTrainer:
                             category_weights, per_cat_weights,
                             dataset.category_names, lambda_within,
                             batch_cat_indices=batch_cat_idx,
-                            focal_gamma=focal_gamma,
+                            category_margins=category_margins,
+                            per_category_margins=per_cat_margins,
                         )
                 else:
                     labels = all_labels[batch_start:end]
@@ -308,12 +369,15 @@ class MLXTrainer:
                     def loss_fn(model):
                         logits = model(s_ids, s_mask)
                         return cross_entropy_loss(
-                            logits, labels, class_weights, focal_gamma,
+                            logits, labels, class_weights,
                         )
 
-                loss, grads = nn.value_and_grad(model, loss_fn)(model)
-                optimizer.update(model, grads)
-                mx.eval(model.parameters(), optimizer.state, loss)
+                if use_sam:
+                    loss = sam_step(model, loss_fn, optimizer, sam_rho)
+                else:
+                    loss, grads = nn.value_and_grad(model, loss_fn)(model)
+                    optimizer.update(model, grads)
+                    mx.eval(model.parameters(), optimizer.state, loss)
 
                 epoch_loss += float(loss)
                 num_batches += 1

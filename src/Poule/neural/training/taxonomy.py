@@ -2,8 +2,7 @@
 
 Single source of truth for category mapping. All other files import from here.
 
-Six categories: top 5 by frequency plus "other" as catch-all for rare
-categories (arithmetic, contradiction, ssreflect).
+Eight categories: all have dedicated classification heads.
 """
 
 from __future__ import annotations
@@ -16,7 +15,9 @@ CATEGORY_NAMES: list[str] = [
     "rewriting",
     "hypothesis_mgmt",
     "automation",
-    "other",
+    "ssreflect",
+    "arithmetic",
+    "contradiction",
 ]
 
 # Tactics per category. Each tactic maps to exactly one category.
@@ -43,13 +44,14 @@ TACTIC_CATEGORIES: dict[str, list[str]] = {
         "auto", "eauto", "trivial", "tauto", "intuition", "firstorder",
         "decide", "now", "easy", "assumption",
     ],
-    "other": [
-        # Arithmetic (formerly its own category)
-        "lia", "omega", "ring", "field",
-        # Contradiction (formerly its own category)
-        "exfalso", "absurd", "contradiction",
-        # SSReflect (formerly its own category)
+    "ssreflect": [
         "move", "suff", "wlog", "congr", "unlock",
+    ],
+    "arithmetic": [
+        "lia", "omega", "ring", "field",
+    ],
+    "contradiction": [
+        "exfalso", "absurd", "contradiction",
     ],
 }
 

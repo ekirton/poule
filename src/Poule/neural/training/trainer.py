@@ -30,10 +30,11 @@ DEFAULT_HYPERPARAMS = {
     "early_stopping_patience": 3,
     "class_weight_alpha": 0.4,
     "label_smoothing": 0.1,
-    "sam_rho": 0.05,
+    "sam_rho": 0.15,
     "embedding_dim": 128,
     "lambda_within": 1.0,
-    "focal_gamma": 0.0,
+    "ldam_C": 0.3,
+    "drw_start_fraction": 0.8,
 }
 
 
@@ -435,7 +436,7 @@ class TacticClassifierTrainer:
         alpha = hp.get("class_weight_alpha", 0.5)
         label_smoothing = hp.get("label_smoothing", 0.1)
         lambda_within = hp.get("lambda_within", 1.0)
-        focal_gamma = hp.get("focal_gamma", 0.0)
+        ldam_C = hp.get("ldam_C", 0.3)
 
         if is_hierarchical:
             from Poule.neural.training.loss import hierarchical_loss
@@ -450,21 +451,37 @@ class TacticClassifierTrainer:
                 cat_counts, cat_label_map, num_categories, alpha=alpha,
             ).to(device)
 
-            # Per-category within-class weights
+            # Category counts tensor for LDAM margins
+            import torch as _torch
+            category_counts_tensor = _torch.tensor(
+                [max(cat_counts.get(cat, 1), 1) for cat in dataset.category_names],
+                dtype=_torch.float32,
+            ).to(device)
+
+            # Per-category within-class weights and counts
             per_cat_weights = {}
+            per_cat_counts_tensors = {}
             for cat in dataset.category_names:
                 cat_family_counts = dataset.per_category_counts.get(cat, {})
                 cat_label_map_inner = dataset.per_category_label_maps[cat]
-                n_cat_classes = len(dataset.per_category_label_names[cat])
+                cat_label_names = dataset.per_category_label_names[cat]
+                n_cat_classes = len(cat_label_names)
                 per_cat_weights[cat] = compute_class_weights(
                     cat_family_counts, cat_label_map_inner, n_cat_classes, alpha=alpha,
+                ).to(device)
+                per_cat_counts_tensors[cat] = _torch.tensor(
+                    [max(cat_family_counts.get(name, 1), 1) for name in cat_label_names],
+                    dtype=_torch.float32,
                 ).to(device)
 
             def criterion(cat_logits, within_logits, cat_labels, within_labels):
                 return hierarchical_loss(
                     cat_logits, within_logits, cat_labels, within_labels,
                     category_weights, per_cat_weights, dataset.category_names,
-                    label_smoothing, lambda_within, focal_gamma,
+                    label_smoothing, lambda_within,
+                    category_counts=category_counts_tensor,
+                    per_category_counts=per_cat_counts_tensors,
+                    ldam_C=ldam_C,
                 )
         else:
             num_classes = len(label_names)
@@ -473,11 +490,11 @@ class TacticClassifierTrainer:
             ).to(device)
             from Poule.neural.training.loss import class_conditional_cross_entropy
             criterion = lambda logits, labels: class_conditional_cross_entropy(
-                logits, labels, class_weights, label_smoothing, focal_gamma,
+                logits, labels, class_weights, label_smoothing,
             )
 
         # Optimizer: SAM-AdamW or plain AdamW
-        sam_rho = hp.get("sam_rho", 0.05)
+        sam_rho = hp.get("sam_rho", 0.15)
         base_optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=hp["learning_rate"],
@@ -511,14 +528,41 @@ class TacticClassifierTrainer:
         best_accuracy = -1.0
         final_epoch = 0
 
+        # Deferred re-balancing (DRW): class-balanced sampling after drw_start_epoch
+        drw_start_fraction = hp.get("drw_start_fraction", 0.8)
+        drw_start_epoch = max(1, int(hp["max_epochs"] * drw_start_fraction))
+        drw_sample_weights = None
+        if is_hierarchical and ldam_C > 0:
+            from Poule.neural.training.loss import compute_drw_sample_weights
+            # Build per-sample class counts for the flat (category * within) index
+            flat_counts = {}
+            for cat in dataset.category_names:
+                for name, count in dataset.per_category_counts.get(cat, {}).items():
+                    flat_counts[name] = count
+            train_labels = []
+            for _, cat_idx, within_idx in train_pairs:
+                cat_name = dataset.category_names[cat_idx]
+                family = dataset.per_category_label_names[cat_name][within_idx]
+                train_labels.append(flat_counts.get(family, 1))
+            # Per-sample weights: 1 / class_count
+            drw_weights_np = [1.0 / max(c, 1) for c in train_labels]
+            drw_total = sum(drw_weights_np)
+            drw_sample_weights = [w / drw_total for w in drw_weights_np]
+
         for epoch in range(1, hp["max_epochs"] + 1):
             final_epoch = epoch
             model.train()
             epoch_loss = 0.0
             n_batches = 0
 
-            indices = list(range(len(train_pairs)))
-            random.shuffle(indices)
+            n_train = len(train_pairs)
+            if drw_sample_weights is not None and epoch >= drw_start_epoch:
+                # DRW phase 2: class-balanced sampling with replacement
+                indices = random.choices(range(n_train), weights=drw_sample_weights, k=n_train)
+            else:
+                # Phase 1: instance-balanced (uniform) sampling
+                indices = list(range(n_train))
+                random.shuffle(indices)
 
             total_batches = (len(indices) + batch_size - 1) // batch_size
             for batch_start in range(0, len(indices), batch_size):

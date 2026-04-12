@@ -88,13 +88,7 @@ class HierarchicalTacticClassifier(nn.Module):
 
         # Hierarchical heads
         if self._is_hierarchical:
-            cat_hidden = hidden_size // 2
-            self.category_head = nn.Sequential(
-                nn.Linear(hidden_size, cat_hidden),
-                nn.ReLU(),
-                nn.Dropout(0.1),
-                nn.Linear(cat_hidden, num_categories),
-            )
+            self.category_head = nn.Linear(hidden_size, num_categories)
             self.within_heads = nn.ModuleDict({
                 cat: nn.Linear(hidden_size, size)
                 for cat, size in per_category_sizes.items()
@@ -161,13 +155,7 @@ class HierarchicalTacticClassifier(nn.Module):
             model.per_category_sizes = per_category_sizes
             num_categories = checkpoint.get("num_categories", len(per_category_sizes))
             model.num_categories = num_categories
-            cat_hidden = hidden_size // 2
-            model.category_head = nn.Sequential(
-                nn.Linear(hidden_size, cat_hidden),
-                nn.ReLU(),
-                nn.Dropout(0.1),
-                nn.Linear(cat_hidden, num_categories),
-            )
+            model.category_head = nn.Linear(hidden_size, num_categories)
             model.within_heads = nn.ModuleDict({
                 cat: nn.Linear(hidden_size, size)
                 for cat, size in per_category_sizes.items()

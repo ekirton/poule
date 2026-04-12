@@ -1,7 +1,7 @@
-"""MLX cross-entropy loss for tactic classifier training.
+"""MLX cross-entropy loss with LDAM margins for tactic classifier training.
 
 Weighted cross-entropy loss reimplemented using mlx.core operations,
-matching the PyTorch trainer's weighted CrossEntropyLoss.
+with LDAM margin offsets (Cao et al., 2019) for class-imbalanced learning.
 
 Requires: mlx (macOS with Apple Silicon only).
 """
@@ -15,7 +15,6 @@ def cross_entropy_loss(
     logits: mx.array,
     labels: mx.array,
     class_weights: mx.array | None = None,
-    focal_gamma: float = 0.0,
 ) -> mx.array:
     """Compute weighted cross-entropy loss.
 
@@ -24,8 +23,6 @@ def cross_entropy_loss(
         labels: [B] integer class labels.
         class_weights: [num_classes] per-class inverse-frequency weights.
             If None, all classes are weighted equally.
-        focal_gamma: focusing parameter (Lin et al., 2017). When > 0,
-            down-weights easy examples via (1 - p_t)^gamma modulation.
 
     Returns:
         Scalar loss averaged over the batch (weighted mean).
@@ -42,18 +39,50 @@ def cross_entropy_loss(
     one_hot = one_hot.at[mx.arange(B), labels].add(mx.ones((B,)))
     nll = -(one_hot * log_probs).sum(axis=-1)  # [B]
 
-    # Focal modulation: down-weight easy (high p_t) examples
-    if focal_gamma > 0.0:
-        probs = mx.softmax(logits, axis=-1)  # [B, C]
-        p_t = (one_hot * probs).sum(axis=-1)  # [B]
-        nll = nll * (1.0 - p_t) ** focal_gamma
-
     if class_weights is not None:
         # Per-sample weight from its true class
         sample_weights = class_weights[labels]  # [B]
         return (nll * sample_weights).sum() / sample_weights.sum()
     else:
         return mx.mean(nll)
+
+
+def ldam_cross_entropy_loss(
+    logits: mx.array,
+    labels: mx.array,
+    class_weights: mx.array | None = None,
+    margins: mx.array | None = None,
+) -> mx.array:
+    """Cross-entropy with LDAM margin offsets.
+
+    Subtracts margin[y] from the logit of the true class before computing CE.
+
+    Args:
+        logits: [B, num_classes] unnormalized logits.
+        labels: [B] integer class labels.
+        class_weights: [num_classes] per-class weights.
+        margins: [num_classes] LDAM margins. If None, no adjustment.
+
+    Returns:
+        Scalar loss.
+    """
+    if margins is not None:
+        B = logits.shape[0]
+        num_classes = logits.shape[1]
+        one_hot = mx.zeros((B, num_classes))
+        one_hot = one_hot.at[mx.arange(B), labels].add(mx.ones((B,)))
+        adjusted_logits = logits - one_hot * margins
+    else:
+        adjusted_logits = logits
+    return cross_entropy_loss(adjusted_logits, labels, class_weights)
+
+
+def compute_ldam_margins_mlx(
+    class_counts: mx.array,
+    ldam_C: float = 0.3,
+) -> mx.array:
+    """Compute LDAM class-dependent margins: margin[c] = C / n_c^(1/4)."""
+    return ldam_C / mx.power(class_counts, 0.25)
 
 
 def precompute_category_indices(
@@ -93,7 +122,8 @@ def hierarchical_loss_mlx(
     category_names: list[str],
     lambda_within: float = 1.0,
     batch_cat_indices: list[mx.array] | None = None,
-    focal_gamma: float = 0.0,
+    category_margins: mx.array | None = None,
+    per_category_margins: dict[str, mx.array] | None = None,
 ) -> mx.array:
     """Hierarchical loss: L = L_category + lambda * L_within(active head).
 
@@ -106,22 +136,21 @@ def hierarchical_loss_mlx(
         per_category_weights: dict[cat_name -> [cat_size]] per-category weights
         category_names: ordered category names
         lambda_within: balancing weight
-        batch_cat_indices: pre-computed per-category index arrays for this
-            batch (avoids numpy round-trip). If None, falls back to computing
-            indices from category_labels.
+        batch_cat_indices: pre-computed per-category index arrays for this batch
+        category_margins: [num_categories] LDAM margins for categories
+        per_category_margins: dict[cat_name -> [cat_size]] LDAM margins per category
 
     Returns:
         Scalar combined loss.
     """
-    l_category = cross_entropy_loss(
-        category_logits, category_labels, category_weights, focal_gamma,
+    l_category = ldam_cross_entropy_loss(
+        category_logits, category_labels, category_weights, category_margins,
     )
 
     l_within = mx.array(0.0)
     total_weight = 0.0
 
     if batch_cat_indices is not None:
-        # Fast path: use pre-computed indices (no CPU-GPU sync)
         for cat_idx, cat_name in enumerate(category_names):
             idx = batch_cat_indices[cat_idx]
             n = idx.shape[0]
@@ -130,13 +159,13 @@ def hierarchical_loss_mlx(
             cat_within_labels = within_labels[idx]
             cat_logits = within_logits[cat_name][idx]
             cat_weights = per_category_weights[cat_name]
-            cat_loss = cross_entropy_loss(
-                cat_logits, cat_within_labels, cat_weights, focal_gamma,
+            cat_margins = per_category_margins.get(cat_name) if per_category_margins else None
+            cat_loss = ldam_cross_entropy_loss(
+                cat_logits, cat_within_labels, cat_weights, cat_margins,
             )
             l_within = l_within + cat_loss * n
             total_weight += n
     else:
-        # Fallback: compute indices via numpy (causes CPU-GPU sync)
         import numpy as np
         cat_labels_np = np.array(category_labels)
         for cat_idx, cat_name in enumerate(category_names):
@@ -148,8 +177,9 @@ def hierarchical_loss_mlx(
             cat_within_labels = within_labels[idx]
             cat_logits = within_logits[cat_name][idx]
             cat_weights = per_category_weights[cat_name]
-            cat_loss = cross_entropy_loss(
-                cat_logits, cat_within_labels, cat_weights, focal_gamma,
+            cat_margins = per_category_margins.get(cat_name) if per_category_margins else None
+            cat_loss = ldam_cross_entropy_loss(
+                cat_logits, cat_within_labels, cat_weights, cat_margins,
             )
             l_within = l_within + cat_loss * n
             total_weight += n
@@ -158,5 +188,3 @@ def hierarchical_loss_mlx(
         l_within = l_within / total_weight
 
     return l_category + lambda_within * l_within
-
-

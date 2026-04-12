@@ -10,13 +10,13 @@ When a student is stuck mid-proof, they need more than a list of possible tactic
 
 The existing `suggest_tactics` MCP tool uses rule-based goal classification: it inspects the goal type for structural patterns (conjunction, disjunction, equality, existential, etc.) and suggests tactics accordingly. This approach is limited to a fixed set of goal shapes and cannot learn from proof patterns across libraries. It misses tactic choices that depend on hypothesis context, mathematical domain conventions, or library-specific idioms.
 
-Meanwhile, the extraction pipeline captures (proof_state, tactic) pairs from four vanilla-Coq libraries (stdlib, stdpp, flocq, coquelicot) — each goal state paired with the tactic that was actually applied. This data represents the collective proof strategies of library authors across diverse mathematical domains. MathComp and CoqInterval are excluded: MathComp uses a different tactic dialect (71% SSReflect) and CoqInterval's specialized interval-arithmetic proof style does not transfer to other libraries.
+Meanwhile, the extraction pipeline captures (proof_state, tactic) pairs from five Coq libraries (stdlib, stdpp, flocq, coquelicot, MathComp) — each goal state paired with the tactic that was actually applied. This data represents the collective proof strategies of library authors across diverse mathematical domains. MathComp is included because it provides the SSReflect training signal needed by the dedicated SSReflect category head. CoqInterval is excluded — its specialized interval-arithmetic proof style does not transfer to other libraries (LOOCV showed 64/65 dead families).
 
 ## Solution
 
 A hierarchical encoder-based classifier predicts the tactic family from a serialized proof state. Claude uses these predictions as a starting point to explain each suggestion: why the tactic is appropriate for this proof state, what proof strategy it serves, and where the student can learn more (e.g., the relevant Software Foundations chapter or Coq reference manual section).
 
-The model uses a CodeBERT encoder with a closed-vocabulary tokenizer and a two-level classification hierarchy: 6 tactic categories (introduction, elimination, rewriting, hypothesis management, automation, other) with within-category tactic families. The "other" category is a catch-all for tactics not in the top 5 categories (arithmetic, contradiction, ssreflect). Training uses hierarchical class-weighted cross-entropy at both category and within-category levels. Inference produces P(tactic) = P(category) × P(tactic|category) via the product rule.
+The model uses a CodeBERT encoder with a closed-vocabulary tokenizer and a two-level classification hierarchy: 8 tactic categories (introduction, elimination, rewriting, hypothesis management, automation, arithmetic, contradiction, ssreflect) with within-category tactic families. Each category has a dedicated classification head. Training uses LDAM (label-distribution-aware margin loss) with deferred re-balancing: class-dependent margin offsets penalize misclassification of rare tactics more heavily, combined with a two-phase schedule that uses instance-balanced sampling initially and class-balanced sampling for the final training phase. Inference produces P(tactic) = P(category) × P(tactic|category) via the product rule.
 
 Neural predictions are integrated into the existing `suggest_tactics` MCP tool:
 - When a trained model is available, neural predictions are returned alongside rule-based suggestions, ranked by model confidence
@@ -37,9 +37,9 @@ The original plan was to train a neural premise retrieval model. This failed: on
 
 Tactic prediction reuses the same extraction infrastructure with 30x more data. Every proof step has a tactic, regardless of whether premises are known. Research (Tactician, Proverbot9001, CoqHammer) confirms that tactic prediction works well for Coq without per-step premise annotations.
 
-### Why 6 categories (top 5 + other)
+### Why 8 categories
 
-The flat 96-class classifier achieves only 46.6% test accuracy@5 with 86 of 96 classes showing zero recall. The root cause is extreme class imbalance (IR = 26,950:1). Hierarchical decomposition into categories drops cross-category imbalance significantly. The top 5 categories (introduction, elimination, rewriting, hypothesis management, automation) cover >95% of extracted proof steps across vanilla-Coq libraries. The remaining categories (arithmetic, contradiction, ssreflect) have too few examples to learn reliably — arithmetic has <900 samples total, contradiction <150 — so they are grouped into an "other" catch-all. Proof structure tokens (bullets, braces) are excluded from training entirely.
+The flat 96-class classifier achieves only 46.6% test accuracy@5 with 86 of 96 classes showing zero recall. The root cause is extreme class imbalance (IR = 26,950:1). Hierarchical decomposition into categories drops cross-category imbalance significantly. All 8 categories (introduction, elimination, rewriting, hypothesis management, automation, arithmetic, contradiction, ssreflect) have dedicated classification heads. Arithmetic and contradiction have few training examples (<900 and <150 respectively), but merging them into an "other" catch-all demonstrably hurts: the 6-category experiment showed the catch-all destroyed the working SSReflect head (move recall: 40.1% to 24.5%) without improving the merged categories. Keeping all 8 categories preserves each head's decision boundaries. Proof structure tokens (bullets, braces) are excluded from training entirely.
 
 ### Why CPU-only inference
 
@@ -57,7 +57,7 @@ The same argument as for premise retrieval: 100M-class models with INT8 quantiza
 
 - GIVEN a trained tactic classifier and a proof state WHEN tactic prediction is invoked THEN the model returns a ranked list of tactic families with confidence scores
 - GIVEN a held-out test set of Coq proof steps WHEN the classifier is evaluated THEN top-1 accuracy is >= 40% and top-5 accuracy is >= 80%
-- GIVEN the tactic family vocabulary WHEN inspected THEN it contains ~30 families covering >95% of extracted proof steps, with rare tactics grouped into an "other" class
+- GIVEN the tactic family vocabulary WHEN inspected THEN it contains ~65 families across 8 categories covering >99% of extracted proof steps
 
 ### Integrate with suggest_tactics MCP Tool
 
@@ -119,9 +119,9 @@ The six most frequent tactic families (rewrite, intros, apply, auto, destruct, s
 
 The current file-level split scatters files from the same library across train, validation, and test splits. Libraries share tactic conventions — stdlib favors `destruct`/`induction`, stdpp has its own automation patterns. The model may learn library identity rather than generalizable proof-state-to-tactic mappings. Leave-one-library-out cross-validation (LOOCV) diagnoses whether library-level data leakage is the bottleneck for generalization.
 
-MathComp and CoqInterval are excluded from both training and LOOCV: MathComp uses SSReflect-dialect tactics (71% of its steps) and CoqInterval's specialized proof style does not transfer. The remaining 4 vanilla-Coq libraries (stdlib, stdpp, flocq, coquelicot) are 78–99% vanilla Coq.
+CoqInterval is excluded from both training and LOOCV — its specialized interval-arithmetic proof style does not transfer (LOOCV showed 64/65 dead families). MathComp is included in training (it provides the SSReflect signal) but excluded from LOOCV because its SSReflect-dialect tactics (71% of its steps) make it a poor hold-out candidate against vanilla-Coq libraries. The remaining 4 vanilla-Coq libraries (stdlib, stdpp, flocq, coquelicot) are 78–99% vanilla Coq.
 
-For each of the 5 vanilla-Coq libraries, one fold holds out that library entirely as the test set and trains on the remaining libraries. Validation comes from the training-distribution libraries (not the held-out library) so early stopping gets a proper signal. The test set is a completely unseen library — true cross-library generalization.
+For each of the 4 vanilla-Coq libraries, one fold holds out that library entirely as the test set and trains on the remaining libraries plus MathComp. Validation comes from the training-distribution libraries (not the held-out library) so early stopping gets a proper signal. The test set is a completely unseen library — true cross-library generalization.
 
 **What this provides:**
 - A CLI command to run LOOCV across all libraries, producing a per-fold and aggregate report
@@ -134,11 +134,11 @@ For each of the 5 vanilla-Coq libraries, one fold holds out that library entirel
 - Changes to the existing training pipeline or model architecture
 - Automatic selection of the best split strategy based on LOOCV results
 
-- GIVEN per-library JSONL files for 5 vanilla-Coq libraries (excluding MathComp) WHEN the LOOCV command runs THEN 5 folds are trained and evaluated, each holding out one library as the test set
+- GIVEN per-library JSONL files for 4 vanilla-Coq libraries plus MathComp (excluding CoqInterval) WHEN the LOOCV command runs THEN 4 folds are trained and evaluated, each holding out one vanilla-Coq library as the test set
 - GIVEN a LOOCV fold WHEN the held-out library's files are inspected THEN none appear in the training or validation splits
 - GIVEN a LOOCV fold WHEN validation files are inspected THEN they come only from the non-held-out libraries
 - GIVEN a LOOCV fold WHEN undersampling is applied THEN it uses the configured cap (default 1000) on the training split only
-- GIVEN all 5 folds complete WHEN the aggregate report is generated THEN it contains mean test_acc@5, std test_acc@5, and per-library accuracy
+- GIVEN all 4 folds complete WHEN the aggregate report is generated THEN it contains mean test_acc@5, std test_acc@5, and per-library accuracy
 - GIVEN a fixed seed and identical input WHEN LOOCV is run twice THEN the same train/val splits and results are produced
 
 ### Collapse Training Data
