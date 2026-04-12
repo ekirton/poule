@@ -649,22 +649,24 @@ Final training time: 1.85 hours (111 minutes).
 
 Note: families with fewer than 20 training examples are too sparse to be trainable and are excluded from coverage targets. The previous "dead families < 20" criterion counted all 65 taxonomy families equally, penalizing the model for failing on classes with insufficient training data (e.g., arithmetic and contradiction families with <50 total examples across all splits).
 
-### Comparison across all three models
+### Comparison across all four models
 
-| Metric | Flat (96 cls) | Hierarchical | Undersampled |
-|--------|--------------|--------------|--------------|
-| Train samples | 114K | 95K | 40K |
-| Best HPO val_acc@5 | 0.697 | 0.802 | 0.621 |
-| Test acc@1 | 14.0% | 12.9% | 17.2% |
-| Test acc@5 | 46.6% | 45.2% | **57.0%** |
-| Val–test gap (acc@5) | 24pp | 35pp | **6pp** |
-| Zero-recall families | 86/96 | 55/65 | 44/65 |
-| Non-zero recall families | 10 | 10 | 21 |
-| Trainable coverage (≥20 examples) | — | — | 21/58 = 36.2% |
-| Trainable coverage (≥50 examples) | — | — | 21/54 = 38.9% |
-| Parameters | ~150M | ~77M | ~77M |
-| HPO time | 51.9h | 35.6h | 16.4h |
-| Training time | 7.6h | 2.7h | 1.85h |
+| Metric | Flat (96 cls) | Hierarchical | Undersampled | Focal Loss |
+|--------|--------------|--------------|--------------|------------|
+| Train samples | 114K | 95K | 40K | 40K |
+| Categories | 96 (flat) | 8 | 8 | 6 |
+| Best HPO val_acc@5 | 0.697 | 0.802 | 0.621 | 0.639 |
+| Test acc@1 | 14.0% | 12.9% | **17.2%** | 7.8% |
+| Test acc@5 | 46.6% | 45.2% | **57.0%** | 46.4% |
+| Val–test gap (acc@5) | 24pp | 35pp | **6pp** | 18pp |
+| Category acc@1 | — | — | 34.9% | 31.5% |
+| Zero-recall families | 86/96 | 55/65 | 44/65 | 47/65 |
+| Non-zero recall families | 10 | 10 | **21** | 18 |
+| Trainable coverage (≥20 examples) | — | — | 21/58 = 36.2% | 18/54 = 33.3% |
+| Trainable coverage (≥50 examples) | — | — | 21/54 = 38.9% | 18/54 = 33.3% |
+| Parameters | ~150M | ~77M | ~77M | ~77M |
+| HPO time | 51.9h | 35.6h | 16.4h | 18.7h |
+| Training time | 7.6h | 2.7h | 1.85h | 1.61h |
 
 ### Analysis: undersampling impact
 
@@ -748,6 +750,152 @@ The random-split acc@5 (48.1% with cap=2000) drops to 40.3% mean under LOOCV (ca
 
 **flocq has the most diverse recall** (43 dead — the fewest). This library uses a wider range of tactics from multiple categories, and shares vocabulary with both stdlib and coquelicot, making it the best-connected node in the library graph.
 
+## Focal Loss Experiment
+
+### Motivation
+
+The undersampled model (57.0% test_acc@5) still had 44 dead families and 34.9% category acc@1. Focal loss (Lin et al., 2017) down-weights well-classified examples via a `(1 − p_t)^γ` modulating factor, focusing training on hard examples at the sample level. This complements the existing class-level techniques (inverse-frequency weighting, label smoothing). See [class-imbalance.md](background/class-imbalance.md) for the focal loss formula and literature context.
+
+This experiment also incorporated two other changes from recent commits:
+
+1. **6-category taxonomy** (commit `93a8b35`). Merged the ssreflect (5 tactics), arithmetic (4), and contradiction (3) categories into a single "other" catch-all, reducing from 8 to 6 categories. Rationale: arithmetic (864 samples) and contradiction (146) had 0% accuracy in the 8-category model, and MathComp (the primary SSReflect source) was excluded from training.
+2. **2-layer MLP category head** (commit `bccd35a`). Replaced `Linear(768, 6)` with `Linear(768, 384) → ReLU → Dropout(0.1) → Linear(384, 6)`. Hypothesis: more head capacity would improve category discrimination.
+3. **MathComp and CoqInterval excluded** (commit `644d16e`). Based on LOOCV findings showing poor cross-library transfer for these libraries.
+
+### HPO results
+
+15-trial Optuna study on 40,247 undersampled training samples (10,521 validation, 15,497 test), 6-category hierarchical architecture with 2-layer MLP category head, factored embeddings (D=128), and focal loss modulation. Fixed parameters: `max_seq_length` (256), `embedding_dim` (128), `max_epochs` (10), `early_stopping_patience` (2). New tunable: `focal_gamma` ∈ [0.0, 5.0].
+
+| Trial | Layers | LR | Batch | alpha | label_smooth | sam_rho | lambda | focal_γ | val_acc@5 | Status |
+|-------|--------|----|-------|-------|-------------|---------|--------|---------|-----------|--------|
+| 0 | 6 | 1.6e-5 | 16 | 0.60 | 0.142 | 0.011 | 2.80 | 4.16 | 0.5043 | Complete |
+| 1 | 4 | 4.1e-6 | 16 | 0.14 | 0.058 | 0.030 | 0.86 | 3.93 | 0.5737 | Complete |
+| 2 | 8 | 1.2e-6 | 16 | 0.97 | 0.162 | 0.025 | 0.38 | 3.42 | 0.3645 | Complete |
+| 3 | 8 | 1.2e-6 | 16 | 0.52 | 0.109 | 0.017 | 2.80 | 3.88 | 0.3755 | Pruned |
+| 4 | 4 | 7.0e-5 | 32 | — | — | — | — | 1.40 | 0.4812 | Pruned |
+| 5 | 8 | 1.4e-6 | 16 | — | — | — | — | 0.37 | 0.3018 | Pruned |
+| 6 | 8 | 1.8e-5 | 16 | — | — | — | — | 0.60 | 0.4083 | Pruned |
+| **7** | **6** | **3.5e-5** | **32** | **0.11** | **0.006** | **0.067** | **0.62** | **2.54** | **0.6393** | **Best** |
+| 8 | 4 | 3.2e-5 | 64 | — | — | — | — | 4.02 | 0.3265 | Pruned |
+| 9 | 6 | 4.1e-5 | 16 | — | — | — | — | 2.55 | 0.3899 | Pruned |
+| 10 | 6 | 5.3e-6 | 32 | 0.33 | 0.182 | 0.062 | 2.82 | 2.22 | 0.6203 | Complete |
+| 11 | 6 | 5.4e-6 | 32 | — | — | — | — | 2.26 | 0.6283 | Complete |
+| 12 | 6 | 6.0e-6 | 32 | — | — | — | — | 2.59 | 0.5197 | Pruned |
+| 13 | 6 | 9.0e-5 | 32 | — | — | — | — | 1.70 | 0.3721 | Pruned |
+| 14 | 6 | 2.7e-6 | 32 | — | — | — | — | 3.19 | 0.3720 | Pruned |
+
+HPO time: 18.7 hours (1119.8 min). 6 complete, 9 pruned.
+
+### Final model results
+
+The final model was trained with trial 7's best hyperparameters (6 layers, lr=3.48e-5, batch_size=32, alpha=0.108, label_smoothing=0.006, sam_rho=0.067, lambda_within=0.619, focal_gamma=2.54, embedding_dim=128) for 20 epochs (patience=3). Early stopping triggered at epoch 7 (best: epoch 4).
+
+**Training curve:**
+
+| Epoch | Loss | val_acc@5 |
+|-------|------|-----------|
+| 1 | 1.714 | 0.4774 |
+| 2 | 1.536 | 0.4426 |
+| 3 | 1.388 | 0.5422 |
+| 4 | 1.291 | **0.5725** |
+| 5 | 1.201 | 0.5711 |
+| 6 | 1.103 | 0.5701 |
+| 7 | 1.004 | 0.5629 |
+
+Final training time: 1.61 hours (96.6 minutes).
+
+**Test set evaluation** (run 2026-04-11, 15,497 test samples):
+
+| Metric | Value |
+|--------|-------|
+| Category Accuracy@1 | 31.5% |
+| Accuracy@1 | 7.8% |
+| Accuracy@5 | 46.4% |
+| Eval latency | 271 s (CPU, full test set) |
+
+**Per-category accuracy (test set):**
+
+| Category | Accuracy@1 |
+|----------|-----------|
+| other | 19.6% |
+| elimination | 15.4% |
+| hypothesis_mgmt | 8.6% |
+| rewriting | 6.8% |
+| automation | 4.3% |
+| introduction | 2.8% |
+
+**Per-family highlights (test set):**
+
+| Family | Precision | Recall | Notes |
+|--------|-----------|--------|-------|
+| replace | 0.060 | 0.751 | Highest recall |
+| have | 0.204 | 0.589 | Retained from previous model |
+| case | 0.028 | 0.586 | Newly non-zero — gained from focal loss |
+| move | 0.272 | 0.245 | Down from 0.401 under 8-category SSReflect head |
+| induction | 0.300 | 0.152 | Newly non-zero |
+| auto | 0.123 | 0.054 | Down from 0.292 |
+| eapply | 0.012 | 0.064 | Newly non-zero |
+| exact | 0.085 | 0.030 | Down from 0.298 |
+| intros | 0.375 | 0.035 | Down from 0.537 — catastrophic regression |
+| apply | 0.319 | 0.037 | Down from 0.133 |
+| rewrite | 0.330 | 0.021 | Near-zero recall despite 19% of training data |
+| *47 others* | 0.000 | 0.000 | Dead classes |
+
+Zero-recall families: 47 of 65. Trainable coverage (≥20 examples): 18/54 = 33.3%.
+
+**Success criteria:**
+
+| Criterion | Result | Status |
+|-----------|--------|--------|
+| test_acc@5 > 46.6% | 46.4% | **FAIL** |
+| >80% recall coverage (≥20 train examples) | 18/54 = 33.3% | **FAIL** |
+| >90% recall coverage (≥50 train examples) | 18/54 = 33.3% | **FAIL** |
+| Category acc@1 > 80% | 31.5% | **FAIL** |
+
+### Comparison with previous undersampled model
+
+| Metric | Undersampled (8-cat) | Focal Loss (6-cat) | Delta |
+|--------|---------------------|-------------------|-------|
+| Train samples | 40K | 40K | same |
+| Categories | 8 | 6 | −2 |
+| Best HPO val_acc@5 | 0.621 | 0.639 | +2pp |
+| Test acc@1 | 17.2% | 7.8% | **−9.4pp** |
+| Test acc@5 | 57.0% | 46.4% | **−10.6pp** |
+| Val–test gap (acc@5) | 6pp | 18pp | **+12pp** |
+| Category acc@1 | 34.9% | 31.5% | −3.4pp |
+| Zero-recall families | 44/65 | 47/65 | −3 families |
+| Non-zero recall families | 21 | 18 | −3 |
+| HPO time | 16.4h | 18.7h | +2.3h |
+
+**Per-family regressions:**
+
+| Family | Previous Recall | Current Recall | Change |
+|--------|----------------|----------------|--------|
+| intros | 53.7% | 3.5% | **−50pp** |
+| auto | 29.2% | 5.4% | **−24pp** |
+| exact | 29.8% | 3.0% | **−27pp** |
+| move | 40.1% | 24.5% | **−16pp** |
+| apply | 13.3% | 3.7% | **−10pp** |
+| case | 0.0% | 58.6% | **+59pp** |
+| replace | 39.5% | 75.1% | **+36pp** |
+| induction | 0.0% | 15.2% | **+15pp** |
+
+### Analysis: why focal loss regressed
+
+The focal loss model achieved comparable HPO validation accuracy (63.9% vs. 62.1%) but test accuracy dropped 10.6pp. Three interacting causes explain the regression:
+
+**1. The 6-category taxonomy destroyed the SSReflect head.** The previous 8-category model had a dedicated SSReflect category where `move` achieved 40.1% recall and 38.5% per-category accuracy. Merging SSReflect, arithmetic, and contradiction into a single "other" catch-all forces `move` (5,507 examples) to compete with 11 other families in a heterogeneous bucket. The "other" category accuracy is 19.6% — half of the old SSReflect head's 38.5%. The merge was motivated by arithmetic (864 samples) and contradiction (146) having 0% accuracy, but their failure was benign — they were too sparse to matter. SSReflect had ample signal and its head was working.
+
+**2. Focal loss suppressed high-frequency families without improving rare ones.** With γ=2.54, a sample where the model is 90% confident contributes only `(0.1)^2.54 ≈ 0.003×` its normal gradient. This effectively silenced learning from `intros` (53.7% → 3.5%), `auto` (29.2% → 5.4%), and `exact` (29.8% → 3.0%) — high-frequency families the model was predicting with reasonable confidence. The freed capacity was supposed to improve rare families, but it didn't: the rare family bottleneck is insufficient training signal, not loss weighting. Focal loss solves the wrong problem.
+
+**3. SAM rho dropped from 0.180 to 0.067.** The previous undersampled model's key finding was that high SAM rho was "critical" for generalization — it collapsed the val–test gap from 35pp to 6pp. The current model's SAM rho is less than half the previous value, and the val–test gap tripled from 6pp to 18pp. SAM's flat-minima seeking was what prevented the model from memorizing library-specific patterns; without it, the model overfits the validation set.
+
+**4. The 2-layer MLP category head added parameters without improving discrimination.** The previous single-linear category head achieved 34.9% category acc@1 with 8 categories. The 2-layer MLP (commit `bccd35a`) achieves 31.5% with 6 categories — a strictly easier problem with fewer classes. The extra parameters did not help; the category head's bottleneck is the encoder's representation quality, not the head's capacity. Revert to a single linear layer.
+
+**Contributing factor: MathComp/CoqInterval exclusion.** Removing two libraries reduced training diversity. This was justified for CoqInterval (LOOCV showed 64/65 dead families) but MathComp's exclusion removed the SSReflect training signal that would have been valuable under the 8-category taxonomy.
+
+**Net assessment:** Focal loss is not useful for this problem. The model gained `case`, `replace`, and `induction` but lost far more from the high-frequency family collapse. The 6-category taxonomy change and low SAM rho compounded the damage. The undersampled 8-category model (57.0% test_acc@5, 21 non-zero families) remains the best model.
+
 ## Implementation Scope
 
 | Phase | Effort | Status |
@@ -825,6 +973,10 @@ Head-class undersampling collapsed the val–test gap (35pp → 6pp) and raised 
 
 5. **LDAM + deferred re-balancing** (Cao et al., 2019). Class-dependent margin offsets (`C / n_c^{1/4}`) penalize misclassification of rare tactics more heavily. Combined with deferred re-balancing (normal sampling for 80% of training, balanced for the final 20%), this is a strong literature baseline.
 
-6. **Focal loss** (Lin et al., 2017). Down-weight well-classified examples via `(1-p)^gamma` modulation. This focuses training on hard/rare examples without requiring changes to the sampling strategy. May complement undersampling.
+6. **Focal loss** (Lin et al., 2017). ❌ **Evaluated 2026-04-11 and rejected.** Down-weights well-classified examples via `(1-p)^γ` modulation (γ=2.54 in best trial). Test_acc@5 dropped from 57.0% to 46.4%, with catastrophic recall loss on high-frequency families (intros: 53.7% → 3.5%, auto: 29.2% → 5.4%). The experiment also changed the taxonomy from 8 to 6 categories and reduced SAM rho from 0.180 to 0.067, both of which contributed to the regression. Focal loss suppressed gradient signal from common-but-correctly-predicted examples without improving rare families — the bottleneck is data sparsity, not loss weighting. See [Focal Loss Experiment](#focal-loss-experiment) for full results.
 
-Try (5) next — LDAM + deferred re-balancing operates during end-to-end training rather than post-hoc, addressing the decision boundary directly without discarding the jointly-learned signal.
+7. **Revert to 8-category taxonomy.** The 6-category "other" bucket destroyed the working SSReflect head (move recall: 40.1% → 24.5%). Arithmetic and contradiction had 0% accuracy as separate categories, but their failure was benign. Re-include MathComp to restore SSReflect training signal.
+
+8. **Revert category head to single linear layer.** The 2-layer MLP category head (commit `bccd35a`) did not improve category acc@1 — it dropped from 34.9% (8 categories, single linear) to 31.5% (6 categories, 2-layer MLP). The bottleneck is encoder representation quality, not head capacity.
+
+Try (5) next — LDAM + deferred re-balancing operates during end-to-end training rather than post-hoc, addressing the decision boundary directly without discarding the jointly-learned signal. Any future experiment should restore the 8-category taxonomy, revert to a single-linear category head, and ensure SAM rho ≥ 0.15 (the single most impactful hyperparameter for generalization under undersampling).
