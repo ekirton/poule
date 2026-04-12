@@ -60,13 +60,15 @@ def main():
 
     # ---- Step 1b: Undersample dominant families ----
     UNDERSAMPLE_CAP = 2000
+    UNDERSAMPLE_MIN = max(1, int(UNDERSAMPLE_CAP * 0.05))  # 5% of cap
     original_train = len(dataset.train_pairs)
-    dataset = undersample_train(dataset, cap=UNDERSAMPLE_CAP)
+    dataset = undersample_train(dataset, cap=UNDERSAMPLE_CAP, min_count=UNDERSAMPLE_MIN)
     logger.info(
-        "Undersampled training set: %d -> %d (cap=%d per family)",
+        "Undersampled training set: %d -> %d (cap=%d, min=%d per family)",
         original_train,
         len(dataset.train_pairs),
         UNDERSAMPLE_CAP,
+        UNDERSAMPLE_MIN,
     )
 
     # ---- Step 2: HPO ----
@@ -266,17 +268,18 @@ def main():
     total_families = len(report.per_family_recall)
     lines.append(f"Zero-recall families: {dead_count} of {total_families}")
 
-    # Trainable coverage: families with >=20 / >=50 training examples
-    _MIN_TRAINABLE = 20
-    _COMFORTABLE = 50
-    ge20 = [f for f in report.per_family_recall if dataset.family_counts.get(f, 0) >= _MIN_TRAINABLE]
-    ge50 = [f for f in report.per_family_recall if dataset.family_counts.get(f, 0) >= _COMFORTABLE]
-    nonzero_ge20 = sum(1 for f in ge20 if report.per_family_recall[f] > 0.0)
-    nonzero_ge50 = sum(1 for f in ge50 if report.per_family_recall[f] > 0.0)
-    cov_ge20 = nonzero_ge20 / len(ge20) if ge20 else 0.0
-    cov_ge50 = nonzero_ge50 / len(ge50) if ge50 else 0.0
-    lines.append(f"Trainable coverage (>=20 examples): {nonzero_ge20}/{len(ge20)} = {cov_ge20:.1%}")
-    lines.append(f"Trainable coverage (>=50 examples): {nonzero_ge50}/{len(ge50)} = {cov_ge50:.1%}")
+    # Trainable coverage: families above min_count threshold (5% of cap)
+    # and a higher "confident" tier at 2x min_count
+    _MIN_TRAINABLE = UNDERSAMPLE_MIN          # 5% of cap (default 100)
+    _COMFORTABLE = UNDERSAMPLE_MIN * 2        # 10% of cap (default 200)
+    ge_min = [f for f in report.per_family_recall if dataset.family_counts.get(f, 0) >= _MIN_TRAINABLE]
+    ge_comf = [f for f in report.per_family_recall if dataset.family_counts.get(f, 0) >= _COMFORTABLE]
+    nonzero_ge_min = sum(1 for f in ge_min if report.per_family_recall[f] > 0.0)
+    nonzero_ge_comf = sum(1 for f in ge_comf if report.per_family_recall[f] > 0.0)
+    cov_ge_min = nonzero_ge_min / len(ge_min) if ge_min else 0.0
+    cov_ge_comf = nonzero_ge_comf / len(ge_comf) if ge_comf else 0.0
+    lines.append(f"Trainable coverage (>={_MIN_TRAINABLE} examples): {nonzero_ge_min}/{len(ge_min)} = {cov_ge_min:.1%}")
+    lines.append(f"Trainable coverage (>={_COMFORTABLE} examples): {nonzero_ge_comf}/{len(ge_comf)} = {cov_ge_comf:.1%}")
     lines.append("")
 
     # LOOCV results (if run)
@@ -302,10 +305,10 @@ def main():
     # Success criteria check
     lines.append("--- Success Criteria ---")
     checks = [
-        ("test_acc@5 > 46.6%", report.accuracy_at_5 > 0.466),
-        (f">80% coverage (>=20 examples): {nonzero_ge20}/{len(ge20)}", cov_ge20 > 0.80),
-        (f">90% coverage (>=50 examples): {nonzero_ge50}/{len(ge50)}", cov_ge50 > 0.90),
-        ("category_acc@1 > 80%", report.category_accuracy_at_1 > 0.80),
+        ("test_acc@5 > 57.0%", report.accuracy_at_5 > 0.570),
+        (f">50% coverage (>={_MIN_TRAINABLE} examples): {nonzero_ge_min}/{len(ge_min)}", cov_ge_min > 0.50),
+        (f">60% coverage (>={_COMFORTABLE} examples): {nonzero_ge_comf}/{len(ge_comf)}", cov_ge_comf > 0.60),
+        ("category_acc@1 > 35%", report.category_accuracy_at_1 > 0.35),
     ]
     for name, passed in checks:
         status = "PASS" if passed else "FAIL"

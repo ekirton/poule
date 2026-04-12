@@ -401,29 +401,35 @@ All steps from the same file go into the same split.
 
 #### Head-class undersampling
 
-`undersample_train(dataset, cap, seed) -> TacticDataset`
+`undersample_train(dataset, cap, seed, min_count) -> TacticDataset`
 
-- REQUIRES: `dataset` is a populated `TacticDataset`. `cap` is a positive integer (the maximum number of training examples per tactic family). `seed` is an integer used to seed the random selection.
-- ENSURES: Returns a new `TacticDataset` identical to `dataset` except that `train_pairs` and `train_files` are reduced so that no tactic family has more than `cap` examples. Validation and test splits are unchanged. `family_counts` and `per_category_counts` are recomputed from the undersampled training split only (not from the original data). All other fields (`label_map`, `label_names`, `category_names`, `per_category_label_maps`, `per_category_label_names`) are copied unchanged.
+- REQUIRES: `dataset` is a populated `TacticDataset`. `cap` is a positive integer defaulting to 2000 (the maximum number of training examples per tactic family). `seed` is an integer used to seed the random selection. `min_count` is a positive integer or None; when None, defaults to `max(1, int(cap * 0.05))` (5% of cap).
+- ENSURES: Returns a new `TacticDataset` identical to `dataset` except that `train_pairs` and `train_files` are reduced so that (a) no tactic family has more than `cap` examples and (b) families with fewer than `min_count` training examples are dropped entirely. Validation and test splits are unchanged. `family_counts` and `per_category_counts` are recomputed from the undersampled training split only (not from the original data). All other fields (`label_map`, `label_names`, `category_names`, `per_category_label_maps`, `per_category_label_names`) are copied unchanged.
 
 **Procedure:**
 
 1. Group `train_pairs` by tactic family. The family for a triple `(state, cat_idx, within_idx)` is resolved via `dataset.category_names[cat_idx]` and `dataset.per_category_label_names[cat_name][within_idx]`.
-2. For each family with more than `cap` examples, use `random.Random(seed).sample()` to select exactly `cap` examples. The same seed always selects the same subset.
-3. For families with `cap` or fewer examples, retain all examples.
-4. Concatenate all per-family groups (in arbitrary order) into the new `train_pairs`.
-5. Build the corresponding `train_files` list by selecting the same indices.
-6. Recompute `family_counts` by counting all families across train + val + test in the result.
-7. Recompute `per_category_counts` from the recomputed family counts.
+2. Drop families with fewer than `min_count` training examples.
+3. For each remaining family with more than `cap` examples, use `random.Random(seed).sample()` to select exactly `cap` examples. The same seed always selects the same subset.
+4. For families with `cap` or fewer examples (and at least `min_count`), retain all examples.
+5. Concatenate all per-family groups (in arbitrary order) into the new `train_pairs`.
+6. Build the corresponding `train_files` list by selecting the same indices.
+7. Recompute `family_counts` by counting all families across train + val + test in the result.
+8. Recompute `per_category_counts` from the recomputed family counts.
 
 - MAINTAINS: `val_pairs`, `test_pairs`, `val_files`, `test_files` are identical to the input dataset.
-- MAINTAINS: Deterministic — the same `(dataset, cap, seed)` always produces the same output.
+- MAINTAINS: Deterministic — the same `(dataset, cap, seed, min_count)` always produces the same output.
 - MAINTAINS: No family in the resulting `train_pairs` has more than `cap` examples.
-- MAINTAINS: For families originally at or below `cap`, all examples are preserved.
+- MAINTAINS: No family in the resulting `train_pairs` has fewer than `min_count` examples.
+- MAINTAINS: For families originally between `min_count` and `cap` (inclusive), all examples are preserved.
 
 > **Given** a dataset where `rewrite` has 5,000 training examples and `lia` has 50
-> **When** `undersample_train(dataset, cap=2000, seed=42)` runs
-> **Then** `rewrite` is reduced to 2,000 examples; `lia` retains all 50
+> **When** `undersample_train(dataset, cap=2000, seed=42)` runs (min_count defaults to 100)
+> **Then** `rewrite` is reduced to 2,000 examples; `lia` is dropped (50 < 100)
+
+> **Given** a dataset where `rewrite` has 5,000 and `apply` has 150 training examples
+> **When** `undersample_train(dataset, cap=2000, min_count=100, seed=42)` runs
+> **Then** `rewrite` is reduced to 2,000; `apply` retains all 150 (above min_count, below cap)
 
 > **Given** `undersample_train` called twice with `seed=42` on the same dataset
 > **When** the resulting `train_pairs` are compared
@@ -584,8 +590,9 @@ All steps from the same file go into the same split.
 | `max_epochs` | 20 | Must be positive |
 | `early_stopping_patience` | 3 | Must be positive |
 | `embedding_dim` | 128 | Must be positive. When equal to `hidden_size` (768), no projection is applied. |
-| `undersample_cap` | None | When not None, must be a positive integer. Passed to `undersample_train()` before training begins. |
+| `undersample_cap` | None | When not None, must be a positive integer. Passed to `undersample_train()` before training begins. Default 2000 when called directly. |
 | `undersample_seed` | 42 | Integer seed for reproducible undersampling. |
+| `undersample_min_count` | None | When not None, must be a positive integer. Families with fewer than this many training examples are dropped. When None, defaults to 5% of `undersample_cap`. |
 | `lambda_within` | 1.0 | Must be positive. Balancing weight for within-category loss in hierarchical mode. |
 | `ldam_C` | 0.3 | Must be positive. LDAM margin scaling constant (Cao et al., 2019). |
 | `drw_start_fraction` | 0.8 | Must be in (0.0, 1.0). Fraction of training epochs before switching to class-balanced sampling. |

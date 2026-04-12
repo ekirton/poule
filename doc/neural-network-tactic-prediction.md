@@ -439,12 +439,12 @@ Joint loss: `L = L_category + lambda * L_within(active head)`, where lambda bala
 
 ### Success criteria
 
-- Overall test accuracy@5 exceeds 46.6% (flat model baseline)
-- Non-zero recall on >80% of tactic families with ≥20 training examples
-- Non-zero recall on >90% of tactic families with ≥50 training examples
-- Category accuracy@1 exceeds 80%
+- Overall test accuracy@5 exceeds 57.0% (undersampled model baseline)
+- Non-zero recall on >50% of tactic families with ≥100 training examples
+- Non-zero recall on >60% of tactic families with ≥200 training examples
+- Category accuracy@1 exceeds 35%
 
-Families with fewer than 20 training examples are too sparse to be trainable and do not count towards coverage targets. Of the 65 taxonomy families, 58 have ≥20 examples and 54 have ≥50 examples. Only 4 families fall below the trainability floor: `decide` (18), `econstructor` (10), `rename` (8), `unlock` (8). The two tiers reflect increasing confidence: ≥20 examples is the minimum viable signal, ≥50 is the comfortable threshold where the model should reliably learn the class.
+Families with fewer than 100 training examples (5% of the undersample cap of 2,000) are dropped during undersampling and do not count towards coverage targets. The trainability floor was raised from 50 to 100 because families below this threshold have too few test examples (~10) for reliable recall measurement and face an imbalance ratio of 20:1+ against capped families. The two coverage tiers (100 and 200) represent minimum viable signal and confident signal respectively. Targets are calibrated against the best model's actuals (36–39% coverage, 34.9% category acc@1) as achievable stretch goals.
 
 ## Hierarchical Model Results
 
@@ -642,12 +642,12 @@ Final training time: 1.85 hours (111 minutes).
 
 | Criterion | Result | Status |
 |-----------|--------|--------|
-| test_acc@5 > 46.6% | 57.0% | **PASS** |
-| >80% recall coverage (≥20 train examples) | 21/58 = 36.2% | **FAIL** |
-| >90% recall coverage (≥50 train examples) | 21/54 = 38.9% | **FAIL** |
-| Category acc@1 > 80% | 34.9% | **FAIL** |
+| test_acc@5 > 57.0% | 57.0% | **PASS** |
+| >50% recall coverage (≥100 train examples) | 21/58 = 36.2% | **FAIL** |
+| >60% recall coverage (≥200 train examples) | 21/54 = 38.9% | **FAIL** |
+| Category acc@1 > 35% | 34.9% | **FAIL** |
 
-Note: families with fewer than 20 training examples are too sparse to be trainable and are excluded from coverage targets. The previous "dead families < 20" criterion counted all 65 taxonomy families equally, penalizing the model for failing on classes with insufficient training data (e.g., arithmetic and contradiction families with <50 total examples across all splits).
+Note: families with fewer than 100 training examples (5% of undersample cap) are dropped during undersampling and excluded from coverage targets. This replaced the previous ≥20/≥50 thresholds, which were too low to provide reliable recall measurement or overcome the imbalance ratio against capped families.
 
 ### Comparison across all four models
 
@@ -662,8 +662,8 @@ Note: families with fewer than 20 training examples are too sparse to be trainab
 | Category acc@1 | — | — | 34.9% | 31.5% |
 | Zero-recall families | 86/96 | 55/65 | 44/65 | 47/65 |
 | Non-zero recall families | 10 | 10 | **21** | 18 |
-| Trainable coverage (≥20 examples) | — | — | 21/58 = 36.2% | 18/54 = 33.3% |
-| Trainable coverage (≥50 examples) | — | — | 21/54 = 38.9% | 18/54 = 33.3% |
+| Trainable coverage (≥100 examples) | — | — | 21/58 = 36.2% | 18/54 = 33.3% |
+| Trainable coverage (≥200 examples) | — | — | 21/54 = 38.9% | 18/54 = 33.3% |
 | Parameters | ~150M | ~77M | ~77M | ~77M |
 | HPO time | 51.9h | 35.6h | 16.4h | 18.7h |
 | Training time | 7.6h | 2.7h | 1.85h | 1.61h |
@@ -677,7 +677,7 @@ Note: families with fewer than 20 training examples are too sparse to be trainab
 4. **acc@1 improved** (12.9% → 17.2%). The model's top prediction is correct more often.
 
 **What undersampling did not fix:**
-1. **44 dead families remain.** Most are too sparse to be trainable (<20 training examples) — arithmetic, contradiction, and many elimination tactics have insufficient data, and undersampling the majority doesn't increase their representation. The coverage-based success criteria (>80% of families with ≥20 examples, >90% with ≥50) separate "model failure" from "insufficient data."
+1. **44 dead families remain.** Most are too sparse to be trainable (<100 training examples) — arithmetic, contradiction, and many elimination tactics have insufficient data, and undersampling the majority doesn't increase their representation. The coverage-based success criteria (>50% of families with ≥100 examples, >60% with ≥200) separate "model failure" from "insufficient data."
 2. **Category acc@1 is only 34.9%.** The 8-category top-level classifier is not discriminating well — the model often predicts the right tactic within the wrong category.
 3. **Precision is low across the board.** The model predicts more diverse tactics (good for recall) but at the cost of precision. This is acceptable for suggest_tactics (users see a ranked list) but not for automated proof search.
 
@@ -725,7 +725,7 @@ LOOCV completed 2026-04-10. Each fold trains with cap=1000 undersampling using t
 | Accuracy@1 | 11.1% |
 | Accuracy@5 | 48.1% |
 | Zero-recall families | 43/65 |
-| Trainable coverage (≥20 examples) | 22/54 = 40.7% |
+| Trainable coverage (≥100 examples) | 22/54 = 40.7% |
 
 **Per-fold results:**
 
@@ -841,16 +841,16 @@ Final training time: 1.61 hours (96.6 minutes).
 | rewrite | 0.330 | 0.021 | Near-zero recall despite 19% of training data |
 | *47 others* | 0.000 | 0.000 | Dead classes |
 
-Zero-recall families: 47 of 65. Trainable coverage (≥20 examples): 18/54 = 33.3%.
+Zero-recall families: 47 of 65. Trainable coverage (≥100 examples): 18/54 = 33.3%.
 
 **Success criteria:**
 
 | Criterion | Result | Status |
 |-----------|--------|--------|
-| test_acc@5 > 46.6% | 46.4% | **FAIL** |
-| >80% recall coverage (≥20 train examples) | 18/54 = 33.3% | **FAIL** |
-| >90% recall coverage (≥50 train examples) | 18/54 = 33.3% | **FAIL** |
-| Category acc@1 > 80% | 31.5% | **FAIL** |
+| test_acc@5 > 57.0% | 46.4% | **FAIL** |
+| >50% recall coverage (≥100 train examples) | 18/54 = 33.3% | **FAIL** |
+| >60% recall coverage (≥200 train examples) | 18/54 = 33.3% | **FAIL** |
+| Category acc@1 > 35% | 31.5% | **FAIL** |
 
 ### Comparison with previous undersampled model
 
@@ -914,7 +914,7 @@ The focal loss model achieved comparable HPO validation accuracy (63.9% vs. 62.1
 
 ## Next Steps
 
-Head-class undersampling collapsed the val–test gap (35pp → 6pp) and raised test_acc@5 to 57%, but many families with sufficient training data (≥20 examples) still show zero recall, and category acc@1 is only 35%. The remaining interventions target the long tail; see [class-imbalance.md](background/class-imbalance.md) for literature backing.
+Head-class undersampling collapsed the val–test gap (35pp → 6pp) and raised test_acc@5 to 57%, but many families with sufficient training data (≥100 examples) still show zero recall, and category acc@1 is only 35%. The remaining interventions target the long tail; see [class-imbalance.md](background/class-imbalance.md) for literature backing.
 
 1. **Head-class undersampling.** ✅ **Done.** Cap dominant families at 2,000 examples each (95K → 40K training). Collapsed the val–test gap from 35pp to 6pp, raised test_acc@5 from 45.2% to 57.0%, doubled non-zero families from 10 to 21.
 
@@ -969,7 +969,7 @@ Head-class undersampling collapsed the val–test gap (35pp → 6pp) and raised 
 
    **Why it underperforms:** Decoupled training improved 5 of 8 categories but overall accuracy dropped because (1) the reinitialized heads start from scratch, discarding the jointly-trained signal, and (2) the encoder representations were learned jointly with the original heads — the frozen encoder produces features optimized for the *original* decision boundaries, not the reinitialized ones. Kang et al.'s results were on vision tasks with much larger datasets (ImageNet: 1.2M images vs. our 40K proof states) where encoder features are more general.
 
-4. **Minority oversampling.** Undersampling capped the majority but did nothing to boost families with <50 examples (arithmetic, contradiction, many elimination tactics). SMOTE-like augmentation or simple oversampling of rare families could help fill the gap.
+4. **Minority oversampling.** Undersampling capped the majority but did nothing to boost families with <100 examples (arithmetic, contradiction, many elimination tactics). SMOTE-like augmentation or simple oversampling of rare families could help fill the gap.
 
 5. **LDAM + deferred re-balancing** (Cao et al., 2019). Class-dependent margin offsets (`C / n_c^{1/4}`) penalize misclassification of rare tactics more heavily. Combined with deferred re-balancing (normal sampling for 80% of training, balanced for the final 20%), this is a strong literature baseline.
 

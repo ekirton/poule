@@ -313,7 +313,14 @@ class TacticClassifierTrainer:
                 "undersample_seed",
                 self.hyperparams.get("undersample_seed", 42),
             )
-            dataset = undersample_train(dataset, cap=undersample_cap, seed=undersample_seed)
+            undersample_min = (hyperparams or {}).get(
+                "undersample_min_count",
+                self.hyperparams.get("undersample_min_count"),
+            )
+            dataset = undersample_train(
+                dataset, cap=undersample_cap, seed=undersample_seed,
+                min_count=undersample_min,
+            )
 
         train_pairs = dataset.train_pairs
 

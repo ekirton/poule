@@ -499,7 +499,7 @@ class TestUndersampleTrain:
         """Families exceeding the cap are reduced to exactly cap examples."""
         from Poule.neural.training.data import undersample_train
 
-        ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 50})
+        ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 150})
         result = undersample_train(ds, cap=2000, seed=42)
 
         from Poule.neural.training.taxonomy import (
@@ -514,12 +514,51 @@ class TestUndersampleTrain:
         )
         assert rewrite_count == 2000
 
-    def test_preserves_small_family(self):
-        """Families at or below the cap retain all examples."""
+    def test_preserves_small_family_above_min(self):
+        """Families at or below cap but above min_count retain all examples."""
+        from Poule.neural.training.data import undersample_train
+
+        ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 150})
+        result = undersample_train(ds, cap=2000, seed=42)
+
+        from Poule.neural.training.taxonomy import (
+            CATEGORY_NAMES, TACTIC_CATEGORIES, TACTIC_TO_CATEGORY,
+        )
+        cat_idx_lia = list(CATEGORY_NAMES).index(TACTIC_TO_CATEGORY["lia"])
+        within_idx_lia = list(TACTIC_CATEGORIES[TACTIC_TO_CATEGORY["lia"]]).index("lia")
+
+        lia_count = sum(
+            1 for _, c, w in result.train_pairs
+            if c == cat_idx_lia and w == within_idx_lia
+        )
+        assert lia_count == 150
+
+    def test_drops_family_below_min_count(self):
+        """Families below min_count (default 5% of cap) are dropped."""
         from Poule.neural.training.data import undersample_train
 
         ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 50})
+        # cap=2000, default min_count = 100, so lia (50) is dropped
         result = undersample_train(ds, cap=2000, seed=42)
+
+        from Poule.neural.training.taxonomy import (
+            CATEGORY_NAMES, TACTIC_CATEGORIES, TACTIC_TO_CATEGORY,
+        )
+        cat_idx_lia = list(CATEGORY_NAMES).index(TACTIC_TO_CATEGORY["lia"])
+        within_idx_lia = list(TACTIC_CATEGORIES[TACTIC_TO_CATEGORY["lia"]]).index("lia")
+
+        lia_count = sum(
+            1 for _, c, w in result.train_pairs
+            if c == cat_idx_lia and w == within_idx_lia
+        )
+        assert lia_count == 0
+
+    def test_min_count_zero_preserves_all(self):
+        """min_count=0 disables the floor, preserving all families."""
+        from Poule.neural.training.data import undersample_train
+
+        ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 50})
+        result = undersample_train(ds, cap=2000, seed=42, min_count=1)
 
         from Poule.neural.training.taxonomy import (
             CATEGORY_NAMES, TACTIC_CATEGORIES, TACTIC_TO_CATEGORY,
@@ -538,7 +577,7 @@ class TestUndersampleTrain:
         from Poule.neural.training.data import undersample_train
 
         ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 50})
-        result = undersample_train(ds, cap=2000, seed=42)
+        result = undersample_train(ds, cap=2000, seed=42, min_count=1)
 
         assert result.val_pairs == ds.val_pairs
         assert result.test_pairs == ds.test_pairs
@@ -550,8 +589,8 @@ class TestUndersampleTrain:
         from Poule.neural.training.data import undersample_train
 
         ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 50})
-        r1 = undersample_train(ds, cap=2000, seed=42)
-        r2 = undersample_train(ds, cap=2000, seed=42)
+        r1 = undersample_train(ds, cap=2000, seed=42, min_count=1)
+        r2 = undersample_train(ds, cap=2000, seed=42, min_count=1)
 
         assert r1.train_pairs == r2.train_pairs
         assert r1.train_files == r2.train_files
@@ -572,18 +611,18 @@ class TestUndersampleTrain:
         """family_counts reflects the undersampled distribution."""
         from Poule.neural.training.data import undersample_train
 
-        ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 50})
+        ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 150})
         result = undersample_train(ds, cap=2000, seed=42)
 
         assert result.family_counts["rewrite"] == 2000
-        assert result.family_counts["lia"] == 50
+        assert result.family_counts["lia"] == 150
 
     def test_per_category_counts_recomputed(self):
         """per_category_counts reflects the undersampled distribution."""
         from Poule.neural.training.data import undersample_train
         from Poule.neural.training.taxonomy import TACTIC_TO_CATEGORY
 
-        ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 50})
+        ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 150})
         result = undersample_train(ds, cap=2000, seed=42)
 
         rewrite_cat = TACTIC_TO_CATEGORY["rewrite"]
@@ -593,7 +632,7 @@ class TestUndersampleTrain:
         """label_map, label_names, category_names are unchanged."""
         from Poule.neural.training.data import undersample_train
 
-        ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 50})
+        ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 150})
         result = undersample_train(ds, cap=2000, seed=42)
 
         assert result.label_map == ds.label_map
@@ -611,7 +650,7 @@ class TestUndersampleTrain:
 
         ds = self._make_dataset_with_counts({
             "rewrite": 5000, "intros": 3000, "apply": 4000,
-            "auto": 2500, "destruct": 1500, "lia": 50,
+            "auto": 2500, "destruct": 1500, "lia": 150,
         })
         result = undersample_train(ds, cap=2000, seed=42)
 
@@ -629,7 +668,7 @@ class TestUndersampleTrain:
         """train_files has the same length as train_pairs after undersampling."""
         from Poule.neural.training.data import undersample_train
 
-        ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 50})
+        ds = self._make_dataset_with_counts({"rewrite": 5000, "lia": 150})
         result = undersample_train(ds, cap=2000, seed=42)
 
         assert len(result.train_files) == len(result.train_pairs)

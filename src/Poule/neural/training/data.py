@@ -134,19 +134,26 @@ class TacticDataset:
 
 def undersample_train(
     dataset: TacticDataset,
-    cap: int,
+    cap: int = 2000,
     seed: int = 42,
+    min_count: int | None = None,
 ) -> TacticDataset:
-    """Cap dominant tactic families in the training split.
+    """Cap dominant tactic families and drop rare ones from training.
 
     spec §4.1: Groups training pairs by tactic family, randomly samples
-    at most `cap` examples per family, and returns a new TacticDataset
+    at most `cap` examples per family, drops families with fewer than
+    `min_count` training examples, and returns a new TacticDataset
     with the reduced training split. Validation and test splits are unchanged.
+
+    When `min_count` is None, defaults to 5% of `cap`.
     """
     from Poule.neural.training.taxonomy import (
         CATEGORY_NAMES,
         TACTIC_CATEGORIES,
     )
+
+    if min_count is None:
+        min_count = max(1, int(cap * 0.05))
 
     # Group train pairs + files by family
     family_groups: dict[str, list[int]] = {}
@@ -155,10 +162,12 @@ def undersample_train(
         family = dataset.per_category_label_names[cat_name][within_idx]
         family_groups.setdefault(family, []).append(idx)
 
-    # Undersample: cap each family
+    # Undersample: cap each family, drop those below min_count
     rng = random.Random(seed)
     selected_indices: list[int] = []
     for family, indices in family_groups.items():
+        if len(indices) < min_count:
+            continue
         if len(indices) > cap:
             selected_indices.extend(rng.sample(indices, cap))
         else:

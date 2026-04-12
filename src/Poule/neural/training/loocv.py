@@ -64,6 +64,7 @@ class LibraryLOOCV:
         vocabulary_path: Path,
         output_dir: Path,
         undersample_cap: int = 1000,
+        undersample_min_count: int | None = None,
         hyperparams: dict | None = None,
         backend: str = "mlx",
         always_train_libraries: list[str] | None = None,
@@ -101,7 +102,8 @@ class LibraryLOOCV:
 
             # Undersample training split
             dataset = undersample_train(
-                dataset, cap=undersample_cap, seed=42
+                dataset, cap=undersample_cap, seed=42,
+                min_count=undersample_min_count,
             )
 
             print(
