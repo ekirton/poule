@@ -38,7 +38,7 @@ ALWAYS_TRAIN_LIBRARIES = ["mathcomp"]
 
 
 def main():
-    from Poule.neural.training.data import TrainingDataLoader, undersample_train
+    from Poule.neural.training.data import TrainingDataLoader, oversample_train, undersample_train
 
     # ---- Step 1: Load data ----
     logger.info("Loading training data...")
@@ -61,6 +61,7 @@ def main():
     # ---- Step 1b: Undersample dominant families ----
     UNDERSAMPLE_CAP = 2000
     UNDERSAMPLE_MIN = max(1, int(UNDERSAMPLE_CAP * 0.05))  # 5% of cap
+    OVERSAMPLE_FLOOR = max(1, int(UNDERSAMPLE_CAP * 0.25))  # 25% of cap
     original_train = len(dataset.train_pairs)
     dataset = undersample_train(dataset, cap=UNDERSAMPLE_CAP, min_count=UNDERSAMPLE_MIN)
     logger.info(
@@ -69,6 +70,16 @@ def main():
         len(dataset.train_pairs),
         UNDERSAMPLE_CAP,
         UNDERSAMPLE_MIN,
+    )
+
+    # ---- Step 1c: Oversample minority families ----
+    pre_oversample = len(dataset.train_pairs)
+    dataset = oversample_train(dataset, floor=OVERSAMPLE_FLOOR)
+    logger.info(
+        "Oversampled training set: %d -> %d (floor=%d per family)",
+        pre_oversample,
+        len(dataset.train_pairs),
+        OVERSAMPLE_FLOOR,
     )
 
     # ---- Step 2: HPO ----
@@ -104,6 +115,7 @@ def main():
     # so the validation split has served its purpose.
     final_dataset = fold_val_into_train(dataset)
     final_dataset = undersample_train(final_dataset, cap=UNDERSAMPLE_CAP, min_count=UNDERSAMPLE_MIN)
+    final_dataset = oversample_train(final_dataset, floor=OVERSAMPLE_FLOOR)
     logger.info(
         "Folded val into train: %d train samples (no validation set)",
         len(final_dataset.train_pairs),

@@ -471,6 +471,46 @@ After HPO selects optimal hyperparameters, the validation split has served its p
 > **When** `undersample_train` is applied to the result
 > **Then** undersampling operates on the merged train+val pool, potentially retaining more tail-class examples
 
+#### Minority oversampling
+
+`oversample_train(dataset, floor, seed) -> TacticDataset`
+
+- REQUIRES: `dataset` is a populated `TacticDataset` (typically the output of `undersample_train`). `floor` is a positive integer defaulting to 500 (the minimum number of training examples per tactic family after oversampling). `seed` is an integer used to seed the random selection (default: 42).
+- ENSURES: Returns a new `TacticDataset` identical to `dataset` except that `train_pairs` is augmented so that every tactic family present in the training split has at least `floor` examples (or all its original examples if it already meets or exceeds `floor`). Validation and test splits are unchanged. `family_counts` and `per_category_counts` are recomputed from the oversampled training split.
+
+**Procedure:**
+
+1. Group `train_pairs` by tactic family. The family for a triple `(state, cat_idx, within_idx)` is resolved via `dataset.category_names[cat_idx]` and `dataset.per_category_label_names[cat_name][within_idx]`.
+2. For each family with fewer than `floor` examples, use `random.Random(seed).choices(family_pairs, k=floor - len(family_pairs))` to sample additional examples with replacement. Append these to the family's existing examples.
+3. For families with `floor` or more examples, retain all examples unchanged.
+4. Concatenate all per-family groups (in arbitrary order) into the new `train_pairs`.
+5. Build the corresponding `train_files` list by selecting the same indices (duplicated entries reference the same source file).
+6. Recompute `family_counts` by counting all families across train + val + test in the result.
+7. Recompute `per_category_counts` from the recomputed family counts.
+
+- MAINTAINS: `val_pairs`, `test_pairs`, `val_files`, `test_files` are identical to the input dataset.
+- MAINTAINS: Deterministic — the same `(dataset, floor, seed)` always produces the same output.
+- MAINTAINS: Every family in the resulting `train_pairs` has at least `floor` examples.
+- MAINTAINS: For families originally at or above `floor`, all examples are preserved and no duplicates are added.
+- MAINTAINS: All label maps, category names, and taxonomy fields are copied unchanged.
+- MAINTAINS: Duplicated pairs are exact copies of existing pairs — no synthetic data is generated.
+
+> **Given** a dataset where `set` has 120 training examples and `rewrite` has 2,000
+> **When** `oversample_train(dataset, floor=500, seed=42)` runs
+> **Then** `set` gains 380 duplicated examples (total 500); `rewrite` is unchanged at 2,000
+
+> **Given** a dataset where `exact` has 500 training examples
+> **When** `oversample_train(dataset, floor=500, seed=42)` runs
+> **Then** `exact` is unchanged at 500 (already meets floor)
+
+> **Given** `oversample_train` called twice with `seed=42` on the same dataset
+> **When** the resulting `train_pairs` are compared
+> **Then** they are identical (same examples in the same positions per family group)
+
+> **Given** a dataset produced by `undersample_train(cap=2000, min_count=100)`
+> **When** `oversample_train(dataset, floor=500)` runs
+> **Then** no family has fewer than 100 examples (the min_count threshold was already enforced) and no family has fewer than 500 examples after oversampling
+
 #### Library-level split: load_by_library()
 
 `TrainingDataLoader.load_by_library(library_paths, held_out_library, val_fraction, seed, always_train_libraries)`
@@ -606,7 +646,7 @@ After HPO selects optimal hyperparameters, the validation split has served its p
 #### train(dataset, output_path, vocabulary_path, hyperparams, epoch_callback)
 
 - REQUIRES: `dataset` is a `TacticDataset` with at least 1,000 training steps (after sampling, if applied). `output_path` is a writable path. `vocabulary_path` points to a valid vocabulary JSON file (as produced by `VocabularyBuilder.build`). `hyperparams` has defaults as specified below. `sample` is `None` or a float in (0.0, 1.0]. `epoch_callback` is `None` or a callable `(epoch: int, val_accuracy: float) -> None`.
-- ENSURES: When `undersample_cap` is not `None` in hyperparams, calls `undersample_train(dataset, cap=undersample_cap, seed=undersample_seed)` before any other processing. When `sample` is not `None`, randomly sub-samples the training split to `ceil(len(dataset.train) * sample)` steps before training begins (validation and test splits are not affected). Constructs a `CoqTokenizer` from `vocabulary_path`. Creates a `TacticClassifier` model with `num_hidden_layers` transformer layers (default 6, layer-dropped from CodeBERT's 12 layers), an embedding layer sized to the vocabulary, and a classification head sized to `dataset.num_classes`. Copies overlapping pretrained embeddings from CodeBERT for tokens that appear in both vocabularies (digits, punctuation, common words). Initializes remaining embeddings randomly (σ=0.02). Trains using class-weighted cross-entropy loss. Saves the best checkpoint (by validation accuracy@5) to `output_path`. The checkpoint includes `num_hidden_layers`, the vocabulary path, and label map for reproducibility. Prints training metrics (loss, validation accuracy@1, validation accuracy@5) after each epoch. When `epoch_callback` is not `None`, invokes it after each epoch's validation with the epoch number and validation accuracy@5; if the callback raises an exception, the training loop terminates and the exception propagates to the caller.
+- ENSURES: When `undersample_cap` is not `None` in hyperparams, calls `undersample_train(dataset, cap=undersample_cap, seed=undersample_seed)` before any other processing. When `oversample_floor` is not `None` in hyperparams, calls `oversample_train(dataset, floor=oversample_floor, seed=oversample_seed)` after undersampling (if any) and before training begins. When `sample` is not `None`, randomly sub-samples the training split to `ceil(len(dataset.train) * sample)` steps before training begins (validation and test splits are not affected). Constructs a `CoqTokenizer` from `vocabulary_path`. Creates a `TacticClassifier` model with `num_hidden_layers` transformer layers (default 6, layer-dropped from CodeBERT's 12 layers), an embedding layer sized to the vocabulary, and a classification head sized to `dataset.num_classes`. Copies overlapping pretrained embeddings from CodeBERT for tokens that appear in both vocabularies (digits, punctuation, common words). Initializes remaining embeddings randomly (σ=0.02). Trains using class-weighted cross-entropy loss. Saves the best checkpoint (by validation accuracy@5) to `output_path`. The checkpoint includes `num_hidden_layers`, the vocabulary path, and label map for reproducibility. Prints training metrics (loss, validation accuracy@1, validation accuracy@5) after each epoch. When `epoch_callback` is not `None`, invokes it after each epoch's validation with the epoch number and validation accuracy@5; if the callback raises an exception, the training loop terminates and the exception propagates to the caller.
 - On training completion: saves final checkpoint alongside best checkpoint.
 - On GPU OOM: raises `TrainingResourceError` with message suggesting batch size reduction.
 - When `vocabulary_path` is `None`: falls back to CodeBERT's default tokenizer and embedding layer (backward compatibility).
@@ -629,6 +669,8 @@ After HPO selects optimal hyperparameters, the validation split has served its p
 | `undersample_cap` | None | When not None, must be a positive integer. Passed to `undersample_train()` before training begins. Default 2000 when called directly. |
 | `undersample_seed` | 42 | Integer seed for reproducible undersampling. |
 | `undersample_min_count` | None | When not None, must be a positive integer. Families with fewer than this many training examples are dropped. When None, defaults to 5% of `undersample_cap`. |
+| `oversample_floor` | None | When not None, must be a positive integer. Passed to `oversample_train()` after undersampling. Default 500 when called from `run-full-training.py`. |
+| `oversample_seed` | 42 | Integer seed for reproducible oversampling. |
 | `lambda_within` | 1.0 | Must be positive. Balancing weight for within-category loss in hierarchical mode. |
 
 #### Model architecture: HierarchicalTacticClassifier

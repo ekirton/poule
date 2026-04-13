@@ -293,6 +293,29 @@ After the file-level split, the training split is optionally undersampled to cap
 
 **Expected impact:** With a 2,000-example cap on the 6 dominant families (rewrite, intros, apply, auto, destruct, split), training reduces from ~114K to ~40–50K samples. Per-epoch tail-class exposure increases proportionally.
 
+### Minority Oversampling
+
+After undersampling caps dominant families, minority families in the 100–500 example range face a 4–20× imbalance against capped families within the same category head. Oversampling duplicates these families' training examples up to a configurable floor, reducing the maximum within-category imbalance ratio.
+
+**Parameters:**
+- `oversample_floor`: minimum examples per tactic family in the training split after oversampling (default: 500, i.e., 25% of the undersample cap). Set to `None` to disable.
+- `oversample_seed`: random seed for reproducible duplication (default: 42).
+
+**Procedure:**
+1. Run after `undersample_train()` — operates on the already-undersampled training split.
+2. Group training pairs by tactic family.
+3. For each family with fewer examples than `oversample_floor`, sample additional examples with replacement from that family's existing pool using `oversample_seed`, bringing the total to `oversample_floor`.
+4. For families already at or above the floor, retain all examples unchanged.
+5. Concatenate the per-family groups into the new training split.
+
+**Scope:** Only the training split is affected. Validation and test splits are never oversampled.
+
+**Effect on class weights:** Class weights are recomputed from the oversampled training distribution. Capped families (2,000 examples) are unchanged; oversampled families (now 500 examples) have a 4:1 ratio against capped families instead of 20:1.
+
+**Interaction with undersample_train min_count:** Families below `min_count` (default 100, i.e., 5% of cap) are dropped by `undersample_train` before oversampling runs. Oversampling does not resurrect dropped families — it only amplifies families that survived the minimum trainability threshold.
+
+**Expected impact:** Families in the 100–500 range (the "trainable but underrepresented" bucket) get 2–5× duplication. The maximum duplication factor is 5× (for a family with exactly 100 examples). The training set size increases modestly — most families are either above 500 (untouched) or below 100 (dropped).
+
 ### Leave-One-Library-Out Cross-Validation
 
 A diagnostic evaluation mode that replaces the file-level split with a library-level split. For each fold, one of the 4 vanilla-Coq libraries is held out entirely as the test set, and the remaining 3 vanilla-Coq libraries plus MathComp provide training and validation data. This isolates whether the model generalizes across library boundaries or memorizes library-specific tactic conventions.
@@ -559,6 +582,10 @@ Tactic prediction is a classification problem, not a retrieval problem. Each pro
 ### Why head-class undersampling
 
 Class-weighted loss helps the model attend to rare tactics, but does not reduce the sheer number of redundant head-class examples the model sees each epoch. With rewrite (26,950) and apply (24,562) dominating the training set, the model spends most of each epoch on near-identical proof states. Undersampling caps these families at ~2,000 examples, forcing more tail-class exposure per epoch. The literature (see `doc/background/class-imbalance.md`) finds that undersampling is effective when the majority class has high redundancy — which holds here, since proof states within a single tactic family are highly similar. Undersampling and class weighting are complementary: undersampling balances the data distribution, weighting balances the loss gradient.
+
+### Why minority oversampling after undersampling
+
+Undersampling caps dominant families to increase tail-class exposure per epoch, but does not address the remaining imbalance among trainable families. With a cap of 2,000 and a min_count floor of 100, families between 100–500 examples are still 4–20× smaller than capped families. The best model showed 37 families with ≥100 training examples but zero recall — these families have enough unique signal to be trainable, but are drowned out within their category heads. Oversampling to 25% of the cap (500) reduces the maximum ratio to 4:1, which is within the range where class-weighted cross-entropy and SAM can compensate. Simple duplication (random sampling with replacement) is the first approach because it adds no implementation complexity beyond a second data pass; embedding-space interpolation (SMOTE) is a follow-up if duplication causes overfitting (detectable via val–test gap widening).
 
 ### Why file-level split
 

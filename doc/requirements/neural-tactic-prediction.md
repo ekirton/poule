@@ -94,6 +94,7 @@ Cross-references:
 | R6-P1-6 | Support fine-tuning the pre-trained classifier on a user's project-specific extracted data |
 | R6-P1-8 | Cap dominant tactic families in the training split to a configurable maximum number of examples per family, reducing head-class redundancy and increasing tail-class exposure per epoch |
 | R6-P1-9 | Provide a leave-one-library-out cross-validation mode across vanilla-Coq libraries (excluding MathComp and CoqInterval) that holds out each library in turn as the test set, training on the remaining libraries, to diagnose whether library-level data leakage is the bottleneck for generalization |
+| R6-P1-10 | Oversample minority tactic families by duplicating their training examples up to a configurable floor (default 25% of undersample cap), reducing the maximum within-category imbalance ratio from 20:1 to 4:1 while preserving the minimum trainability threshold below which families are dropped |
 
 ### P2 — Nice to Have
 

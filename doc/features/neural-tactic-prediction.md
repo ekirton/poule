@@ -102,7 +102,6 @@ The six most frequent tactic families (rewrite, intros, apply, auto, destruct, s
 - Reduced training time proportional to the smaller dataset
 
 **What this does not provide:**
-- Oversampling of rare classes (a separate technique)
 - Changes to class weighting (undersampling and weighting are complementary)
 - Changes to the data collapse step or extraction pipeline
 
@@ -110,6 +109,32 @@ The six most frequent tactic families (rewrite, intros, apply, auto, destruct, s
 - GIVEN undersampling is enabled WHEN the validation and test splits are inspected THEN they are unchanged from the non-undersampled case
 - GIVEN a tactic family below the cap WHEN undersampling is enabled THEN all its examples are retained
 - GIVEN undersampling with a fixed seed WHEN run twice on the same data THEN the same samples are selected
+
+### Oversample Minority Tactic Families
+
+**Priority:** P1
+**Stability:** Draft
+**Traces to:** R6-P1-10
+
+After undersampling caps dominant families at 2,000 examples, minority families with 100–500 examples face a 4–20× imbalance against capped families within the same category head. The model ignores these families because their gradient signal is drowned out — 37 families with ≥100 training examples still had zero recall in the best model. Oversampling duplicates minority family examples up to a configurable floor, reducing the maximum imbalance ratio.
+
+Oversampling is applied after undersampling. Families below the minimum trainability threshold (5% of cap) are still dropped — oversampling does not rescue families with too few unique examples. Families already at or above the floor are untouched.
+
+**What this provides:**
+- A configurable oversample floor (default 25% of undersample cap) applied only to the training split
+- Random duplication with replacement from each family's training pool
+- Reduced maximum within-category imbalance ratio from 20:1 to 4:1
+
+**What this does not provide:**
+- Synthetic example generation (SMOTE or embedding-space interpolation)
+- Changes to the undersample cap, minimum trainability threshold, or class weighting
+- Oversampling of validation or test splits
+
+- GIVEN a training dataset after undersampling WHEN oversampling is enabled THEN families with fewer examples than the floor have their training examples duplicated up to the floor
+- GIVEN a family already at or above the floor WHEN oversampling is enabled THEN its examples are unchanged
+- GIVEN a family below the minimum trainability threshold WHEN oversampling is enabled THEN it remains dropped (oversampling does not override the minimum)
+- GIVEN oversampling is enabled WHEN the validation and test splits are inspected THEN they are unchanged
+- GIVEN oversampling with a fixed seed WHEN run twice on the same data THEN the same duplicated samples are produced
 
 ### Leave-One-Library-Out Cross-Validation
 

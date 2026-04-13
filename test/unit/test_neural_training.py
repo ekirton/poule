@@ -796,6 +796,159 @@ class TestFoldValIntoTrain:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# 4d. oversample_train — Minority Oversampling
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestOversampleTrain:
+    """spec §4.1: oversample_train duplicates minority families up to a floor."""
+
+    def _make_dataset_with_counts(self, family_counts_train):
+        """Build a TacticDataset with specified per-family training counts."""
+        from Poule.neural.training.taxonomy import (
+            CATEGORY_NAMES,
+            TACTIC_CATEGORIES,
+            TACTIC_TO_CATEGORY,
+        )
+
+        category_index = {cat: i for i, cat in enumerate(CATEGORY_NAMES)}
+        per_cat_label_maps = {}
+        for cat in CATEGORY_NAMES:
+            per_cat_label_maps[cat] = {
+                t: i for i, t in enumerate(TACTIC_CATEGORIES[cat])
+            }
+
+        train_pairs = []
+        train_files = []
+        for family, count in family_counts_train.items():
+            cat = TACTIC_TO_CATEGORY[family]
+            cat_idx = category_index[cat]
+            within_idx = per_cat_label_maps[cat][family]
+            for i in range(count):
+                train_pairs.append((f"state_{family}_{i}", cat_idx, within_idx))
+                train_files.append(f"file_{family}_{i}.v")
+
+        val_pairs = [("val_state", category_index["introduction"], 0)]
+        test_pairs = [("test_state", category_index["introduction"], 0)]
+
+        all_counts = dict(family_counts_train)
+        return _make_tactic_dataset(
+            train_pairs=train_pairs,
+            val_pairs=val_pairs,
+            test_pairs=test_pairs,
+            family_counts=all_counts,
+            train_files=train_files,
+            val_files=["val.v"],
+            test_files=["test.v"],
+        )
+
+    def _count_family(self, result, family):
+        """Count examples for a family in train_pairs."""
+        from Poule.neural.training.taxonomy import (
+            CATEGORY_NAMES, TACTIC_CATEGORIES, TACTIC_TO_CATEGORY,
+        )
+        cat_idx = list(CATEGORY_NAMES).index(TACTIC_TO_CATEGORY[family])
+        within_idx = list(TACTIC_CATEGORIES[TACTIC_TO_CATEGORY[family]]).index(family)
+        return sum(1 for _, c, w in result.train_pairs if c == cat_idx and w == within_idx)
+
+    def test_oversamples_minority_to_floor(self):
+        """Families below the floor are duplicated up to the floor."""
+        from Poule.neural.training.data import oversample_train
+
+        ds = self._make_dataset_with_counts({"rewrite": 2000, "lia": 120})
+        result = oversample_train(ds, floor=500, seed=42)
+
+        assert self._count_family(result, "lia") == 500
+
+    def test_does_not_modify_family_at_floor(self):
+        """Families already at the floor are unchanged."""
+        from Poule.neural.training.data import oversample_train
+
+        ds = self._make_dataset_with_counts({"rewrite": 2000, "lia": 500})
+        result = oversample_train(ds, floor=500, seed=42)
+
+        assert self._count_family(result, "lia") == 500
+
+    def test_does_not_modify_family_above_floor(self):
+        """Families above the floor are unchanged."""
+        from Poule.neural.training.data import oversample_train
+
+        ds = self._make_dataset_with_counts({"rewrite": 2000, "lia": 800})
+        result = oversample_train(ds, floor=500, seed=42)
+
+        assert self._count_family(result, "lia") == 800
+        assert self._count_family(result, "rewrite") == 2000
+
+    def test_val_and_test_unchanged(self):
+        """Validation and test splits are never oversampled."""
+        from Poule.neural.training.data import oversample_train
+
+        ds = self._make_dataset_with_counts({"rewrite": 2000, "lia": 120})
+        result = oversample_train(ds, floor=500, seed=42)
+
+        assert result.val_pairs == ds.val_pairs
+        assert result.test_pairs == ds.test_pairs
+        assert result.val_files == ds.val_files
+        assert result.test_files == ds.test_files
+
+    def test_deterministic_with_same_seed(self):
+        """Same seed produces identical results."""
+        from Poule.neural.training.data import oversample_train
+
+        ds = self._make_dataset_with_counts({"rewrite": 2000, "lia": 120})
+        r1 = oversample_train(ds, floor=500, seed=42)
+        r2 = oversample_train(ds, floor=500, seed=42)
+
+        assert r1.train_pairs == r2.train_pairs
+        assert r1.train_files == r2.train_files
+
+    def test_different_seed_different_result(self):
+        """Different seeds produce different duplicate selections."""
+        from Poule.neural.training.data import oversample_train
+
+        ds = self._make_dataset_with_counts({"rewrite": 2000, "lia": 120})
+        r1 = oversample_train(ds, floor=500, seed=42)
+        r2 = oversample_train(ds, floor=500, seed=99)
+
+        assert r1.train_pairs != r2.train_pairs
+
+    def test_duplicates_are_from_original_pool(self):
+        """All duplicated examples are copies of original family examples."""
+        from Poule.neural.training.data import oversample_train
+
+        ds = self._make_dataset_with_counts({"rewrite": 2000, "lia": 120})
+        result = oversample_train(ds, floor=500, seed=42)
+
+        from Poule.neural.training.taxonomy import (
+            CATEGORY_NAMES, TACTIC_CATEGORIES, TACTIC_TO_CATEGORY,
+        )
+        cat_idx = list(CATEGORY_NAMES).index(TACTIC_TO_CATEGORY["lia"])
+        within_idx = list(TACTIC_CATEGORIES[TACTIC_TO_CATEGORY["lia"]]).index("lia")
+
+        original_states = {f"state_lia_{i}" for i in range(120)}
+        result_states = [s for s, c, w in result.train_pairs if c == cat_idx and w == within_idx]
+        assert all(s in original_states for s in result_states)
+
+    def test_family_counts_recomputed(self):
+        """family_counts reflects the oversampled distribution."""
+        from Poule.neural.training.data import oversample_train
+
+        ds = self._make_dataset_with_counts({"rewrite": 2000, "lia": 120})
+        result = oversample_train(ds, floor=500, seed=42)
+
+        assert result.family_counts["lia"] >= 500
+
+    def test_train_files_matches_train_pairs(self):
+        """train_files has the same length as train_pairs after oversampling."""
+        from Poule.neural.training.data import oversample_train
+
+        ds = self._make_dataset_with_counts({"rewrite": 2000, "lia": 120})
+        result = oversample_train(ds, floor=500, seed=42)
+
+        assert len(result.train_files) == len(result.train_pairs)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # 5. TrainingDataLoader — Label Map and Family Counts
 # ═══════════════════════════════════════════════════════════════════════════
 
