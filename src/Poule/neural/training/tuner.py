@@ -69,6 +69,7 @@ class TuningResult:
     n_trials: int
     n_pruned: int
     study_path: str
+    best_epoch: int = 0
     all_trials: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -317,11 +318,18 @@ class HyperparameterTuner:
             for t in study.trials
         ]
 
+        # Determine best epoch from intermediate values
+        best_epoch = 0
+        intermediates = best_trial.intermediate_values
+        if intermediates:
+            best_epoch = max(intermediates, key=intermediates.get)
+
         return TuningResult(
             best_hyperparams=best_trial.params,
             best_value=best_trial.value,
             n_trials=len(study.trials),
             n_pruned=pruned_count,
             study_path=str(study_path),
+            best_epoch=best_epoch,
             all_trials=all_trials,
         )

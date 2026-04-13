@@ -305,6 +305,34 @@ class TestTuningResult:
         assert "state" in entry
         assert "hyperparams" in entry
 
+    def test_best_epoch_field(self):
+        """spec §4.8: TuningResult has best_epoch field."""
+        from Poule.neural.training.tuner import TuningResult
+
+        result = TuningResult(
+            best_hyperparams={"learning_rate": 3e-5},
+            best_value=0.53,
+            best_epoch=4,
+            n_trials=15,
+            n_pruned=5,
+            study_path="/tmp/hpo-study.db",
+            all_trials=[],
+        )
+        assert result.best_epoch == 4
+
+    def test_best_epoch_defaults_when_not_provided(self):
+        """spec §4.8: best_epoch defaults to 0 when not explicitly set."""
+        from Poule.neural.training.tuner import TuningResult
+
+        result = TuningResult(
+            best_hyperparams={},
+            best_value=0.50,
+            n_trials=10,
+            n_pruned=2,
+            study_path="/tmp/hpo-study.db",
+        )
+        assert result.best_epoch == 0
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 6. HyperparameterTuner.tune() — Core HPO Logic

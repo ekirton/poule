@@ -96,18 +96,34 @@ def main():
     )
     logger.info("Best hyperparameters: %s", result.best_hyperparams)
 
-    # ---- Step 3: Train final model with best hyperparams ----
+    # ---- Step 3: Fold validation data into training and train final model ----
+    from Poule.neural.training.data import fold_val_into_train
     from Poule.neural.training.mlx_backend.trainer import MLXTrainer
 
-    best_hp = dict(result.best_hyperparams)
-    best_hp["max_epochs"] = 20
-    best_hp["early_stopping_patience"] = 3
+    # Fold validation data back into training — HPO has selected hyperparams,
+    # so the validation split has served its purpose.
+    final_dataset = fold_val_into_train(dataset)
+    final_dataset = undersample_train(final_dataset, cap=UNDERSAMPLE_CAP, min_count=UNDERSAMPLE_MIN)
+    logger.info(
+        "Folded val into train: %d train samples (no validation set)",
+        len(final_dataset.train_pairs),
+    )
 
-    logger.info("Training final model with best hyperparameters...")
+    best_hp = dict(result.best_hyperparams)
+    # Train for a fixed epoch count based on HPO convergence — no early stopping
+    # since there is no validation set to monitor.
+    final_epochs = result.best_epoch if result.best_epoch > 0 else 10
+    best_hp["max_epochs"] = final_epochs
+    best_hp["early_stopping_patience"] = final_epochs  # effectively disabled
+
+    logger.info(
+        "Training final model: %d epochs (from HPO best epoch), best hyperparameters...",
+        final_epochs,
+    )
     t0 = time.time()
     trainer = MLXTrainer()
     trainer.train(
-        dataset,
+        final_dataset,
         FINAL_MODEL_DIR,
         vocabulary_path=VOCABULARY,
         hyperparams=best_hp,
@@ -216,8 +232,9 @@ def main():
     lines.append(f"Model checkpoint: {pt_path}")
     lines.append("")
     lines.append("--- Dataset ---")
-    lines.append(f"Train samples:      {len(dataset.train_pairs)}")
-    lines.append(f"Validation samples: {len(dataset.val_pairs)}")
+    lines.append(f"HPO train samples:  {len(dataset.train_pairs)}")
+    lines.append(f"HPO val samples:    {len(dataset.val_pairs)}")
+    lines.append(f"Final train samples:{len(final_dataset.train_pairs)} (val folded in)")
     lines.append(f"Test samples:       {len(dataset.test_pairs)}")
     lines.append(f"Categories:         {dataset.num_categories}")
     lines.append(f"Total tactics:      {dataset.num_classes}")
@@ -236,6 +253,7 @@ def main():
     lines.append("")
     lines.append("--- Final Model ---")
     lines.append(f"Hidden layers: {best_hp.get('num_hidden_layers', 6)}")
+    lines.append(f"Fixed epochs: {final_epochs} (from HPO best epoch)")
     lines.append(f"Training time: {train_time / 60:.1f} min")
     lines.append(f"Category Accuracy@1: {report.category_accuracy_at_1:.4f} ({report.category_accuracy_at_1*100:.1f}%)")
     lines.append(f"Accuracy@1: {report.accuracy_at_1:.4f} ({report.accuracy_at_1*100:.1f}%)")
@@ -272,8 +290,8 @@ def main():
     # and a higher "confident" tier at 2x min_count
     _MIN_TRAINABLE = UNDERSAMPLE_MIN          # 5% of cap (default 100)
     _COMFORTABLE = UNDERSAMPLE_MIN * 2        # 10% of cap (default 200)
-    ge_min = [f for f in report.per_family_recall if dataset.family_counts.get(f, 0) >= _MIN_TRAINABLE]
-    ge_comf = [f for f in report.per_family_recall if dataset.family_counts.get(f, 0) >= _COMFORTABLE]
+    ge_min = [f for f in report.per_family_recall if final_dataset.family_counts.get(f, 0) >= _MIN_TRAINABLE]
+    ge_comf = [f for f in report.per_family_recall if final_dataset.family_counts.get(f, 0) >= _COMFORTABLE]
     nonzero_ge_min = sum(1 for f in ge_min if report.per_family_recall[f] > 0.0)
     nonzero_ge_comf = sum(1 for f in ge_comf if report.per_family_recall[f] > 0.0)
     cov_ge_min = nonzero_ge_min / len(ge_min) if ge_min else 0.0
