@@ -651,22 +651,22 @@ Note: families with fewer than 100 training examples (5% of undersample cap) are
 
 ### Comparison across all four models
 
-| Metric | Flat (96 cls) | Hierarchical | Undersampled | Focal Loss |
-|--------|--------------|--------------|--------------|------------|
-| Train samples | 114K | 95K | 40K | 40K |
-| Categories | 96 (flat) | 8 | 8 | 6 |
-| Best HPO val_acc@5 | 0.697 | 0.802 | 0.621 | 0.639 |
-| Test acc@1 | 14.0% | 12.9% | **17.2%** | 7.8% |
-| Test acc@5 | 46.6% | 45.2% | **57.0%** | 46.4% |
-| Val–test gap (acc@5) | 24pp | 35pp | **6pp** | 18pp |
-| Category acc@1 | — | — | 34.9% | 31.5% |
-| Zero-recall families | 86/96 | 55/65 | 44/65 | 47/65 |
-| Non-zero recall families | 10 | 10 | **21** | 18 |
-| Trainable coverage (≥100 examples) | — | — | 21/58 = 36.2% | 18/54 = 33.3% |
-| Trainable coverage (≥200 examples) | — | — | 21/54 = 38.9% | 18/54 = 33.3% |
-| Parameters | ~150M | ~77M | ~77M | ~77M |
-| HPO time | 51.9h | 35.6h | 16.4h | 18.7h |
-| Training time | 7.6h | 2.7h | 1.85h | 1.61h |
+| Metric | Flat (96 cls) | Hierarchical | Undersampled | Focal Loss | LDAM+DRW |
+|--------|--------------|--------------|--------------|------------|----------|
+| Train samples | 114K | 95K | 40K | 40K | 42K |
+| Categories | 96 (flat) | 8 | 8 | 6 | 8 |
+| Best HPO val_acc@5 | 0.697 | 0.802 | 0.621 | 0.639 | 0.533 |
+| Test acc@1 | 14.0% | 12.9% | **17.2%** | 7.8% | 6.4% |
+| Test acc@5 | 46.6% | 45.2% | **57.0%** | 46.4% | 25.4% |
+| Val–test gap (acc@5) | 24pp | 35pp | **6pp** | 18pp | 28pp |
+| Category acc@1 | — | — | 34.9% | 31.5% | 35.0% |
+| Zero-recall families | 86/96 | 55/65 | 44/65 | 47/65 | 59/65 |
+| Non-zero recall families | 10 | 10 | **21** | 18 | 6 |
+| Trainable coverage (≥100 examples) | — | — | 21/58 = 36.2% | 18/54 = 33.3% | 6/43 = 14.0% |
+| Trainable coverage (≥200 examples) | — | — | 21/54 = 38.9% | 18/54 = 33.3% | 6/36 = 16.7% |
+| Parameters | ~150M | ~77M | ~77M | ~77M | ~77M |
+| HPO time | 51.9h | 35.6h | 16.4h | 18.7h | 31.6h |
+| Training time | 7.6h | 2.7h | 1.85h | 1.61h | 0.89h |
 
 ### Analysis: undersampling impact
 
@@ -896,6 +896,126 @@ The focal loss model achieved comparable HPO validation accuracy (63.9% vs. 62.1
 
 **Net assessment:** Focal loss is not useful for this problem. The model gained `case`, `replace`, and `induction` but lost far more from the high-frequency family collapse. The 6-category taxonomy change and low SAM rho compounded the damage. The undersampled 8-category model (57.0% test_acc@5, 21 non-zero families) remains the best model.
 
+## LDAM + DRW Experiment
+
+### Motivation
+
+The undersampled model (57.0% test_acc@5) still had 44 dead families. Loss-function engineering (focal loss) failed, but LDAM (Cao et al., 2019) takes a different approach: class-dependent margin offsets (`C / n_c^{1/4}`) widen decision boundaries for rare classes, combined with deferred re-weighting (DRW) that switches from uniform to inverse-frequency class weights after a fraction of training. This operates during end-to-end training rather than post-hoc, addressing the decision boundary directly.
+
+This experiment reverted to the 8-category taxonomy with MathComp included (restoring SSReflect training signal), used a single-linear category head, and ensured SAM rho ≥ 0.15 — addressing the confounding factors from the focal loss experiment. Two new hyperparameters were added to the search space: `ldam_C` (margin scale, [0.1, 1.0]) and `drw_start_fraction` (when to switch to re-weighted loss, [0.6, 0.9]).
+
+### HPO results
+
+15-trial Optuna study on 39,542 undersampled training samples (cap=2000, min=100), 10,521 validation, 15,497 test. 8-category hierarchical architecture with factored embeddings (D=128). Fixed parameters: `max_seq_length` (256), `embedding_dim` (128), `max_epochs` (10), `early_stopping_patience` (2). Search space expanded from 8 to 10 dimensions with `ldam_C` and `drw_start_fraction`.
+
+| Trial | Layers | LR | Batch | alpha | label_smooth | sam_rho | lambda | ldam_C | drw_start | val_acc@5 | Status |
+|-------|--------|----|-------|-------|-------------|---------|--------|--------|-----------|-----------|--------|
+| 0 | 8 | 1.6e-5 | 32 | 0.15 | 0.085 | 0.152 | 2.80 | 0.849 | 0.664 | 0.4518 | Complete |
+| 1 | 8 | 1.1e-5 | 64 | 0.21 | 0.131 | 0.206 | 1.83 | 0.280 | 0.754 | 0.4244 | Complete |
+| 2 | 8 | 2.2e-6 | 16 | 0.24 | 0.020 | 0.241 | 0.83 | 0.210 | 0.749 | 0.2485 | Complete |
+| 3 | 6 | — | 32 | — | — | — | — | — | — | — | Pruned |
+| 4 | 6 | 4.5e-6 | 64 | 0.90 | 0.072 | 0.165 | 1.90 | 0.167 | 0.896 | 0.4728 | Complete |
+| 5 | 4 | 4.3e-5 | 32 | 0.62 | 0.034 | 0.273 | 1.26 | 0.398 | 0.619 | 0.4890 | Complete |
+| 6 | 6 | — | 16 | — | — | — | — | — | — | — | Pruned |
+| 7 | 6 | 1.9e-5 | 64 | 0.36 | 0.185 | 0.176 | 0.36 | 0.361 | 0.648 | 0.4592 | Complete |
+| 8 | 4 | — | 16 | — | — | — | — | — | — | — | Pruned |
+| 9 | 4 | — | 64 | — | — | — | — | — | — | — | Pruned |
+| 10 | 4 | 7.1e-5 | 32 | 0.49 | 0.097 | 0.294 | 0.58 | 0.770 | 0.604 | 0.4921 | Complete |
+| 11 | 4 | 8.4e-5 | 32 | 0.47 | 0.171 | 0.299 | 0.60 | 0.808 | 0.601 | 0.4722 | Complete |
+| 12 | 4 | — | 16 | — | — | — | — | — | — | — | Pruned |
+| **13** | **4** | **3.9e-5** | **32** | **0.17** | **0.050** | **0.239** | **1.41** | **0.638** | **0.663** | **0.5328** | **Best** |
+| 14 | 4 | 9.2e-5 | 64 | 0.48 | 0.008 | 0.233 | 0.50 | 0.696 | 0.678 | 0.4771 | Complete |
+
+HPO time: 31.6 hours on a 32 GiB Mac Mini (Apple M2 Pro, 10 CPU cores, MLX Metal GPU). 10 complete, 5 pruned.
+
+**Key findings from HPO:**
+- **Val accuracy dropped substantially.** The best LDAM trial (0.5328) is 14% below the previous best without LDAM (0.6207). Not a single completed trial reached the prior baseline — LDAM hurt even validation performance.
+- **Optimal model shifted to 4 layers, batch_size=32.** The pre-LDAM undersampled model favored 6 layers / batch 64. LDAM's margin adjustments appear to interact poorly with deeper architectures — a regression toward the pre-undersampling optimum.
+- **SAM rho remained high** (0.239 in best trial, range floor enforced at 0.15). Consistent with prior findings, but SAM could not compensate for LDAM's damage.
+- **Label smoothing dropped** (0.050 vs. 0.190 in pre-LDAM best). LDAM's margin offsets and label smoothing both modify the effective logit targets — the optimizer minimized smoothing to avoid conflict.
+- **10-dimensional search space was too large for 15 trials.** Adding `ldam_C` and `drw_start_fraction` expanded the search from 8 to 10 dimensions with only 15 trials (5 pruned), leaving sparse coverage.
+
+### Final model results
+
+The final model was trained with trial 13's best hyperparameters (4 layers, lr=3.89e-5, batch_size=32, alpha=0.170, label_smoothing=0.050, sam_rho=0.239, lambda_within=1.41, ldam_C=0.638, drw_start_fraction=0.663, embedding_dim=128). Validation data was folded into training (41,689 samples). Training ran for 3 fixed epochs (the HPO best epoch) with early stopping disabled.
+
+**Training curve (HPO trial 13, 10-epoch cap):**
+
+| Epoch | val_acc@5 |
+|-------|-----------|
+| 1 | 0.3789 |
+| 2 | 0.5124 |
+| 3 | **0.5328** |
+| 4 | 0.5160 |
+| 5 | 0.5096 |
+
+The model peaked at epoch 3 and declined — additional epochs would not have improved results.
+
+**Final model training curve (3 epochs, val folded in):**
+
+| Epoch | Loss |
+|-------|------|
+| 1 | 4.3695 |
+| 2 | 3.9713 |
+| 3 | 3.5892 |
+
+Final training time: 53.4 minutes.
+
+**Test set evaluation** (2026-04-13, 15,497 test samples):
+
+| Metric | Value |
+|--------|-------|
+| Category Accuracy@1 | 35.0% |
+| Accuracy@1 | 6.4% |
+| Accuracy@5 | 25.4% |
+
+**Per-category accuracy (test set):**
+
+| Category | Accuracy@1 |
+|----------|-----------|
+| ssreflect | 54.3% |
+| automation | 9.5% |
+| introduction | 8.1% |
+| elimination | 4.9% |
+| rewriting | 4.1% |
+| hypothesis_mgmt | 1.6% |
+| arithmetic | 0.0% |
+| contradiction | 0.0% |
+
+**Per-family recall (non-zero families only):**
+
+| Family | Precision | Recall |
+|--------|-----------|--------|
+| exists | 0.033 | 0.608 |
+| replace | 0.057 | 0.575 |
+| move | 0.097 | 0.565 |
+| auto | 0.231 | 0.118 |
+| assert | 0.090 | 0.125 |
+| destruct | 0.058 | 0.132 |
+
+Only 6 of 65 families have non-zero recall (vs. 21 in the pre-LDAM baseline).
+
+**Success criteria:**
+
+| Criterion | Result | Status |
+|-----------|--------|--------|
+| test_acc@5 > 57.0% | 25.4% | **FAIL** |
+| >50% recall coverage (≥100 train examples) | 6/43 = 14.0% | **FAIL** |
+| >60% recall coverage (≥200 train examples) | 6/36 = 16.7% | **FAIL** |
+| Category acc@1 > 35% | 35.0% | **FAIL** (≤ not >) |
+
+### Analysis
+
+**Why LDAM + DRW failed:**
+
+1. **Undersampling already flattened the distribution.** With a cap of 2,000 examples per family, the frequency ratio between the largest and smallest trainable classes is modest. LDAM's margins (`C / n_c^{1/4}`) become near-uniform rather than meaningfully rebalancing, but they still distort the loss landscape and make optimization harder.
+
+2. **DRW disrupted late-stage learning.** With `drw_start_fraction=0.663` and only 3 optimal epochs (from HPO), the DRW switch occurred after epoch 2 — giving the model only one epoch under the re-weighted loss before training peaked. The model barely adapted to the changed loss function before convergence.
+
+3. **Loss function engineering has hit diminishing returns.** Three loss modifications have now been tried (focal loss, LDAM+DRW, balanced softmax) plus decoupled training. All degraded performance. The consistent finding: the bottleneck is data sparsity for rare families, not the loss function's treatment of class imbalance.
+
+**Net assessment:** LDAM + DRW is not useful for this problem. The model collapsed to 6 non-zero families (vs. 21 baseline), test_acc@5 dropped from 57.0% to 25.4%, and the val-test gap widened from 6pp to 28pp. The undersampled 8-category model (57.0% test_acc@5, 21 non-zero families) remains the best model.
+
 ## Implementation Scope
 
 | Phase | Effort | Status |
@@ -971,7 +1091,7 @@ Head-class undersampling collapsed the val–test gap (35pp → 6pp) and raised 
 
 4. **Minority oversampling.** Undersampling capped the majority but did nothing to boost families with <100 examples (arithmetic, contradiction, many elimination tactics). SMOTE-like augmentation or simple oversampling of rare families could help fill the gap.
 
-5. **LDAM + deferred re-balancing** (Cao et al., 2019). Class-dependent margin offsets (`C / n_c^{1/4}`) penalize misclassification of rare tactics more heavily. Combined with deferred re-balancing (normal sampling for 80% of training, balanced for the final 20%), this is a strong literature baseline.
+5. **LDAM + deferred re-balancing** (Cao et al., 2019). ❌ **Evaluated 2026-04-13 and rejected.** Class-dependent margin offsets (`C / n_c^{1/4}`) with deferred re-weighting. Best HPO trial val_acc@5=0.533 (vs. 0.621 baseline), test_acc@5=25.4% (vs. 57.0% baseline), only 6 non-zero families (vs. 21). Undersampling already flattened the class distribution, making LDAM's margins near-uniform noise. The 10-dimensional search space (2 new params) was too large for 15 trials. See [LDAM + DRW Experiment](#ldam--drw-experiment) for full results.
 
 6. **Focal loss** (Lin et al., 2017). ❌ **Evaluated 2026-04-11 and rejected.** Down-weights well-classified examples via `(1-p)^γ` modulation (γ=2.54 in best trial). Test_acc@5 dropped from 57.0% to 46.4%, with catastrophic recall loss on high-frequency families (intros: 53.7% → 3.5%, auto: 29.2% → 5.4%). The experiment also changed the taxonomy from 8 to 6 categories and reduced SAM rho from 0.180 to 0.067, both of which contributed to the regression. Focal loss suppressed gradient signal from common-but-correctly-predicted examples without improving rare families — the bottleneck is data sparsity, not loss weighting. See [Focal Loss Experiment](#focal-loss-experiment) for full results.
 
@@ -979,4 +1099,4 @@ Head-class undersampling collapsed the val–test gap (35pp → 6pp) and raised 
 
 8. **Revert category head to single linear layer.** The 2-layer MLP category head (commit `bccd35a`) did not improve category acc@1 — it dropped from 34.9% (8 categories, single linear) to 31.5% (6 categories, 2-layer MLP). The bottleneck is encoder representation quality, not head capacity.
 
-Try (5) next — LDAM + deferred re-balancing operates during end-to-end training rather than post-hoc, addressing the decision boundary directly without discarding the jointly-learned signal. Any future experiment should restore the 8-category taxonomy, revert to a single-linear category head, and ensure SAM rho ≥ 0.15 (the single most impactful hyperparameter for generalization under undersampling).
+Loss-function engineering is exhausted: balanced softmax (2), decoupled training (3), LDAM+DRW (5), and focal loss (6) all degraded performance. The consistent finding is that the bottleneck is data sparsity for rare families, not loss weighting. Try (4) next — minority oversampling directly addresses the data gap by boosting families with <100 training examples.
