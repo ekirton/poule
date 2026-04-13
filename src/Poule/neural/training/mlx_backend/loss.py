@@ -1,7 +1,6 @@
-"""MLX cross-entropy loss with LDAM margins for tactic classifier training.
+"""MLX cross-entropy loss for tactic classifier training.
 
-Weighted cross-entropy loss reimplemented using mlx.core operations,
-with LDAM margin offsets (Cao et al., 2019) for class-imbalanced learning.
+Weighted cross-entropy loss reimplemented using mlx.core operations.
 
 Requires: mlx (macOS with Apple Silicon only).
 """
@@ -47,44 +46,6 @@ def cross_entropy_loss(
         return mx.mean(nll)
 
 
-def ldam_cross_entropy_loss(
-    logits: mx.array,
-    labels: mx.array,
-    class_weights: mx.array | None = None,
-    margins: mx.array | None = None,
-) -> mx.array:
-    """Cross-entropy with LDAM margin offsets.
-
-    Subtracts margin[y] from the logit of the true class before computing CE.
-
-    Args:
-        logits: [B, num_classes] unnormalized logits.
-        labels: [B] integer class labels.
-        class_weights: [num_classes] per-class weights.
-        margins: [num_classes] LDAM margins. If None, no adjustment.
-
-    Returns:
-        Scalar loss.
-    """
-    if margins is not None:
-        B = logits.shape[0]
-        num_classes = logits.shape[1]
-        one_hot = mx.zeros((B, num_classes))
-        one_hot = one_hot.at[mx.arange(B), labels].add(mx.ones((B,)))
-        adjusted_logits = logits - one_hot * margins
-    else:
-        adjusted_logits = logits
-    return cross_entropy_loss(adjusted_logits, labels, class_weights)
-
-
-def compute_ldam_margins_mlx(
-    class_counts: mx.array,
-    ldam_C: float = 0.3,
-) -> mx.array:
-    """Compute LDAM class-dependent margins: margin[c] = C / n_c^(1/4)."""
-    return ldam_C / mx.power(class_counts, 0.25)
-
-
 def precompute_category_indices(
     category_labels: mx.array,
     num_categories: int,
@@ -122,8 +83,6 @@ def hierarchical_loss_mlx(
     category_names: list[str],
     lambda_within: float = 1.0,
     batch_cat_indices: list[mx.array] | None = None,
-    category_margins: mx.array | None = None,
-    per_category_margins: dict[str, mx.array] | None = None,
 ) -> mx.array:
     """Hierarchical loss: L = L_category + lambda * L_within(active head).
 
@@ -137,14 +96,12 @@ def hierarchical_loss_mlx(
         category_names: ordered category names
         lambda_within: balancing weight
         batch_cat_indices: pre-computed per-category index arrays for this batch
-        category_margins: [num_categories] LDAM margins for categories
-        per_category_margins: dict[cat_name -> [cat_size]] LDAM margins per category
 
     Returns:
         Scalar combined loss.
     """
-    l_category = ldam_cross_entropy_loss(
-        category_logits, category_labels, category_weights, category_margins,
+    l_category = cross_entropy_loss(
+        category_logits, category_labels, category_weights,
     )
 
     l_within = mx.array(0.0)
@@ -159,9 +116,8 @@ def hierarchical_loss_mlx(
             cat_within_labels = within_labels[idx]
             cat_logits = within_logits[cat_name][idx]
             cat_weights = per_category_weights[cat_name]
-            cat_margins = per_category_margins.get(cat_name) if per_category_margins else None
-            cat_loss = ldam_cross_entropy_loss(
-                cat_logits, cat_within_labels, cat_weights, cat_margins,
+            cat_loss = cross_entropy_loss(
+                cat_logits, cat_within_labels, cat_weights,
             )
             l_within = l_within + cat_loss * n
             total_weight += n
@@ -177,9 +133,8 @@ def hierarchical_loss_mlx(
             cat_within_labels = within_labels[idx]
             cat_logits = within_logits[cat_name][idx]
             cat_weights = per_category_weights[cat_name]
-            cat_margins = per_category_margins.get(cat_name) if per_category_margins else None
-            cat_loss = ldam_cross_entropy_loss(
-                cat_logits, cat_within_labels, cat_weights, cat_margins,
+            cat_loss = cross_entropy_loss(
+                cat_logits, cat_within_labels, cat_weights,
             )
             l_within = l_within + cat_loss * n
             total_weight += n

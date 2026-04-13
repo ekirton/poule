@@ -51,8 +51,6 @@ TUNABLE_HYPERPARAMS: dict[str, dict[str, Any]] = {
     "label_smoothing": {"low": 0.0, "high": 0.2},
     "sam_rho": {"low": 0.15, "high": 0.3, "log": True},
     "lambda_within": {"low": 0.3, "high": 3.0, "log": True},
-    "ldam_C": {"low": 0.1, "high": 1.0},
-    "drw_start_fraction": {"low": 0.6, "high": 0.9},
 }
 
 
@@ -184,16 +182,6 @@ class HyperparameterTuner:
                     TUNABLE_HYPERPARAMS["lambda_within"]["low"],
                     TUNABLE_HYPERPARAMS["lambda_within"]["high"],
                     log=TUNABLE_HYPERPARAMS["lambda_within"].get("log", False),
-                ),
-                "ldam_C": trial.suggest_float(
-                    "ldam_C",
-                    TUNABLE_HYPERPARAMS["ldam_C"]["low"],
-                    TUNABLE_HYPERPARAMS["ldam_C"]["high"],
-                ),
-                "drw_start_fraction": trial.suggest_float(
-                    "drw_start_fraction",
-                    TUNABLE_HYPERPARAMS["drw_start_fraction"]["low"],
-                    TUNABLE_HYPERPARAMS["drw_start_fraction"]["high"],
                 ),
             }
 
