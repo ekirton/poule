@@ -418,7 +418,7 @@ class TestHyperparameterTuner:
             assert 1e-4 <= hp["weight_decay"] <= 1e-1
             assert 0.0 <= hp["class_weight_alpha"] <= 1.0
             assert 0.0 <= hp["label_smoothing"] <= 0.2
-            assert 0.01 <= hp["sam_rho"] <= 0.2
+            assert 0.15 <= hp["sam_rho"] <= 0.3
             assert 0.3 <= hp["lambda_within"] <= 3.0
 
     def test_tune_uses_sqlite_storage(self, tmp_path):
