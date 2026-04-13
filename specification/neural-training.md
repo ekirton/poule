@@ -630,8 +630,6 @@ After HPO selects optimal hyperparameters, the validation split has served its p
 | `undersample_seed` | 42 | Integer seed for reproducible undersampling. |
 | `undersample_min_count` | None | When not None, must be a positive integer. Families with fewer than this many training examples are dropped. When None, defaults to 5% of `undersample_cap`. |
 | `lambda_within` | 1.0 | Must be positive. Balancing weight for within-category loss in hierarchical mode. |
-| `ldam_C` | 0.3 | Must be positive. LDAM margin scaling constant (Cao et al., 2019). |
-| `drw_start_fraction` | 0.8 | Must be in (0.0, 1.0). Fraction of training epochs before switching to class-balanced sampling. |
 
 #### Model architecture: HierarchicalTacticClassifier
 
@@ -689,31 +687,7 @@ Default `num_hidden_layers` is 6, `embedding_dim` is 128. The category head is a
   5. Category head: `Linear(768, num_categories)` → `[B, num_categories]`
   6. Per-category within-heads: for each category, `Linear(768, cat_size)` → `[B, cat_size]`
 
-#### LDAM loss with class-conditional label smoothing
-
-**LDAM margin offsets** (Cao et al., 2019). Class-dependent margins encourage larger decision boundaries for minority classes:
-
-```
-margin[c] = ldam_C / n_c^(1/4)
-```
-
-where `ldam_C` is a scaling constant (default 0.3, tunable via HPO) and `n_c` is the class count. During training, the margin is subtracted from the logit of the true class before the loss computation:
-
-```
-adjusted_logit[y] = logit[y] - margin[y]
-loss = cross_entropy(adjusted_logits, labels)
-```
-
-- REQUIRES: `ldam_C` is a positive float. `class_counts` is a tensor of per-class sample counts.
-- ENSURES: `margin[c]` is inversely proportional to `n_c^(1/4)`. Classes with fewer examples have larger margins, requiring the model to be more confident to classify them correctly.
-
-> **Given** `ldam_C=0.3` and class counts `[5000, 100, 10]`
-> **When** LDAM margins are computed
-> **Then** `margin[0] = 0.3 / 5000^0.25 ≈ 0.036`, `margin[1] = 0.3 / 100^0.25 ≈ 0.095`, `margin[2] = 0.3 / 10^0.25 ≈ 0.169`
-
-> **Given** a sample with true class `c` and logits `[2.0, 1.5, 0.5]`
-> **When** LDAM adjustment is applied with `margin[c] = 0.1`
-> **Then** `adjusted_logits[c] = logits[c] - 0.1`; non-true-class logits are unchanged
+#### Cross-entropy with class-conditional label smoothing
 
 **Class-conditional label smoothing.** Class weights for smoothing are computed from inverse frequency:
 
@@ -730,33 +704,11 @@ y_target = (1 - ε) * one_hot(label) + ε * smooth_dist
 
 When `label_smoothing=0.0`, standard hard targets are used (backward compatible).
 
-- MAINTAINS: LDAM margins are computed once from the training split class counts before training begins and remain fixed throughout training.
 - MAINTAINS: The smooth distribution is derived from the same class weights used for label smoothing.
 
 > **Given** a training set with 3 families: `apply` (5000), `intros` (4000), `simpl` (1000), alpha=0.5
 > **When** class weights are computed for label smoothing (total=10000, num_classes=3)
 > **Then** weight[apply] = (10000 / (3 * 5000))^0.5 ≈ 0.816, weight[simpl] = (10000 / (3 * 1000))^0.5 ≈ 1.826
-
-#### Deferred re-balancing (DRW)
-
-A two-phase training schedule that transitions from instance-balanced to class-balanced sampling:
-
-- **Phase 1 (epochs 1 to `drw_epoch`):** Instance-balanced sampling. Each training example is sampled with equal probability. The model learns general representations from the natural data distribution.
-- **Phase 2 (epochs `drw_epoch + 1` to `max_epochs`):** Class-balanced sampling. Each class is sampled with probability `1/num_classes` regardless of its size. This corrects classifier bias toward head classes in the final training phase.
-
-The DRW transition epoch is computed as: `drw_epoch = int(max_epochs * drw_start_fraction)` where `drw_start_fraction` defaults to 0.8.
-
-- REQUIRES: `drw_start_fraction` is a float in (0.0, 1.0). `max_epochs` is a positive integer.
-- ENSURES: For epochs `<= drw_epoch`, the training DataLoader uses uniform sampling. For epochs `> drw_epoch`, the DataLoader uses a `WeightedRandomSampler` with per-sample weights `1 / class_count[sample_class]`.
-- MAINTAINS: Validation and test splits are never resampled — DRW affects only training.
-
-> **Given** `max_epochs=20` and `drw_start_fraction=0.8`
-> **When** the DRW epoch is computed
-> **Then** `drw_epoch = 16`; epochs 1–16 use instance-balanced sampling, epochs 17–20 use class-balanced sampling
-
-> **Given** a training set with 3 classes of sizes `[5000, 100, 10]`
-> **When** class-balanced sampling is active (phase 2)
-> **Then** per-sample weights are `[1/5000, 1/100, 1/10]` for samples of each class, resulting in roughly equal expected samples per class per epoch
 
 > **Given** `label_smoothing=0.1`, `num_classes=3`, and class weights [0.816, 1.0, 1.826]
 > **When** soft targets are computed for a sample with true class 0
@@ -944,8 +896,6 @@ Automated hyperparameter optimization using Optuna to maximize validation accura
 | `label_smoothing` | Uniform | [0.0, 0.3] | 0.1 |
 | `sam_rho` | Log-uniform | [0.15, 0.3] | 0.15 |
 | `lambda_within` | Log-uniform | [0.3, 3.0] | 1.0 |
-| `ldam_C` | Uniform | [0.1, 1.0] | 0.3 |
-| `drw_start_fraction` | Uniform | [0.6, 0.9] | 0.8 |
 
 All other hyperparameters (`max_seq_length`, `embedding_dim`, `max_epochs`, `early_stopping_patience`) are fixed at their default values and not tunable.
 

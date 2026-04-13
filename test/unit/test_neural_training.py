@@ -1296,8 +1296,6 @@ class TestTacticClassifierTrainerHyperparams:
         assert trainer.hyperparams["label_smoothing"] == 0.1
         assert trainer.hyperparams["sam_rho"] == 0.15
         assert trainer.hyperparams["lambda_within"] == 1.0
-        assert trainer.hyperparams["ldam_C"] == 0.3
-        assert trainer.hyperparams["drw_start_fraction"] == 0.8
 
     def test_custom_hyperparameters_override_defaults(self):
         """spec §4.3: Caller can override defaults."""
@@ -1317,8 +1315,6 @@ class TestTacticClassifierTrainerHyperparams:
         assert DEFAULT_HYPERPARAMS["label_smoothing"] == 0.1
         assert DEFAULT_HYPERPARAMS["sam_rho"] == 0.15
         assert DEFAULT_HYPERPARAMS["lambda_within"] == 1.0
-        assert DEFAULT_HYPERPARAMS["ldam_C"] == 0.3
-        assert DEFAULT_HYPERPARAMS["drw_start_fraction"] == 0.8
 
     def test_sam_rho_zero_disables_sam(self):
         """spec §4.3: When sam_rho=0.0, SAM is disabled (plain AdamW)."""
@@ -1395,94 +1391,6 @@ class TestClassConditionalLabelSmoothing:
 
         sums = targets.sum(dim=-1)
         assert torch.allclose(sums, torch.ones(3))
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 7a-ii. LDAM Loss + Deferred Re-Balancing
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestLDAMLoss:
-    """spec §4.3: LDAM margins penalize minority-class misclassification more heavily."""
-
-    def test_ldam_margins_inversely_proportional_to_count(self):
-        """spec §4.3: margin[c] = C / n_c^(1/4). Rarer classes get larger margins."""
-        import torch
-
-        from Poule.neural.training.loss import compute_ldam_margins
-
-        class_counts = torch.tensor([5000.0, 100.0, 10.0])
-        margins = compute_ldam_margins(class_counts, ldam_C=0.3)
-
-        # margin[2] > margin[1] > margin[0] (rarer class = larger margin)
-        assert margins[2] > margins[1] > margins[0]
-        # Check specific values: 0.3 / n^0.25
-        assert abs(margins[0].item() - 0.3 / 5000**0.25) < 1e-5
-        assert abs(margins[1].item() - 0.3 / 100**0.25) < 1e-5
-        assert abs(margins[2].item() - 0.3 / 10**0.25) < 1e-5
-
-    def test_ldam_adjusts_true_class_logit(self):
-        """spec §4.3: LDAM subtracts margin from the true class logit only."""
-        import torch
-
-        from Poule.neural.training.loss import ldam_cross_entropy
-
-        logits = torch.tensor([[2.0, 1.5, 0.5]])
-        labels = torch.tensor([0])
-        class_counts = torch.tensor([5000.0, 100.0, 10.0])
-        weights = torch.ones(3)
-
-        loss = ldam_cross_entropy(logits, labels, weights, class_counts, ldam_C=0.3, label_smoothing=0.0)
-        assert loss.item() > 0
-        assert torch.isfinite(loss)
-
-    def test_ldam_zero_C_matches_standard_loss(self):
-        """When ldam_C=0, margins are zero and loss equals standard cross-entropy."""
-        import torch
-
-        from Poule.neural.training.loss import ldam_cross_entropy, class_conditional_cross_entropy
-
-        logits = torch.randn(8, 5)
-        labels = torch.randint(0, 5, (8,))
-        weights = torch.ones(5)
-        counts = torch.tensor([1000.0, 500.0, 200.0, 100.0, 50.0])
-
-        loss_ldam = ldam_cross_entropy(logits, labels, weights, counts, ldam_C=0.0, label_smoothing=0.1)
-        loss_standard = class_conditional_cross_entropy(logits, labels, weights, 0.1)
-        assert torch.allclose(loss_ldam, loss_standard, atol=1e-5)
-
-    def test_ldam_C_in_default_hyperparams(self):
-        """ldam_C and drw_start_fraction appear in DEFAULT_HYPERPARAMS."""
-        assert "ldam_C" in DEFAULT_HYPERPARAMS
-        assert DEFAULT_HYPERPARAMS["ldam_C"] == 0.3
-        assert "drw_start_fraction" in DEFAULT_HYPERPARAMS
-        assert DEFAULT_HYPERPARAMS["drw_start_fraction"] == 0.8
-
-
-class TestDeferredReBalancing:
-    """spec §4.3: DRW transitions from instance-balanced to class-balanced sampling."""
-
-    def test_drw_epoch_computation(self):
-        """spec §4.3: drw_epoch = int(max_epochs * drw_start_fraction)."""
-        max_epochs = 20
-        drw_start_fraction = 0.8
-        drw_epoch = int(max_epochs * drw_start_fraction)
-        assert drw_epoch == 16
-
-    def test_drw_class_balanced_weights(self):
-        """spec §4.3: Class-balanced sampling weights are 1/class_count per sample."""
-        import torch
-
-        from Poule.neural.training.loss import compute_drw_sample_weights
-
-        class_counts = torch.tensor([5000.0, 100.0, 10.0])
-        labels = torch.tensor([0, 0, 1, 2])  # 2 from class 0, 1 from class 1, 1 from class 2
-
-        weights = compute_drw_sample_weights(labels, class_counts)
-        # Samples from class 0 get weight 1/5000, class 1 gets 1/100, class 2 gets 1/10
-        assert abs(weights[0].item() - 1.0 / 5000) < 1e-8
-        assert abs(weights[2].item() - 1.0 / 100) < 1e-8
-        assert abs(weights[3].item() - 1.0 / 10) < 1e-8
 
 
 # ═══════════════════════════════════════════════════════════════════════════

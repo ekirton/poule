@@ -343,30 +343,7 @@ Library name is inferred from each JSONL filename stem (e.g., `stdlib.jsonl` →
 
 ## Training
 
-### Objective: LDAM Loss with Deferred Re-Balancing
-
-Label-Distribution-Aware Margin Loss (Cao et al., 2019) with class-conditional label smoothing.
-
-**LDAM margin offsets.** Class-dependent margins encourage larger decision boundaries for minority classes:
-
-```
-margin[c] = C / n_c^(1/4)
-```
-
-where `C` is a scaling constant (default 0.3, tunable via HPO) and `n_c` is the class count. During training, the margin is subtracted from the logit of the true class before softmax:
-
-```
-adjusted_logit[y] = logit[y] - margin[y]
-loss = CrossEntropyLoss(adjusted_logits, labels)
-```
-
-This penalizes the model more heavily when it misclassifies minority classes by requiring a larger margin of confidence.
-
-**Deferred re-balancing (DRW).** A two-phase training schedule:
-- **Phase 1 (first 80% of epochs):** Instance-balanced sampling (standard). The model learns general representations from the natural data distribution.
-- **Phase 2 (final 20% of epochs):** Class-balanced sampling. Each class is sampled with equal probability regardless of its size, correcting classifier bias toward head classes.
-
-The DRW transition epoch is computed as `int(max_epochs * drw_start_fraction)` where `drw_start_fraction` defaults to 0.8.
+### Objective: Cross-Entropy with Class-Conditional Label Smoothing
 
 **Class-conditional label smoothing.** Distributes smoothing mass ε proportionally to the inverse-frequency class weights rather than uniformly:
 
@@ -445,8 +422,6 @@ This requires two training runs: (1) fine-tune the full 12-layer CodeBERT on Coq
 | Class weight alpha | 0.5 | Moderate inverse-frequency rebalancing for label smoothing |
 | Label smoothing | 0.1 | Prevents overfitting on minority classes (Shwartz-Ziv et al., 2023) |
 | SAM rho | 0.15 | SAM perturbation radius; experimentally critical for generalization (collapsed val–test gap from 35pp to 6pp) |
-| LDAM C | 0.3 | LDAM margin scaling constant (Cao et al., 2019) |
-| DRW start fraction | 0.8 | Fraction of training epochs before switching to class-balanced sampling |
 | Max sequence length | 512 tokens | Standard |
 | Training epochs | 20 | Early stopping on validation accuracy@5 |
 | Early stopping patience | 3 epochs | Stop if accuracy@5 does not improve |
@@ -523,8 +498,6 @@ Optuna with TPE sampler, maximizing validation accuracy@5.
 | Class weight alpha | Uniform | [0.0, 1.0] | 0.5 |
 | Label smoothing | Uniform | [0.0, 0.3] | 0.1 |
 | SAM rho | Log-uniform | [0.15, 0.3] | 0.15 |
-| LDAM C | Uniform | [0.1, 1.0] | 0.3 |
-| DRW start fraction | Uniform | [0.6, 0.9] | 0.8 |
 
 ### Pruning
 
@@ -582,10 +555,6 @@ poule validate-training-data <traces.jsonl>
 ### Why cross-entropy instead of contrastive loss
 
 Tactic prediction is a classification problem, not a retrieval problem. Each proof state maps to exactly one tactic family. Cross-entropy is the standard loss for multi-class classification and is simpler, faster (single forward pass), and more data-efficient than contrastive learning.
-
-### Why LDAM + deferred re-balancing
-
-The tactic distribution is heavily long-tailed: `intros`, `apply`, `rewrite`, `simpl`, and `auto` dominate. Previous experiments showed that class-weighted cross-entropy and focal loss are insufficient — focal loss suppressed high-frequency families without improving rare ones (intros recall: 53.7% → 3.5%), and balanced softmax overwhelmed the model's discriminative signal. LDAM addresses the problem structurally by enforcing class-dependent margin offsets (`C / n_c^{1/4}`), requiring the model to be more confident when predicting minority classes. Deferred re-balancing (DRW) trains with natural sampling initially (learning good representations) then switches to class-balanced sampling for the final 20% of epochs (correcting classifier bias). This two-phase approach avoids the early-training instability of full re-weighting while still correcting the decision boundary for rare classes.
 
 ### Why head-class undersampling
 

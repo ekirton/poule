@@ -65,7 +65,7 @@ Cross-references:
 |----|-------------|
 | R6-P0-1 | Train a hierarchical tactic classifier on `(proof_state, tactic_text)` pairs extracted by the Training Data Extraction pipeline, predicting both tactic category and specific tactic family |
 | R6-P0-2 | Classify tactics into 8 categories (introduction, elimination, rewriting, hypothesis management, automation, arithmetic, contradiction, ssreflect) with within-category tactic families, covering >99% of extracted proof steps |
-| R6-P0-3 | Handle class imbalance via LDAM (label-distribution-aware margin loss) with deferred re-balancing (DRW): class-dependent margin offsets penalize misclassification of rare tactics more heavily, combined with a two-phase training schedule that uses instance-balanced sampling initially and class-balanced sampling for the final training phase |
+| R6-P0-3 | Handle class imbalance via head-class undersampling: cap dominant tactic families at a configurable maximum number of training examples, preserving all rare-family data intact, to reduce the train/test distribution gap and improve generalization across families |
 | R6-P0-16 | Exclude proof structure tokens (`-`, `+`, `*`, `{`, `}`) from training — they are not tactics and are trivially predictable from subgoal count |
 | R6-P0-17 | Every tactic maps to a known category via a canonical taxonomy. All 8 categories have dedicated classification heads. |
 | R6-P0-4 | Integrate neural predictions into the existing `suggest_tactics` MCP tool, ranking neural predictions above rule-based fallbacks |
