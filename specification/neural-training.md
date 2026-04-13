@@ -435,6 +435,42 @@ All steps from the same file go into the same split.
 > **When** the resulting `train_pairs` are compared
 > **Then** they are identical (same examples in the same positions per family group)
 
+#### Fold validation into training: fold_val_into_train()
+
+`fold_val_into_train(dataset) -> TacticDataset`
+
+After HPO selects optimal hyperparameters, the validation split has served its purpose. The final model folds validation data back into training to maximize the data available for the production model.
+
+- REQUIRES: `dataset` is a populated `TacticDataset` with non-empty `val_pairs`.
+- ENSURES: Returns a new `TacticDataset` where:
+  - `train_pairs` is the concatenation of `dataset.train_pairs + dataset.val_pairs`.
+  - `train_files` is the concatenation of `dataset.train_files + dataset.val_files`.
+  - `val_pairs` is an empty list.
+  - `val_files` is an empty list.
+  - `test_pairs` and `test_files` are identical to the input dataset.
+  - All label maps, category names, and taxonomy fields are copied unchanged.
+  - `family_counts` and `per_category_counts` are recomputed from the merged training split.
+
+**Procedure:**
+
+1. Concatenate `train_pairs + val_pairs` into the new `train_pairs`.
+2. Concatenate `train_files + val_files` into the new `train_files`.
+3. Set `val_pairs` and `val_files` to empty lists.
+4. Copy `test_pairs`, `test_files`, and all label/category fields unchanged.
+5. Recompute `family_counts` and `per_category_counts` from the merged training split.
+
+- MAINTAINS: `test_pairs` and `test_files` are identical to the input dataset.
+- MAINTAINS: Every pair from the original `train_pairs` and `val_pairs` appears exactly once in the result's `train_pairs`.
+- MAINTAINS: No data is lost or duplicated.
+
+> **Given** a dataset with 39,542 train_pairs and 10,521 val_pairs
+> **When** `fold_val_into_train(dataset)` runs
+> **Then** the result has 50,063 train_pairs, 0 val_pairs, and unchanged test_pairs
+
+> **Given** the result of `fold_val_into_train(dataset)`
+> **When** `undersample_train` is applied to the result
+> **Then** undersampling operates on the merged train+val pool, potentially retaining more tail-class examples
+
 #### Library-level split: load_by_library()
 
 `TrainingDataLoader.load_by_library(library_paths, held_out_library, val_fraction, seed, always_train_libraries)`
@@ -954,14 +990,21 @@ All other hyperparameters (`max_seq_length`, `embedding_dim`, `max_epochs`, `ear
 |-------|------|-----------|
 | `best_hyperparams` | dict | Hyperparameter values from the best trial |
 | `best_value` | float | Best validation accuracy@5 across all completed trials |
+| `best_epoch` | integer | The epoch at which the best trial achieved its peak validation accuracy. Used as the fixed epoch count for final model training (which has no early stopping after validation data is folded into training). |
 | `n_trials` | integer | Total number of trials (completed + pruned + failed) |
 | `n_pruned` | integer | Number of trials pruned by the MedianPruner |
 | `study_path` | string | Path to the SQLite study database |
 | `all_trials` | list of dict | Per-trial summary: `{"number": int, "value": float or None, "state": str, "hyperparams": dict}` |
 
+`best_epoch` is determined from the best trial's intermediate values recorded via `trial.report(val_accuracy, epoch)`. The epoch with the highest intermediate value is the best epoch. If no intermediate values are available, `best_epoch` defaults to the HPO `max_epochs` setting.
+
 > **Given** a study with 20 trials where 12 completed, 5 were pruned, and 3 failed
 > **When** `TuningResult` is constructed
 > **Then** `n_trials=20`, `n_pruned=5`, `best_value` is the max accuracy@5 among the 12 completed trials, and `all_trials` has 20 entries
+
+> **Given** a best trial whose intermediate values are {1: 0.30, 2: 0.42, 3: 0.51, 4: 0.53, 5: 0.50}
+> **When** `TuningResult` is constructed
+> **Then** `best_epoch=4` (the epoch with the highest intermediate value, 0.53)
 
 ### 4.9 Device Detection
 
