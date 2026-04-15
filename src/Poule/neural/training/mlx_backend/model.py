@@ -55,7 +55,6 @@ class MLXTacticClassifier(nn.Module):
         hidden_size: int = 768,
         num_heads: int = 12,
         max_seq_length: int = 514,
-        embedding_dim: int = 128,
         per_category_sizes: dict[str, int] | None = None,
         num_categories: int = 0,
     ):
@@ -65,14 +64,8 @@ class MLXTacticClassifier(nn.Module):
         self._is_hierarchical = per_category_sizes is not None
         self.per_category_sizes = per_category_sizes or {}
         self.num_categories = num_categories
-        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.embedding = nn.Embedding(vocab_size, hidden_size)
         self.position_embedding = nn.Embedding(max_seq_length, hidden_size)
-        if embedding_dim < hidden_size:
-            self.embedding_projection = nn.Linear(
-                embedding_dim, hidden_size, bias=False,
-            )
-        else:
-            self.embedding_projection = None
         self.layers = [
             TransformerEncoderLayer(hidden_size, num_heads)
             for _ in range(num_layers)
@@ -97,8 +90,6 @@ class MLXTacticClassifier(nn.Module):
         positions = mx.arange(seq_len)
 
         word_embs = self.embedding(input_ids)
-        if self.embedding_projection is not None:
-            word_embs = self.embedding_projection(word_embs)
         x = word_embs + self.position_embedding(positions)
         x = self.embedding_ln(x)
 
@@ -179,31 +170,19 @@ class MLXTacticClassifier(nn.Module):
             pt_state["embeddings.LayerNorm.bias"].detach().numpy()
         )
 
-        # Copy word embeddings (overlap, truncated to embedding_dim)
+        # Copy word embeddings (full-rank 768-d)
         old_emb = pt_state["embeddings.word_embeddings.weight"].detach().numpy()
         old_vocab_size = old_emb.shape[0]
-        embedding_dim = self.embedding.weight.shape[1]
         overlap = min(vocab_size, old_vocab_size)
-        copy_dim = min(embedding_dim, old_emb.shape[1])
         emb_np = np.array(self.embedding.weight)
-        emb_np[:overlap, :copy_dim] = old_emb[:overlap, :copy_dim]
+        emb_np[:overlap] = old_emb[:overlap]
         # Random init for new tokens (sigma=0.02)
         if vocab_size > old_vocab_size:
             rng = np.random.default_rng(42)
             emb_np[old_vocab_size:] = rng.normal(
-                0, 0.02, (vocab_size - old_vocab_size, embedding_dim)
+                0, 0.02, (vocab_size - old_vocab_size, hidden_size)
             ).astype(np.float32)
         self.embedding.weight = mx.array(emb_np)
-
-        # Initialize embedding projection from truncated SVD of CodeBERT embeddings
-        if self.embedding_projection is not None:
-            full_emb = old_emb[:old_vocab_size].astype(np.float32)
-            _, _, Vt = np.linalg.svd(full_emb, full_matrices=False)
-            # Projection maps D -> H: use top-D right singular vectors
-            proj_weight = Vt[:embedding_dim].T  # [H, D]
-            self.embedding_projection.weight = mx.array(
-                proj_weight.astype(np.float32)
-            )
 
         # Copy transformer layers (with layer dropping)
         from Poule.neural.training.model import _layer_indices

@@ -20,7 +20,7 @@ from Poule.paths import get_data_dir
 
 _MODEL_FILENAME = "tactic-predictor.onnx"
 _LABELS_FILENAME = "tactic-labels.json"
-_VOCABULARY_FILENAME = "coq-vocabulary.json"
+_TOKENIZER_FILENAME = "tokenizer.model"
 
 
 def _find_file(filename: str) -> Path | None:
@@ -38,7 +38,7 @@ class TacticPredictor:
         self,
         model_path: Path | str,
         labels_path: Path | str,
-        vocabulary_path: Path | str,
+        vocabulary_dir: Path | str,
     ) -> None:
         import onnxruntime as ort
 
@@ -46,15 +46,15 @@ class TacticPredictor:
 
         model_path = Path(model_path)
         labels_path = Path(labels_path)
-        vocabulary_path = Path(vocabulary_path)
+        vocabulary_dir = Path(vocabulary_dir)
 
         for p, desc in [
             (model_path, "ONNX model"),
             (labels_path, "labels"),
-            (vocabulary_path, "vocabulary"),
+            (vocabulary_dir, "vocabulary directory"),
         ]:
             if not p.exists():
-                raise FileNotFoundError(f"{desc} file not found: {p}")
+                raise FileNotFoundError(f"{desc} not found: {p}")
 
         self._session = ort.InferenceSession(
             str(model_path),
@@ -83,7 +83,7 @@ class TacticPredictor:
             self._per_category = {}
             self._label_categories = []
 
-        self._tokenizer = CoqTokenizer(vocabulary_path)
+        self._tokenizer = CoqTokenizer(vocabulary_dir)
 
     def predict(
         self, proof_state_text: str, top_k: int = 5
@@ -166,7 +166,7 @@ class TacticPredictor:
         """Check if all required model files exist at expected paths."""
         return all(
             _find_file(f) is not None
-            for f in (_MODEL_FILENAME, _LABELS_FILENAME, _VOCABULARY_FILENAME)
+            for f in (_MODEL_FILENAME, _LABELS_FILENAME, _TOKENIZER_FILENAME)
         )
 
     @classmethod
@@ -177,18 +177,20 @@ class TacticPredictor:
         """
         model_path = _find_file(_MODEL_FILENAME)
         labels_path = _find_file(_LABELS_FILENAME)
-        vocabulary_path = _find_file(_VOCABULARY_FILENAME)
+        tokenizer_path = _find_file(_TOKENIZER_FILENAME)
 
         missing = []
         if model_path is None:
             missing.append(_MODEL_FILENAME)
         if labels_path is None:
             missing.append(_LABELS_FILENAME)
-        if vocabulary_path is None:
-            missing.append(_VOCABULARY_FILENAME)
+        if tokenizer_path is None:
+            missing.append(_TOKENIZER_FILENAME)
         if missing:
             raise FileNotFoundError(
                 f"Missing model files: {', '.join(missing)}"
             )
 
-        return cls(model_path, labels_path, vocabulary_path)
+        # CoqTokenizer expects the directory containing tokenizer.model
+        vocabulary_dir = tokenizer_path.parent
+        return cls(model_path, labels_path, vocabulary_dir)

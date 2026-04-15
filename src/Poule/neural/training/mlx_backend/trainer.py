@@ -121,7 +121,6 @@ class MLXTrainer:
         tokenizer = CoqTokenizer(str(vocabulary_path))
 
         num_hidden_layers = hp.get("num_hidden_layers", 6)
-        embedding_dim = hp.get("embedding_dim", 128)
 
         if is_hierarchical:
             per_category_sizes = dataset.per_category_sizes
@@ -129,7 +128,6 @@ class MLXTrainer:
             model = MLXTacticClassifier(
                 vocab_size=tokenizer.vocab_size,
                 num_layers=num_hidden_layers,
-                embedding_dim=embedding_dim,
                 per_category_sizes=per_category_sizes,
                 num_categories=num_categories,
             )
@@ -138,7 +136,6 @@ class MLXTrainer:
                 vocab_size=tokenizer.vocab_size,
                 num_classes=num_classes,
                 num_layers=num_hidden_layers,
-                embedding_dim=embedding_dim,
             )
         mx.eval(model.parameters())
 
@@ -193,9 +190,9 @@ class MLXTrainer:
         training_log = []
 
         def _tokenize(texts: list[str]) -> tuple[mx.array, mx.array]:
-            result = tokenizer.encode_batch(texts, max_length=max_seq_length)
-            ids = mx.array(np.array(result["input_ids"], dtype=np.int32))
-            mask = mx.array(np.array(result["attention_mask"], dtype=np.int32))
+            batch_ids, batch_mask = tokenizer.encode_batch(texts, max_length=max_seq_length)
+            ids = mx.array(np.array(batch_ids, dtype=np.int32))
+            mask = mx.array(np.array(batch_mask, dtype=np.int32))
             return ids, mask
 
         # Pre-tokenize all training data to avoid per-batch tokenization cost.
@@ -399,9 +396,9 @@ class MLXTrainer:
             return 0.0
 
         def _tokenize(texts):
-            result = tokenizer.encode_batch(texts, max_length=max_seq_length)
-            ids = mx.array(np.array(result["input_ids"], dtype=np.int32))
-            mask = mx.array(np.array(result["attention_mask"], dtype=np.int32))
+            batch_ids, batch_mask = tokenizer.encode_batch(texts, max_length=max_seq_length)
+            ids = mx.array(np.array(batch_ids, dtype=np.int32))
+            mask = mx.array(np.array(batch_mask, dtype=np.int32))
             return ids, mask
 
         hits = 0
@@ -443,9 +440,9 @@ class MLXTrainer:
             return 0.0
 
         def _tokenize(texts):
-            result = tokenizer.encode_batch(texts, max_length=max_seq_length)
-            ids = mx.array(np.array(result["input_ids"], dtype=np.int32))
-            mask = mx.array(np.array(result["attention_mask"], dtype=np.int32))
+            batch_ids, batch_mask = tokenizer.encode_batch(texts, max_length=max_seq_length)
+            ids = mx.array(np.array(batch_ids, dtype=np.int32))
+            mask = mx.array(np.array(batch_mask, dtype=np.int32))
             return ids, mask
 
         hits = 0
@@ -530,7 +527,6 @@ class MLXTrainer:
             "num_heads": model.layers[0].attention.num_heads
             if hasattr(model.layers[0].attention, 'num_heads')
             else 12,
-            "embedding_dim": model.embedding.weight.shape[1],
         }
         if model._is_hierarchical:
             config["per_category_sizes"] = dict(model.per_category_sizes)

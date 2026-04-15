@@ -21,7 +21,7 @@ TAG_MERGED = "index-merged"
 TAG_MODEL = "tactic-model"
 CHUNK_SIZE = 65536  # 64 KB
 ALL_LIBRARIES = ["stdlib", "stdpp", "mathcomp", "flocq", "coqinterval", "coquelicot"]
-MODEL_ARTIFACTS = ["tactic-predictor.onnx", "tactic-labels.json", "coq-vocabulary.json"]
+MODEL_ARTIFACTS = ["tactic-predictor.onnx", "tactic-labels.json", "tokenizer.model"]
 
 
 def get_libraries_dir() -> Path:

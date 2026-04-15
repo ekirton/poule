@@ -56,7 +56,6 @@ _HF_TO_MLX_LAYER_TEMPLATES = {
 _DIRECT_MAPPING = {
     "classifier.weight": "classifier.weight",
     "classifier.bias": "classifier.bias",
-    "embedding_projection.weight": "embedding_projection.weight",
     "category_head.weight": "category_head.weight",
     "category_head.bias": "category_head.bias",
 }
@@ -156,8 +155,6 @@ class WeightConverter:
         vocab_size = config["vocab_size"]
         hidden_size = config.get("hidden_size", 768)
         num_heads = config.get("num_heads", 12)
-        embedding_dim = config.get("embedding_dim", 768)
-
         # Detect hierarchical model
         per_category_sizes = config.get("per_category_sizes")
         is_hierarchical = per_category_sizes is not None
@@ -206,7 +203,6 @@ class WeightConverter:
         checkpoint = {
             "model_state_dict": pt_state_dict,
             "num_hidden_layers": num_layers,
-            "embedding_dim": embedding_dim,
             "hyperparams": hyperparams,
             "vocabulary_path": vocabulary_path,
             "epoch": 0,
@@ -251,7 +247,6 @@ class WeightConverter:
         num_layers = config.get("num_layers", 12)
         hidden_size = config.get("hidden_size", 768)
         num_heads = config.get("num_heads", 12)
-        embedding_dim = config.get("embedding_dim", 768)
         per_category_sizes = config.get("per_category_sizes")
         is_hierarchical = per_category_sizes is not None
 
@@ -264,7 +259,6 @@ class WeightConverter:
             num_layers=num_layers,
             hidden_size=hidden_size,
             num_heads=num_heads,
-            embedding_dim=embedding_dim,
             per_category_sizes=per_category_sizes,
             num_categories=num_categories,
         )
@@ -280,7 +274,6 @@ class WeightConverter:
             "model_state_dict": pt_state_dict,
             "num_classes": num_classes,
             "num_hidden_layers": num_layers,
-            "embedding_dim": embedding_dim,
         }
         if is_hierarchical:
             pt_checkpoint["per_category_sizes"] = per_category_sizes

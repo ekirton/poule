@@ -854,7 +854,7 @@ def cmd_train(
 
             tokenizer = CoqTokenizer(vocab_path)
             click.echo(
-                f"  Using closed vocabulary ({tokenizer.vocab_size} tokens)",
+                f"  Using BPE vocabulary ({tokenizer.vocab_size} tokens)",
                 err=True,
             )
         else:

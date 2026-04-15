@@ -91,18 +91,16 @@ def _tokenize_batch(tokenizer, texts, max_seq_length):
     from Poule.neural.training.vocabulary import CoqTokenizer
 
     if isinstance(tokenizer, CoqTokenizer):
-        result = tokenizer.encode_batch(texts, max_length=max_seq_length)
+        batch_ids, batch_mask = tokenizer.encode_batch(texts, max_length=max_seq_length)
         import torch
 
         return {
-            "input_ids": torch.tensor(result["input_ids"], dtype=torch.long)
-            if not isinstance(result["input_ids"], torch.Tensor)
-            else result["input_ids"],
-            "attention_mask": torch.tensor(
-                result["attention_mask"], dtype=torch.long
-            )
-            if not isinstance(result["attention_mask"], torch.Tensor)
-            else result["attention_mask"],
+            "input_ids": torch.tensor(batch_ids, dtype=torch.long)
+            if not isinstance(batch_ids, torch.Tensor)
+            else batch_ids,
+            "attention_mask": torch.tensor(batch_mask, dtype=torch.long)
+            if not isinstance(batch_mask, torch.Tensor)
+            else batch_mask,
         }
     else:
         return tokenizer(

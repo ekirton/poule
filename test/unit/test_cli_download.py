@@ -90,10 +90,10 @@ SAMPLE_MODEL_MANIFEST = {
             "size": len(SAMPLE_LABELS_CONTENT),
             "description": "Ordered tactic family names (index to name)",
         },
-        "coq-vocabulary.json": {
+        "tokenizer.model": {
             "sha256": SAMPLE_VOCAB_SHA256,
             "size": len(SAMPLE_VOCAB_CONTENT),
-            "description": "Closed-vocabulary tokenizer (token to ID)",
+            "description": "SentencePiece BPE tokenizer model",
         },
     },
     "label_count": 3,
@@ -136,8 +136,8 @@ def _make_model_release(tag: str = "tactic-model") -> dict:
                 "browser_download_url": "https://example.com/tactic-labels.json",
             },
             {
-                "name": "coq-vocabulary.json",
-                "browser_download_url": "https://example.com/coq-vocabulary.json",
+                "name": "tokenizer.model",
+                "browser_download_url": "https://example.com/tokenizer.model",
             },
         ],
     }
@@ -304,7 +304,7 @@ class TestDownloadIndexCommand:
             "https://example.com/model-manifest.json": model_manifest_bytes,
             "https://example.com/model.onnx": SAMPLE_ONNX_CONTENT,
             "https://example.com/tactic-labels.json": SAMPLE_LABELS_CONTENT,
-            "https://example.com/coq-vocabulary.json": SAMPLE_VOCAB_CONTENT,
+            "https://example.com/tokenizer.model": SAMPLE_VOCAB_CONTENT,
         }
         for lib in ALL_LIBRARIES:
             url_map[f"https://example.com/index-{lib}.db"] = SAMPLE_LIB_CONTENT[lib]
@@ -376,7 +376,7 @@ class TestDownloadIndexCommand:
         assert result.exit_code == 0, result.output
         assert (model_dir / "tactic-predictor.onnx").read_bytes() == SAMPLE_ONNX_CONTENT
         assert (model_dir / "tactic-labels.json").read_bytes() == SAMPLE_LABELS_CONTENT
-        assert (model_dir / "coq-vocabulary.json").read_bytes() == SAMPLE_VOCAB_CONTENT
+        assert (model_dir / "tokenizer.model").read_bytes() == SAMPLE_VOCAB_CONTENT
 
     def test_include_model_skips_unchanged_artifacts(self, runner, tmp_path):
         """Model artifacts with matching checksum are skipped without --force."""
@@ -384,7 +384,7 @@ class TestDownloadIndexCommand:
         model_dir.mkdir()
         (model_dir / "tactic-predictor.onnx").write_bytes(SAMPLE_ONNX_CONTENT)
         (model_dir / "tactic-labels.json").write_bytes(SAMPLE_LABELS_CONTENT)
-        (model_dir / "coq-vocabulary.json").write_bytes(SAMPLE_VOCAB_CONTENT)
+        (model_dir / "tokenizer.model").write_bytes(SAMPLE_VOCAB_CONTENT)
         result, _, _ = self._invoke_download(
             runner, tmp_path,
             extra_args=["--include-model", "--model-dir", str(model_dir)],
