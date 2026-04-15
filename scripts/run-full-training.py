@@ -114,7 +114,6 @@ def main():
         n_trials=15,
         study_name="poule-hpo-undersampled",
         resume=False,
-        hpo_max_epochs=10,
         hpo_patience=2,
     )
     hpo_time = time.time() - t0

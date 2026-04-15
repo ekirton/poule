@@ -1277,34 +1277,7 @@ dataset = load(["stdlib.jsonl", "mathcomp.jsonl"])
 # dataset.train: 84,000 steps, dataset.val: 10,500 steps, dataset.test: 10,500 steps
 # dataset.num_classes = 28
 
-# 3. Train (with BPE vocabulary)
-train(dataset, "model.pt", vocabulary_dir="vocabulary/",
-      hyperparams={batch_size: 64, lr: 2e-5, epochs: 20})
-# Epoch 1: loss=3.2, val_acc@1=0.15, val_acc@5=0.42
-# Epoch 2: loss=2.4, val_acc@1=0.28, val_acc@5=0.61
-# ...
-# Epoch 12: loss=0.9, val_acc@1=0.45, val_acc@5=0.83 (best)
-# Epoch 13-15: no improvement -> early stopping
-
-# 4. Evaluate
-eval_report = evaluate("model.pt", dataset.test)
-# acc@1=0.43, acc@5=0.82, 28 families
-
-# 5. Quantize
-quantize("model.pt", "tactic-predictor.onnx")
-# Label agreement: 99.0% (>= 98% threshold)
-# tactic-labels.json written alongside
-
-# 6. Deploy: copy .onnx + tactic-labels.json to well-known model path
-```
-
-### Hyperparameter optimization workflow
-
-```
-# 1. Load data (same as training)
-dataset = load(["stdlib.jsonl", "mathcomp.jsonl"])
-
-# 2. Run HPO
+# 3. HPO — the final model is the best trial's checkpoint
 result = tune(dataset, "hpo-output/", vocabulary_dir="vocabulary/", n_trials=20)
 # Trial 0: lr=3.2e-5, batch=64, wd=5.1e-3, alpha=0.6 -> acc@5=0.78
 # Trial 1: lr=8.7e-6, batch=128, wd=2.3e-2, alpha=0.3 -> acc@5=0.72
@@ -1315,7 +1288,21 @@ result = tune(dataset, "hpo-output/", vocabulary_dir="vocabulary/", n_trials=20)
 # result.best_value = 0.84, result.n_pruned = 7
 # Best checkpoint: hpo-output/best-model.pt
 
-# 3. Resume an interrupted study
+# 4. Evaluate (using the best HPO checkpoint directly)
+eval_report = evaluate("hpo-output/best-model.pt", dataset.test)
+# acc@1=0.43, acc@5=0.82, 28 families
+
+# 5. Quantize
+quantize("hpo-output/best-model.pt", "tactic-predictor.onnx")
+# Label agreement: 99.0% (>= 98% threshold)
+# tactic-labels.json written alongside
+
+# 6. Deploy: copy .onnx + tactic-labels.json to well-known model path
+```
+
+### Resuming an interrupted study
+
+```
 result = tune(dataset, "hpo-output/", vocabulary_dir="vocabulary/",
               n_trials=30, resume=True)
 # Continues from trial 20 (10 more trials)
