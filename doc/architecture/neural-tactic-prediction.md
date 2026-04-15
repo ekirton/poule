@@ -156,7 +156,7 @@ where `family_confidence` is the neural classifier's softmax probability and `re
 
 ## Differences from Previous Neural Retrieval Design
 
-The previous design (documented in `doc/neural-network-search.md`) used a bi-encoder to produce 768-dim embeddings for cosine similarity search over a FAISS index. That approach was abandoned because only ~3,500 training pairs could be extracted (insufficient for competitive retrieval quality).
+The previous design used a bi-encoder to produce 768-dim embeddings for cosine similarity search over a FAISS index. That approach was abandoned because only ~3,500 training pairs could be extracted (insufficient for competitive retrieval quality). See `doc/neural-network-tactic-prediction.md` § "Why Tactic Prediction, Not Premise Selection" for details.
 
 The tactic prediction design differs in every dimension:
 

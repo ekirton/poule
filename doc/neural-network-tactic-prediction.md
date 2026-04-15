@@ -2,9 +2,15 @@
 
 ## Status
 
-**Hierarchical model trained and deployed.** Replaces the abandoned neural premise selection approach (see [neural-network-search.md](neural-network-search.md) for why that failed). The extraction pipeline captures 140,358 (proof_state, tactic) steps across 136,936 unique states — 40x more training data than was available for premise retrieval.
+**Hierarchical model trained and deployed.** The extraction pipeline captures 140,358 (proof_state, tactic) steps across 136,936 unique states — 40x more training data than was available for the earlier premise retrieval experiment.
 
 The flat 96-class classifier achieved 46.6% test_acc@5 with 86 of 96 classes showing zero recall. A hierarchical decomposition (8 categories × ~65 within-category tactics) replaced the flat approach and achieved **80.2% val_acc@5** — a 10.5pp improvement. With head-class undersampling (cap 2,000 per family, reducing training from 95K to 40K), the model achieves **57.0% test_acc@5** — a 12pp improvement over the non-undersampled hierarchical model (45.2%) and a 10pp improvement over the flat baseline (46.6%). See [undersampled results](#undersampled-model-results) below.
+
+## Why Tactic Prediction, Not Premise Selection
+
+The original plan was neural premise selection: given a proof state, retrieve the lemmas most likely to be useful. This is the dominant paradigm in Lean (ReProver, LeanHammer) and Isabelle (Magnushammer), where mature extraction infrastructure produces millions of (proof_state, premises_used) training pairs. But Coq's kernel does not track which lemmas each tactic consults. The extraction pipeline captures ~134,000 proof records, yet only ~3,500 produce non-empty premise lists — a 97% attrition rate. With 1,600x less data than LeanHammer's 5.8M pairs, the model could not achieve competitive retrieval quality.
+
+The same extraction pipeline does capture the tactic text at every step. Every proof state has the tactic that was applied to it, regardless of whether that tactic's premises are known. This yields ~140,000 usable (proof_state, tactic) training pairs — a 40x larger signal from the same data. Tactic family prediction is a simpler task (classification, not retrieval) that is well-suited to this data volume and directly useful for suggesting next steps during interactive proof development.
 
 ## Motivation
 
@@ -14,14 +20,7 @@ This is not an automated prover. Systems like CoqHammer, Tactician, and other so
 
 ## Problem
 
-The original neural training pipeline trained a bi-encoder to retrieve *premises* given a proof state. This required (proof_state, premises_used) pairs, but Coq's kernel does not track which lemmas each tactic consults. The result: the extraction pipeline captures proof records but only ~3,500 produce non-empty premise lists usable as training pairs — a 97% attrition rate.
-
-However, the extraction pipeline *does* capture the tactic text at each step (`ExtractionStep.tactic`). Every goal state has the tactic that was applied to it, regardless of whether that tactic's premises are known. This represents a 40× larger training signal.
-
-| Training signal | Available pairs | Source |
-|----------------|----------------|--------|
-| Premise retrieval (old) | ~3,500 | Steps with non-empty `premises` |
-| Tactic prediction (current) | 140,358 | All steps with `tactic` text |
+As described above, premise retrieval yielded only ~3,500 usable training pairs. Tactic prediction uses the full ~140,000 (proof_state, tactic) pairs from the same extraction data.
 
 ## What is Tactic Prediction
 
