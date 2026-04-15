@@ -40,7 +40,6 @@ class HierarchicalTacticClassifier(nn.Module):
         num_categories: int = 8,
         vocab_size: int | None = None,
         num_hidden_layers: int = 6,
-        embedding_dim: int = 128,
         # Backward compat: if num_classes is provided, create a flat classifier
         num_classes: int | None = None,
     ):
@@ -64,27 +63,21 @@ class HierarchicalTacticClassifier(nn.Module):
         hidden_size = self.encoder.config.hidden_size
 
         # Replace embedding layer if a custom vocab size is provided
+        # Full-rank (768-d) — no factorization with BPE vocabulary
         if vocab_size is not None:
             old_embeddings = self.encoder.embeddings.word_embeddings
-            new_embeddings = nn.Embedding(vocab_size, embedding_dim)
+            new_embeddings = nn.Embedding(vocab_size, hidden_size)
             nn.init.normal_(new_embeddings.weight, mean=0.0, std=0.02)
             overlap = min(vocab_size, old_embeddings.num_embeddings)
-            copy_dim = min(embedding_dim, old_embeddings.embedding_dim)
             with torch.no_grad():
-                new_embeddings.weight[:overlap, :copy_dim] = (
-                    old_embeddings.weight[:overlap, :copy_dim]
+                new_embeddings.weight[:overlap, :] = (
+                    old_embeddings.weight[:overlap, :]
                 )
             self.encoder.embeddings.word_embeddings = new_embeddings
             del old_embeddings
             import gc; gc.collect()
 
-        # Embedding projection for factorized embeddings (ALBERT-style)
-        if embedding_dim < hidden_size:
-            self.embedding_projection = nn.Linear(
-                embedding_dim, hidden_size, bias=False,
-            )
-        else:
-            self.embedding_projection = None
+        self.embedding_projection = None
 
         # Hierarchical heads
         if self._is_hierarchical:
@@ -113,8 +106,7 @@ class HierarchicalTacticClassifier(nn.Module):
         from transformers import RobertaConfig, RobertaModel
 
         state_dict = checkpoint["model_state_dict"]
-        num_hidden_layers = checkpoint.get("num_hidden_layers", 12)
-        embedding_dim = checkpoint.get("embedding_dim", 768)
+        num_hidden_layers = checkpoint.get("num_hidden_layers", 6)
         per_category_sizes = checkpoint.get("per_category_sizes")
 
         emb_key = "encoder.embeddings.word_embeddings.weight"
@@ -136,18 +128,7 @@ class HierarchicalTacticClassifier(nn.Module):
         model = cls.__new__(cls)
         nn.Module.__init__(model)
         model.encoder = RobertaModel(config)
-
-        # Embedding factorization
-        if embedding_dim < hidden_size:
-            if vocab_size is not None:
-                model.encoder.embeddings.word_embeddings = nn.Embedding(
-                    vocab_size, embedding_dim,
-                )
-            model.embedding_projection = nn.Linear(
-                embedding_dim, hidden_size, bias=False,
-            )
-        else:
-            model.embedding_projection = None
+        model.embedding_projection = None
 
         if per_category_sizes is not None:
             # Hierarchical model
@@ -188,16 +169,9 @@ class HierarchicalTacticClassifier(nn.Module):
         self, input_ids: torch.Tensor, attention_mask: torch.Tensor,
     ) -> torch.Tensor:
         """Shared encoder: produce pooled representation [B, hidden_size]."""
-        if self.embedding_projection is not None:
-            word_embs = self.encoder.embeddings.word_embeddings(input_ids)
-            projected = self.embedding_projection(word_embs)
-            outputs = self.encoder(
-                inputs_embeds=projected, attention_mask=attention_mask,
-            )
-        else:
-            outputs = self.encoder(
-                input_ids=input_ids, attention_mask=attention_mask,
-            )
+        outputs = self.encoder(
+            input_ids=input_ids, attention_mask=attention_mask,
+        )
         token_embs = outputs.last_hidden_state
 
         # Mean pooling over non-padding tokens
@@ -235,12 +209,10 @@ class HierarchicalTacticClassifier(nn.Module):
         extra: dict[str, Any] | None = None,
     ) -> None:
         """Save model weights and metadata to a checkpoint file."""
-        emb_dim = self.encoder.embeddings.word_embeddings.weight.shape[1]
         checkpoint: dict[str, Any] = {
             "model_state_dict": self.state_dict(),
             "num_classes": self.num_classes,
             "num_hidden_layers": self.encoder.config.num_hidden_layers,
-            "embedding_dim": emb_dim,
             "label_map": label_map,
         }
         if self._is_hierarchical:

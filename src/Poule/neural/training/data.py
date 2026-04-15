@@ -92,6 +92,158 @@ def serialize_goals(goals: list[dict]) -> str:
     return _impl(goals)
 
 
+# ---------------------------------------------------------------------------
+# Structured proof state serialization (spec §4.0.8)
+# ---------------------------------------------------------------------------
+
+HEAD_CONSTRUCTORS = frozenset({
+    "forall", "eq", "and", "or", "ex", "not", "True", "False",
+    "le", "lt", "ge", "gt", "plus", "mult", "minus", "iff",
+    "prod", "sum", "Peano.le", "Peano.lt", "other",
+})
+
+# Map Coq notations to their underlying type names
+_NOTATION_TO_HEAD = {
+    "=": "eq",
+    "/\\": "and",
+    "\\/": "or",
+    "<=": "le",
+    "<": "lt",
+    ">=": "ge",
+    ">": "gt",
+    "+": "plus",
+    "*": "mult",
+    "-": "minus",
+    "<->": "iff",
+    "~": "not",
+    "exists": "ex",
+}
+
+# Regex for hypothesis lines in flat format
+_HYP_LINE_RE = re.compile(r"^([a-zA-Z_][a-zA-Z_0-9']*) : (.+)$")
+
+
+def extract_goal_head(goal_type_text: str) -> str:
+    """Extract the head constructor from a goal type string.
+
+    spec §4.0.8: The head is the first whitespace-delimited token after
+    stripping leading '(' characters. If the head is in HEAD_CONSTRUCTORS,
+    return it; otherwise return 'other'.
+    """
+    text = goal_type_text.strip()
+    if not text:
+        return "other"
+
+    # Strip leading parens
+    text = text.lstrip("(").strip()
+    if not text:
+        return "other"
+
+    # Get the first token
+    first_token = text.split()[0] if text.split() else ""
+
+    # Check direct match in HEAD_CONSTRUCTORS
+    if first_token in HEAD_CONSTRUCTORS:
+        return first_token
+
+    # Check if first token maps to a head via notation
+    if first_token in _NOTATION_TO_HEAD:
+        return _NOTATION_TO_HEAD[first_token]
+
+    # Check infix notation mappings — lowest-precedence operators first
+    # In Coq, = < /\ \/ <-> are lower precedence than + * - <= < >= >
+    # So we check for them first (they are the true "head" of the expression)
+    tokens_set = set(text.split())
+    # Priority order: check low-precedence (outermost) notations first
+    _LOW_PRECEDENCE = ["<->", "=", "/\\", "\\/"]
+    for notation in _LOW_PRECEDENCE:
+        if notation in tokens_set and notation in _NOTATION_TO_HEAD:
+            return _NOTATION_TO_HEAD[notation]
+
+    # Then check remaining infix notations
+    tokens = text.split()
+    for token in tokens[1:]:
+        if token in _NOTATION_TO_HEAD:
+            return _NOTATION_TO_HEAD[token]
+
+    return "other"
+
+
+def serialize_structured(
+    state_text: str,
+    prev_tactic: str | None = None,
+    depth: int = 0,
+    ngoals: int = 1,
+    max_body_tokens: int = 32,
+) -> str:
+    """Convert a flat proof state string to structured format with markers.
+
+    spec §4.0.8: Adds context prefix tokens and structural markers.
+    The output is suitable for BPE tokenization (no [CLS]/[SEP]).
+
+    Args:
+        state_text: Flat proof state (output of serialize_goals).
+        prev_tactic: Previous tactic family name, or None for first step.
+        depth: Number of tactics applied so far in the proof.
+        ngoals: Number of goals in the proof state.
+        max_body_tokens: Max whitespace-delimited tokens for [BODY] content.
+    """
+    # Parse goals from flat text
+    goals_text = state_text.split("\n\n") if state_text.strip() else []
+
+    parsed_goals: list[dict] = []
+    for goal_block in goals_text:
+        lines = goal_block.split("\n")
+        hyps: list[dict] = []
+        goal_line = ""
+        for line in lines:
+            m = _HYP_LINE_RE.match(line)
+            if m:
+                name = m.group(1)
+                type_and_body = m.group(2)
+                # Check for let-binding body (:= separator)
+                if " := " in type_and_body:
+                    hyp_type, body = type_and_body.split(" := ", 1)
+                    hyps.append({"name": name, "type": hyp_type, "body": body})
+                else:
+                    hyps.append({"name": name, "type": type_and_body})
+            else:
+                goal_line = line
+        parsed_goals.append({"hypotheses": hyps, "type": goal_line})
+
+    # Extract goal head from first goal
+    first_goal_type = parsed_goals[0]["type"] if parsed_goals else ""
+    head = extract_goal_head(first_goal_type)
+
+    # Build context prefix
+    prev_str = prev_tactic if prev_tactic is not None else "none"
+    depth_str = "10+" if depth >= 10 else str(min(depth, 10))
+    ngoals_str = "5+" if ngoals >= 5 else str(min(ngoals, 5))
+
+    prefix = f"[PREV={prev_str}] [DEPTH={depth_str}] [NGOALS={ngoals_str}] [HEAD={head}]"
+
+    # Build body with structural markers
+    body_parts: list[str] = []
+    for i, goal in enumerate(parsed_goals):
+        if i > 0:
+            body_parts.append("[GOALSEP]")
+        for hyp in goal["hypotheses"]:
+            if "body" in hyp and hyp["body"]:
+                body_tokens = hyp["body"].split()
+                truncated_body = " ".join(body_tokens[:max_body_tokens])
+                body_parts.append(
+                    f"[HYP] {hyp['name']} [TYPE] {hyp['type']} [BODY] {truncated_body}"
+                )
+            else:
+                body_parts.append(f"[HYP] {hyp['name']} [TYPE] {hyp['type']}")
+        if goal["type"]:
+            body_parts.append(f"[GOAL] {goal['type']}")
+
+    if body_parts:
+        return f"{prefix} {' '.join(body_parts)}"
+    return prefix
+
+
 @dataclass
 class TacticDataset:
     """Holds train/val/test splits of (proof_state_text, category_idx, within_idx) triples.
@@ -226,7 +378,17 @@ def perturb_proof_state(state_text: str, rng: random.Random) -> str:
 
     spec §4.1: Applies hypothesis shuffling and identifier renaming.
     Both perturbations are provably label-preserving.
+
+    Handles both structured format (with [HYP]/[TYPE]/[GOAL] markers)
+    and flat format (newline-separated).
     """
+    if "[HYP]" in state_text or "[GOAL]" in state_text:
+        return _perturb_structured(state_text, rng)
+    return _perturb_flat(state_text, rng)
+
+
+def _perturb_flat(state_text: str, rng: random.Random) -> str:
+    """Perturb a flat (newline-separated) proof state."""
     blocks = state_text.split("\n\n")
     shuffled_blocks = []
 
@@ -269,7 +431,6 @@ def perturb_proof_state(state_text: str, rng: random.Random) -> str:
     name_map = {orig: pool[i] for i, orig in enumerate(all_names)}
 
     # Apply all replacements simultaneously using word-boundary-aware regex.
-    # Sort by length descending so longer names are matched first.
     sorted_names = sorted(name_map.keys(), key=len, reverse=True)
     pattern = re.compile(
         r"(?<![a-zA-Z_0-9'])("
@@ -278,6 +439,93 @@ def perturb_proof_state(state_text: str, rng: random.Random) -> str:
     )
     result = pattern.sub(lambda m: name_map[m.group(1)], shuffled_state)
     return result
+
+
+# Regex to split structured text into hypothesis segments
+_STRUCT_HYP_RE = re.compile(r"\[HYP\] ")
+
+
+def _perturb_structured(state_text: str, rng: random.Random) -> str:
+    """Perturb a structured proof state (with [HYP]/[TYPE]/[GOAL] markers).
+
+    spec §4.1: Preserves context prefix, shuffles hypothesis segments
+    within each goal block, renames identifiers in the body only.
+    """
+    # Split context prefix from body
+    # Context prefix ends after [HEAD=...]
+    head_match = re.search(r"\[HEAD=[^\]]+\]", state_text)
+    if not head_match:
+        return state_text
+    prefix_end = head_match.end()
+    prefix = state_text[:prefix_end]
+    body = state_text[prefix_end:].strip()
+
+    if not body:
+        return state_text
+
+    # Split body into goal blocks by [GOALSEP]
+    goal_blocks = re.split(r"\s*\[GOALSEP\]\s*", body)
+
+    shuffled_blocks: list[str] = []
+    all_names: list[str] = []
+    seen: set[str] = set()
+
+    for block in goal_blocks:
+        # Parse hypothesis segments and goal segment
+        # Each hypothesis: [HYP] name [TYPE] type [BODY] body (optional)
+        # Goal: [GOAL] ...
+        hyp_segments: list[str] = []
+        goal_segment = ""
+
+        # Split on [GOAL] to separate hypotheses from goal
+        goal_split = re.split(r"\s*(\[GOAL\]\s*.*)$", block.strip())
+        hyp_part = goal_split[0].strip() if goal_split else ""
+        if len(goal_split) > 1:
+            goal_segment = goal_split[1].strip()
+
+        # Parse individual hypothesis segments from hyp_part
+        if hyp_part:
+            # Split on [HYP] boundaries
+            parts = re.split(r"\[HYP\]\s*", hyp_part)
+            for part in parts:
+                part = part.strip()
+                if part:
+                    hyp_segments.append(f"[HYP] {part}")
+                    # Extract hypothesis name (token after [HYP])
+                    name = part.split()[0] if part.split() else ""
+                    if name and name not in seen:
+                        all_names.append(name)
+                        seen.add(name)
+
+        # Shuffle hypotheses
+        if hyp_segments:
+            rng.shuffle(hyp_segments)
+
+        # Reconstruct block
+        block_parts = hyp_segments[:]
+        if goal_segment:
+            block_parts.append(goal_segment)
+        shuffled_blocks.append(" ".join(block_parts))
+
+    # Rejoin with [GOALSEP]
+    shuffled_body = " [GOALSEP] ".join(shuffled_blocks)
+
+    if not all_names:
+        return f"{prefix} {shuffled_body}"
+
+    # Identifier renaming (on body only, not prefix)
+    pool = list(_SYNTHETIC_NAMES)
+    rng.shuffle(pool)
+    name_map = {orig: pool[i] for i, orig in enumerate(all_names)}
+
+    sorted_names = sorted(name_map.keys(), key=len, reverse=True)
+    pattern = re.compile(
+        r"(?<![a-zA-Z_0-9'])("
+        + "|".join(re.escape(n) for n in sorted_names)
+        + r")(?![a-zA-Z_0-9'])"
+    )
+    renamed_body = pattern.sub(lambda m: name_map[m.group(1)], shuffled_body)
+    return f"{prefix} {renamed_body}"
 
 
 def oversample_train(
@@ -577,11 +825,19 @@ class TrainingDataLoader:
         for position, filepath in enumerate(sorted_files):
             steps = file_steps[filepath]
             labeled_steps: list[tuple[str, int, int]] = []
-            for state, family in steps:
+            prev_tactic: str | None = None
+            for depth, (state, family) in enumerate(steps):
+                # Count goal blocks in the flat state text
+                ngoals = len(state.split("\n\n")) if state.strip() else 1
+                # Apply structured serialization with context features
+                structured = serialize_structured(
+                    state, prev_tactic, depth, ngoals,
+                )
                 cat = TACTIC_TO_CATEGORY[family]
                 cat_idx = category_index[cat]
                 within_idx = per_category_label_maps[cat][family]
-                labeled_steps.append((state, cat_idx, within_idx))
+                labeled_steps.append((structured, cat_idx, within_idx))
+                prev_tactic = family
 
             mod = position % 10
             if mod == 8:

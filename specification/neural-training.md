@@ -12,7 +12,7 @@ Define the training pipeline that produces a tactic family classifier from extra
 
 ## 2. Scope
 
-**In scope**: `VocabularyBuilder` (closed-vocabulary construction from search index and training data), `CoqTokenizer` (whitespace-split tokenization using closed vocabulary), `TrainingDataLoader` (JSONL parsing, tactic family extraction, label map construction, train/val/test split), `TacticClassifierTrainer` (training loop, class-weighted cross-entropy loss, checkpointing), `TacticEvaluator` (accuracy@k, per-family precision/recall, confusion matrix), `ModelQuantizer` (PyTorch → INT8 ONNX conversion, validation, label export), `TrainingDataValidator` (pre-training data quality checks), `HyperparameterTuner` (automated hyperparameter optimization using Optuna), `MLXTacticClassifier` (MLX port of the classifier model), `MLXTrainer` (MLX training loop with functional gradients), `WeightConverter` (MLX safetensors → PyTorch checkpoint conversion).
+**In scope**: `BpeVocabularyBuilder` (BPE vocabulary training via SentencePiece from extracted proof data), `CoqTokenizer` (BPE tokenization wrapping SentencePiece), `serialize_structured` (structured proof state serialization with context features and structural markers), `TrainingDataLoader` (JSONL parsing, tactic family extraction, structured serialization, context feature derivation, label map construction, train/val/test split), `TacticClassifierTrainer` (training loop, class-weighted cross-entropy loss, checkpointing), `TacticEvaluator` (accuracy@k, per-family precision/recall, confusion matrix), `ModelQuantizer` (PyTorch → INT8 ONNX conversion, validation, label export), `TrainingDataValidator` (pre-training data quality checks), `HyperparameterTuner` (automated hyperparameter optimization using Optuna), `MLXTacticClassifier` (MLX port of the classifier model), `MLXTrainer` (MLX training loop with functional gradients), `WeightConverter` (MLX safetensors → PyTorch checkpoint conversion).
 
 **Out of scope**: Tactic prediction inference at query time (owned by neural-retrieval), retrieval pipeline integration (owned by pipeline), storage schema (owned by storage).
 
@@ -34,18 +34,24 @@ Define the training pipeline that produces a tactic family classifier from extra
 
 ## 4. Behavioral Requirements
 
-### 4.0 VocabularyBuilder
+### 4.0 BpeVocabularyBuilder
 
-#### build(index_db_path, jsonl_paths, output_path)
+#### build(jsonl_paths, output_dir, vocab_size=16000)
 
-- REQUIRES: `index_db_path` points to a valid index database containing a `declarations` table. `jsonl_paths` is a non-empty list of paths to JSON Lines extraction output files. `output_path` is a writable path.
-- ENSURES: Constructs a closed vocabulary from the search index and training data. Writes a JSON file to `output_path` mapping token strings to sequential integer IDs. Returns a `VocabularyReport`.
+- REQUIRES: `jsonl_paths` is a non-empty list of paths to JSON Lines extraction output files. `output_dir` is a writable directory path. `vocab_size` is a positive integer (default 16,000).
+- ENSURES: Trains a SentencePiece BPE model on proof state text from the JSONL files. Writes the trained model (`tokenizer.model`) and vocabulary file (`tokenizer.vocab`) to `output_dir`. Returns a `VocabularyReport`.
 
-#### Fixed token sets
+#### Training corpus collection
 
-The following tokens are always included in the vocabulary at fixed positions, regardless of input data:
+Scan the compact training data JSONL files. For each `"s"` and `"g"` record, read the `"s"` field. Collect all proof state text into a temporary corpus file for SentencePiece training.
 
-**Special tokens (IDs 0–4):**
+- MAINTAINS: Only `"s"` (step) and `"g"` (goal) records contribute to the training corpus. Other record types are ignored.
+
+#### Special tokens
+
+The following tokens are pre-defined as user-defined symbols in SentencePiece so they are never split by BPE:
+
+**Standard special tokens:**
 
 | ID | Token |
 |----|-------|
@@ -55,93 +61,32 @@ The following tokens are always included in the vocabulary at fixed positions, r
 | 3 | `[SEP]` |
 | 4 | `[MASK]` |
 
-**Punctuation and delimiters:**
-`(`, `)`, `{`, `}`, `[`, `]`, `:`, `;`, `,`, `.`, `|`, `@`, `!`, `?`, `_`, `'`, `#`, `=`, `+`, `-`, `*`, `/`, `<`, `>`, `~`
+**Structural markers:**
+`[HYP]`, `[TYPE]`, `[BODY]`, `[GOAL]`, `[GOALSEP]`
 
-**SSReflect tacticals:**
-`/=`, `//`, `//=`, `=>`, `->`, `<-`
+**Context tokens:**
+`[HEAD=X]` for each goal head constructor in `HEAD_CONSTRUCTORS` (forall, eq, and, or, ex, not, True, False, le, lt, ge, gt, plus, mult, minus, Peano.le, Peano.lt, iff, prod, sum, other).
+`[PREV=X]` for each tactic family in the taxonomy, plus `[PREV=none]`.
+`[DEPTH=N]` for N ∈ {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10+}.
+`[NGOALS=N]` for N ∈ {1, 2, 3, 4, 5+}.
 
-**Scope delimiters:**
-`%N`, `%Z`, `%R`, `%Q`, `%positive`, `%type`
+- MAINTAINS: All special tokens are treated as atomic by BPE (never split into subwords).
+- MAINTAINS: `[PAD]` is always ID 0. `[UNK]` is always ID 1. `[CLS]` is always ID 2. `[SEP]` is always ID 3. `[MASK]` is always ID 4.
 
-**Unicode mathematical symbols:**
-`∀`, `∃`, `→`, `←`, `↔`, `⊢`, `⊣`, `≤`, `≥`, `≠`, `≡`, `∧`, `∨`, `¬`, `⊆`, `⊇`, `∈`, `∉`, `⊂`, `⊃`, `∪`, `∩`, `∘`, `×`, `⊕`, `⊗`, `ℕ`, `ℤ`, `ℚ`, `ℝ`, `ℂ`
+#### SentencePiece training
 
-**Greek letters:**
-`α`, `β`, `γ`, `δ`, `ε`, `ζ`, `η`, `θ`, `ι`, `κ`, `λ`, `μ`, `ν`, `ξ`, `π`, `ρ`, `σ`, `τ`, `υ`, `φ`, `χ`, `ψ`, `ω`, `Γ`, `Δ`, `Θ`, `Λ`, `Ξ`, `Π`, `Σ`, `Φ`, `Ψ`, `Ω`
+Train a SentencePiece BPE model with:
+- `model_type='bpe'`
+- `vocab_size` as specified (default 16,000)
+- `user_defined_symbols` containing all structural markers and context tokens
+- `pad_id=0`, `unk_id=1`, `bos_id=2`, `eos_id=3`
+- `character_coverage=1.0` (Coq uses ASCII + Unicode math)
 
-**Digits:**
-`0`, `1`, `2`, `3`, `4`, `5`, `6`, `7`, `8`, `9`
+- MAINTAINS: The trained model produces deterministic tokenization — the same input always produces the same token sequence.
 
-- MAINTAINS: Special tokens are always at IDs 0–4. The order of fixed token sets after the special tokens is: punctuation, SSReflect tacticals, scope delimiters, Unicode symbols, Greek letters, digits.
-
-#### Token extraction from the search index
-
-Read all rows from the `declarations` table. For each declaration, the `name` field (fully-qualified canonical form) is added as a vocabulary entry.
-
-- MAINTAINS: Every declaration name in the index appears in the vocabulary exactly once.
-
-> **Given** an index database with 15,000 declarations
-> **When** `build` runs
-> **Then** all 15,000 declaration names appear as vocabulary entries
-
-#### Token extraction from training data
-
-Scan the compact training data JSONL files. For each `"s"` and `"g"` record, read the `"s"` field and split on whitespace. Each unique token that is not already in the vocabulary is added.
-
-This captures hypothesis variable names (`n`, `m`, `H`, `H0`, `x`, `y`, `IHn'`) and type expressions that appear in proof states.
-
-- MAINTAINS: No duplicate tokens. If a token from the training data already exists in the vocabulary (from fixed sets or the index), it is not added again.
-
-> **Given** training data containing proof states with hypothesis names `n`, `m`, `H`, `IHn'`
-> **When** `build` scans the training data
-> **Then** these names appear in the vocabulary (unless already present from the index)
-
-#### _extract_tokens_from_jsonl (internal)
-
-For each line in a JSONL file, parse the JSON record and check `record.get("t") in ("s", "g")`. If the record matches, read the `"s"` field and split on whitespace to collect tokens.
-
-- MAINTAINS: Only `"s"` (step) and `"g"` (goal) records contribute tokens. Other record types are ignored.
-
-#### Unicode normalization
-
-All token strings shall have NFC (Canonical Decomposition followed by Canonical Composition) Unicode normalization applied before insertion into the vocabulary. This ensures that precomposed characters (e.g., `é` as U+00E9) and decomposed sequences (e.g., `e` + U+0301) are treated identically.
-
-- MAINTAINS: All keys in the output JSON are NFC-normalized.
-
-#### ID assignment
-
-Token IDs are assigned sequentially starting from 0. The assignment order is:
-
-1. Special tokens (IDs 0–4)
-2. Fixed token sets (punctuation, tacticals, scope delimiters, Unicode, Greek, digits) — in the order listed above, within each set in the order listed
-3. Declaration names from the index — sorted lexicographically
-4. Tokens from training data not already in the vocabulary — sorted lexicographically
-
-- MAINTAINS: IDs are contiguous (no gaps). Each token maps to exactly one ID. Each ID maps to exactly one token.
-
-> **Given** 5 special tokens, 120 fixed tokens, 15,000 index declarations, and 300 training data tokens
-> **When** IDs are assigned
-> **Then** total vocabulary size is 15,425 and IDs range from 0 to 15,424
-
-#### Output format
-
-The vocabulary shall be written as a JSON object where keys are token strings and values are integer IDs. The JSON shall be pretty-printed with 2-space indentation for human readability.
-
-```json
-{
-  "[PAD]": 0,
-  "[UNK]": 1,
-  "[CLS]": 2,
-  "[SEP]": 3,
-  "[MASK]": 4,
-  "(": 5,
-  ")": 6,
-  ...
-}
-```
-
-- MAINTAINS: The JSON file is valid UTF-8. All keys are unique. All values are unique non-negative integers.
+> **Given** JSONL files with 140,000 proof state texts
+> **When** `build(jsonl_paths, output_dir, vocab_size=16000)` runs
+> **Then** a SentencePiece model is written to `output_dir/tokenizer.model` with ~16,000 tokens
 
 #### VocabularyReport
 
@@ -149,58 +94,54 @@ The vocabulary shall be written as a JSON object where keys are token strings an
 
 | Field | Type | Definition |
 |-------|------|-----------|
-| `total_tokens` | integer | Total number of tokens in the vocabulary |
-| `special_tokens` | integer | Count of special tokens (always 5) |
-| `fixed_tokens` | integer | Count of fixed token set entries (punctuation, symbols, etc.) |
-| `index_tokens` | integer | Count of tokens from the search index declarations |
-| `training_data_tokens` | integer | Count of tokens added from training data scanning |
-| `output_path` | string | Path where the vocabulary was written |
+| `total_tokens` | integer | Total vocabulary size (including special and BPE tokens) |
+| `special_tokens` | integer | Count of pre-defined special tokens |
+| `bpe_tokens` | integer | Count of learned BPE subword tokens |
+| `output_dir` | string | Directory where the tokenizer model was written |
 
-> **Given** an index with 15,000 declarations and training data contributing 300 additional tokens
+> **Given** 16,000 target vocab size and ~200 special tokens
 > **When** `build` completes
-> **Then** VocabularyReport has total_tokens ≈ 15,425, index_tokens = 15,000, training_data_tokens = 300
+> **Then** VocabularyReport has total_tokens = 16,000, special_tokens ≈ 200, bpe_tokens ≈ 15,800
 
 ### 4.0.1 CoqTokenizer
 
-A lightweight tokenizer that performs whitespace splitting and dictionary lookup against the closed vocabulary. Replaces `AutoTokenizer.from_pretrained("microsoft/codebert-base")` throughout the pipeline.
+A tokenizer wrapping a trained SentencePiece BPE model. Replaces the previous whitespace-split closed-vocabulary tokenizer.
 
-#### __init__(vocabulary_path)
+#### __init__(vocabulary_dir)
 
-- REQUIRES: `vocabulary_path` points to a valid vocabulary JSON file (as produced by `VocabularyBuilder.build`).
-- ENSURES: Loads the vocabulary mapping into memory. Sets `pad_token_id`, `unk_token_id`, `cls_token_id`, `sep_token_id`, `mask_token_id` from the vocabulary (IDs 0–4). Sets `vocab_size` to the number of entries.
-- Raises `FileNotFoundError` if the path does not exist. Raises `DataFormatError` if the JSON is malformed.
+- REQUIRES: `vocabulary_dir` is a directory containing `tokenizer.model` (as produced by `BpeVocabularyBuilder.build`).
+- ENSURES: Loads the SentencePiece model into memory. Sets `pad_token_id` (0), `unk_token_id` (1), `cls_token_id` (2), `sep_token_id` (3), `mask_token_id` (4). Sets `vocab_size` to the model's vocabulary size.
+- Raises `FileNotFoundError` if `vocabulary_dir/tokenizer.model` does not exist.
 
 #### encode(text, max_length=512)
 
 - REQUIRES: `text` is a string.
 - ENSURES: Returns a tuple `(input_ids, attention_mask)` where:
-  1. `text` is NFC-normalized.
-  2. Split on whitespace into tokens.
-  3. Each token is looked up in the vocabulary dict → token ID (or `unk_token_id` for unknown tokens).
-  4. `[CLS]` ID is prepended, `[SEP]` ID is appended.
-  5. If length > `max_length`: truncate to `max_length` (keeping `[CLS]` at start, replacing last token with `[SEP]`).
-  6. `attention_mask` is 1 for real tokens, 0 for padding.
-  7. If length < `max_length`: pad with `pad_token_id` to `max_length`.
-  8. Returns lists of integers (not tensors).
+  1. `text` is encoded via SentencePiece into subword token IDs.
+  2. `[CLS]` ID is prepended, `[SEP]` ID is appended.
+  3. If length > `max_length`: truncate to `max_length` (keeping `[CLS]` at start, replacing last token with `[SEP]`).
+  4. `attention_mask` is 1 for real tokens, 0 for padding.
+  5. If length < `max_length`: pad with `pad_token_id` to `max_length`.
+  6. Returns lists of integers (not tensors).
 
-> **Given** text `"n : nat"` and vocabulary `{"[CLS]": 2, "[SEP]": 3, "[PAD]": 0, "n": 10, ":": 7, "nat": 8, "[UNK]": 1}`
-> **When** `encode("n : nat", max_length=8)` is called
-> **Then** `input_ids = [2, 10, 7, 8, 3, 0, 0, 0]` and `attention_mask = [1, 1, 1, 1, 1, 0, 0, 0]`
+> **Given** text `"[HYP] n [TYPE] nat [GOAL] n + 0 = n"` and a trained BPE model
+> **When** `encode(text, max_length=20)` is called
+> **Then** `input_ids` starts with `cls_token_id`, ends with `sep_token_id` (or padding), and structural tokens `[HYP]`, `[TYPE]`, `[GOAL]` appear as single token IDs
 
-> **Given** an unknown token `"foobar"` not in the vocabulary
-> **When** `encode("foobar")` is called
-> **Then** `"foobar"` maps to `unk_token_id` (1)
+> **Given** text longer than `max_length` tokens after BPE encoding
+> **When** `encode(text, max_length=10)` is called
+> **Then** the result has exactly 10 token IDs, with `[CLS]` at position 0 and `[SEP]` at position 9
 
 #### encode_batch(texts, max_length=512)
 
 - REQUIRES: `texts` is a non-empty list of strings.
-- ENSURES: Encodes each text via `encode`, then pads all sequences to the length of the longest in the batch (up to `max_length`). Returns a dict `{"input_ids": tensor, "attention_mask": tensor}` with shape `(batch_size, padded_length)`.
+- ENSURES: Encodes each text via `encode`, then pads all sequences to the length of the longest in the batch (up to `max_length`). Returns a dict `{"input_ids": array, "attention_mask": array}` with shape `(batch_size, padded_length)`.
 
 - MAINTAINS: Padding is to the longest sequence in the batch, not to `max_length` (dynamic padding for efficiency).
 
-> **Given** texts `["a b", "x"]` where `"a"`, `"b"`, `"x"` are in the vocabulary
-> **When** `encode_batch(["a b", "x"], max_length=512)` is called
-> **Then** `input_ids` has shape `(2, 4)` — both padded to length 4 (CLS + 2 tokens + SEP for the longer one)
+> **Given** texts `["[GOAL] True", "[HYP] n [TYPE] nat [GOAL] n = n"]`
+> **When** `encode_batch(texts, max_length=512)` is called
+> **Then** both sequences are padded to the length of the longer one
 
 ### 4.0.5 Compact Training Data Format
 
@@ -295,16 +236,97 @@ Revised step 6a: After extracting the first whitespace-delimited token, truncate
 | `family_distribution` | list of (str, int) | Final family distribution sorted by count descending |
 | `output_path` | str or None | Path to written output file, or None if dry_run |
 
+### 4.0.8 Structured Proof State Serialization
+
+Transforms flat proof state text (as stored in JSONL `"s"` fields) into a structured representation with explicit markers for hypothesis names, types, bodies, goals, and proof context.
+
+#### serialize_structured(state_text, prev_tactic=None, depth=0, ngoals=1)
+
+- REQUIRES: `state_text` is a string containing a serialized proof state (output of `serialize_goals`, with `\n`-separated hypothesis lines and `\n\n`-separated goals). `prev_tactic` is a tactic family string or None (first step). `depth` is a non-negative integer. `ngoals` is a positive integer.
+- ENSURES: Returns a string with structural markers and context prefix. The output is suitable for BPE tokenization (no `[CLS]`/`[SEP]` — those are added by the tokenizer).
+
+**Procedure:**
+
+1. **Parse goals**: Split `state_text` on `\n\n` to separate goals. Within each goal, identify hypothesis lines (matching `^[a-zA-Z_][a-zA-Z_0-9']* : `) and the goal line (the remaining line).
+2. **Extract goal head**: From the first goal's type, extract the head constructor — the first whitespace-delimited token after stripping leading `(` characters. If the head is in `HEAD_CONSTRUCTORS`, emit `[HEAD=X]`; otherwise emit `[HEAD=other]`.
+3. **Build context prefix**: `[PREV=X] [DEPTH=N] [NGOALS=N] [HEAD=X]` where:
+   - `X` for `[PREV=]` is the previous tactic family, or `none` if `prev_tactic` is None.
+   - `N` for `[DEPTH=]` is `min(depth, 10)` formatted as string, or `10+` if depth ≥ 10.
+   - `N` for `[NGOALS=]` is `min(ngoals, 5)` formatted as string, or `5+` if ngoals ≥ 5.
+4. **Serialize hypotheses and goals**: For each goal, emit `[HYP] name [TYPE] type_text` for each hypothesis. If the hypothesis line contains ` := ` (let-binding body), emit `[HYP] name [TYPE] type_text [BODY] body_text` with the body truncated to `max_body_tokens` whitespace-delimited tokens (default 32). Emit `[GOAL] goal_type_text`. Between goals, emit `[GOALSEP]`.
+5. **Concatenate**: Join context prefix and serialized goals with spaces.
+
+- MAINTAINS: Structural tokens (`[HYP]`, `[TYPE]`, `[BODY]`, `[GOAL]`, `[GOALSEP]`) never appear in the content between them — they are reserved markers. If the proof state text happens to contain literal `[HYP]` etc., they are passed through as-is (BPE will tokenize them as subwords, not as the special token).
+
+> **Given** state_text `"n : nat\nIHn : n + 0 = n\nn + 0 = n"`, prev_tactic `"intros"`, depth `2`, ngoals `1`
+> **When** `serialize_structured` runs
+> **Then** returns `"[PREV=intros] [DEPTH=2] [NGOALS=1] [HEAD=eq] [HYP] n [TYPE] nat [HYP] IHn [TYPE] n + 0 = n [GOAL] n + 0 = n"`
+
+> **Given** state_text `"n : nat\nS n = S n\n\nm : nat\nm + 0 = m"`, prev_tactic `"split"`, depth `3`, ngoals `2`
+> **When** `serialize_structured` runs
+> **Then** returns `"[PREV=split] [DEPTH=3] [NGOALS=2] [HEAD=eq] [HYP] n [TYPE] nat [GOAL] S n = S n [GOALSEP] [HYP] m [TYPE] nat [GOAL] m + 0 = m"`
+
+> **Given** state_text `""` (empty)
+> **When** `serialize_structured` runs
+> **Then** returns `"[PREV=none] [DEPTH=0] [NGOALS=1] [HEAD=other]"` (context prefix only, no hypotheses or goal)
+
+> **Given** state_text with prev_tactic `None`, depth `0`
+> **When** `serialize_structured` runs
+> **Then** the context prefix starts with `[PREV=none]`
+
+> **Given** depth `15`
+> **When** `serialize_structured` runs
+> **Then** the context prefix contains `[DEPTH=10+]`
+
+> **Given** ngoals `8`
+> **When** `serialize_structured` runs
+> **Then** the context prefix contains `[NGOALS=5+]`
+
+#### HEAD_CONSTRUCTORS
+
+A fixed set of goal head constructor names that have dedicated `[HEAD=X]` tokens:
+
+`forall`, `eq`, `and`, `or`, `ex`, `not`, `True`, `False`, `le`, `lt`, `ge`, `gt`, `plus`, `mult`, `minus`, `iff`, `prod`, `sum`, `Peano.le`, `Peano.lt`, `other`
+
+Goal types whose head constructor is not in this set use `[HEAD=other]`.
+
+- MAINTAINS: The set is fixed at training time and embedded in the vocabulary. Adding new head constructors requires retraining the BPE vocabulary.
+
+#### extract_goal_head(goal_type_text)
+
+- REQUIRES: `goal_type_text` is a non-empty string representing a Coq goal type.
+- ENSURES: Returns a string from `HEAD_CONSTRUCTORS` or `"other"`.
+
+**Procedure:**
+
+1. Strip leading whitespace.
+2. Strip leading `(` characters.
+3. Take the first whitespace-delimited token.
+4. Strip trailing `.`, `,`, `)` characters.
+5. If the result is in `HEAD_CONSTRUCTORS`, return it. Otherwise return `"other"`.
+
+> **Given** goal_type_text `"forall n : nat, n + 0 = n"`
+> **When** `extract_goal_head` runs
+> **Then** returns `"forall"`
+
+> **Given** goal_type_text `"n + 0 = n"`
+> **When** `extract_goal_head` runs
+> **Then** returns `"other"` (the head `n` is a variable, not a constructor)
+
+> **Given** goal_type_text `"(eq nat n 0)"`
+> **When** `extract_goal_head` runs
+> **Then** returns `"eq"` (leading `(` stripped)
+
 ### 4.1 TrainingDataLoader
 
 #### load(jsonl_paths)
 
 - REQUIRES: `jsonl_paths` is a non-empty list of paths to compact training data JSONL files (as produced by the extraction pipeline).
-- ENSURES: Returns a `TacticDataset` containing all valid `(proof_state_text, tactic_family_index)` pairs from `"s"` records, the label map, and train/validation/test splits.
+- ENSURES: Returns a `TacticDataset` containing all valid `(structured_state_text, category_idx, within_idx)` triples from `"s"` records, the label map, and train/validation/test splits. Each `structured_state_text` is the output of `serialize_structured` with context features derived from the step's position in its file's step sequence.
 
-#### Step extraction and tactic family labeling
+#### Step extraction and context derivation
 
-Each `"s"` record in the compact JSONL contains a proof step:
+Each `"s"` record in the compact JSONL contains a proof step. Steps are grouped by source file and processed in JSONL line order to derive context features:
 
 ```
 For each line in the JSONL files:
@@ -312,14 +334,24 @@ For each line in the JSONL files:
     If record["t"] == "s":
         family = extract_tactic_family(record["c"])
         If family is not None:
-            Emit (record["s"], family) grouped by record["f"]
+            Append (record["s"], family) to file_steps[record["f"]]
+
+For each file in file_steps:
+    For each step at index i:
+        prev_tactic = file_steps[file][i-1].family if i > 0 else None
+        depth = i
+        ngoals = count of "\n\n"-separated blocks in step.state_text
+        structured = serialize_structured(step.state_text, prev_tactic, depth, ngoals)
+        Emit (structured, family)
 ```
 
 Steps with missing or empty `"c"` fields shall be skipped.
 
+- MAINTAINS: Steps within a file are processed in JSONL line order. The first step in each file gets `prev_tactic=None` and `depth=0`.
+
 > **Given** a JSONL file with 10,000 `"s"` records, each with a non-empty `"c"` field
 > **When** steps are extracted
-> **Then** up to 10,000 `(proof_state, tactic_family)` pairs are emitted (some may be filtered to `other` or skipped)
+> **Then** up to 10,000 `(structured_state, tactic_family)` pairs are emitted, each with context features derived from its position in the file's step sequence
 
 #### extract_tactic_family(tactic_text)
 
@@ -366,13 +398,13 @@ After all steps are extracted, build hierarchical labels from the taxonomy (§4.
 
 #### TacticDataset
 
-A dataset holding `(state_text, category_idx, within_idx)` triples with train/validation/test splits:
+A dataset holding `(state_text, category_idx, within_idx)` triples with train/validation/test splits. The `state_text` in each triple is a structured proof state string produced by `serialize_structured()` — it contains context prefix tokens (`[PREV=...]`, `[DEPTH=...]`, `[NGOALS=...]`, `[HEAD=...]`) and structural markers (`[HYP]`, `[TYPE]`, `[BODY]`, `[GOAL]`, `[GOALSEP]`), not flat whitespace-separated text.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `train_pairs` | list of (str, int, int) | Training triples: (proof_state_text, category_idx, within_category_idx) |
-| `val_pairs` | list of (str, int, int) | Validation triples |
-| `test_pairs` | list of (str, int, int) | Test triples |
+| `train_pairs` | list of (str, int, int) | Training triples: (structured_state_text, category_idx, within_category_idx) |
+| `val_pairs` | list of (str, int, int) | Validation triples (structured_state_text) |
+| `test_pairs` | list of (str, int, int) | Test triples (structured_state_text) |
 | `label_map` | dict[str, int] | Flat tactic family name → class index (backward compat) |
 | `label_names` | list[str] | Flat tactic family names in index order |
 | `category_names` | list[str] | Category names in index order (from taxonomy) |
@@ -463,41 +495,44 @@ All steps from the same file go into the same split.
 
 `perturb_proof_state(state_text, rng) -> str`
 
-- REQUIRES: `state_text` is a serialized proof state string. `rng` is a `random.Random` instance.
-- ENSURES: Returns a new proof state string with label-preserving perturbations applied. The perturbation applies both hypothesis shuffling and identifier renaming.
+- REQUIRES: `state_text` is a structured proof state string (output of `serialize_structured`). `rng` is a `random.Random` instance.
+- ENSURES: Returns a new structured proof state string with label-preserving perturbations applied. The perturbation applies both hypothesis shuffling and identifier renaming. The context prefix (`[PREV=...]`, `[DEPTH=...]`, `[NGOALS=...]`, `[HEAD=...]`) is preserved unchanged.
 
-**Proof state structure:** A proof state contains one or more goal blocks separated by `\n\n`. Each block consists of zero or more hypothesis lines followed by a goal line. A hypothesis line matches the pattern `^[a-zA-Z_][a-zA-Z_0-9']* : ` (identifier, space, colon, space, then the type). The goal is the last line of the block that does not match this pattern.
+**Structured state parsing:**
+
+1. Split `state_text` into a context prefix and a body. The context prefix consists of all tokens up to and including the `[HEAD=...]` token. The body is everything after.
+2. Parse the body into goal blocks by splitting on `[GOALSEP]`.
+3. Within each goal block, identify hypothesis segments (sequences between `[HYP]` and the next `[HYP]`, `[GOAL]`, or `[GOALSEP]`) and the goal segment (from `[GOAL]` to end of block or `[GOALSEP]`).
+4. Each hypothesis segment has the form `[HYP] name [TYPE] type_text` or `[HYP] name [TYPE] type_text [BODY] body_text`. Extract the hypothesis name (the token immediately after `[HYP]`).
 
 **Hypothesis shuffling:**
 
-1. Split `state_text` on `\n\n` to obtain goal blocks.
-2. Within each block, split on `\n` to obtain lines.
-3. Partition lines: a line is a hypothesis if it matches `^[a-zA-Z_][a-zA-Z_0-9']* : `. All other lines are goal lines.
-4. Shuffle the hypothesis lines using `rng.shuffle()`.
-5. Reconstruct the block: shuffled hypotheses followed by goal lines, joined by `\n`.
-6. Rejoin blocks with `\n\n`.
+1. Within each goal block, collect all hypothesis segments.
+2. Shuffle the hypothesis segments using `rng.shuffle()`.
+3. Reconstruct the block: shuffled hypothesis segments followed by the goal segment.
 
 **Identifier renaming:**
 
-1. After hypothesis shuffling, collect all hypothesis names across all blocks. A hypothesis name is the identifier before ` : ` on a hypothesis line.
+1. After hypothesis shuffling, collect all hypothesis names across all blocks. A hypothesis name is the token immediately after each `[HYP]` marker.
 2. Deduplicate the names (same name may appear in multiple blocks).
 3. Generate a mapping from each original name to a fresh synthetic name. Synthetic names are drawn from a pool `v0, v1, v2, ...`, shuffled by `rng` to avoid deterministic positional correlation. The pool must be large enough to cover all unique hypothesis names in the state.
-4. Apply the mapping to the entire state text using word-boundary-aware replacement: each occurrence of an original name that is bounded by non-identifier characters (or string boundaries) is replaced with its mapped name. Partial matches within longer identifiers are not replaced (e.g., replacing `H` does not affect `H0` or `IHbetween`).
+4. Apply the mapping to the body (not the context prefix) using word-boundary-aware replacement: each occurrence of an original name that is bounded by non-identifier characters (or string boundaries) is replaced with its mapped name. Partial matches within longer identifiers are not replaced (e.g., replacing `H` does not affect `H0` or `IHbetween`).
 5. All replacements are applied simultaneously (not sequentially) to avoid cascading collisions.
+6. Rejoin the context prefix and the modified body.
 
 - MAINTAINS: Deterministic given the same `(state_text, rng)` state.
 - MAINTAINS: Label-preserving — hypothesis order is semantically irrelevant, and tactic selection is independent of variable names.
-- MAINTAINS: The number of goal blocks, the number of hypotheses per block, and the structure of types and goal expressions are unchanged (only ordering and names change).
+- MAINTAINS: The context prefix, structural markers, number of goal blocks, number of hypotheses per block, and the structure of types and goal expressions are unchanged (only hypothesis ordering and identifier names change).
 
-> **Given** a state `"H : nat\nH0 : bool\nH = H0"` 
+> **Given** a structured state `"[PREV=intros] [DEPTH=2] [NGOALS=1] [HEAD=eq] [HYP] H [TYPE] nat [HYP] H0 [TYPE] bool [GOAL] H = H0"`
 > **When** `perturb_proof_state(state, rng)` runs
-> **Then** hypotheses are shuffled (e.g., `H0` line before `H` line) and identifiers are renamed (e.g., `"v3 : nat\nv1 : bool\nv3 = v1"`)
+> **Then** hypotheses are shuffled (e.g., `[HYP] H0 [TYPE] bool` before `[HYP] H [TYPE] nat`) and identifiers are renamed (e.g., `"[PREV=intros] [DEPTH=2] [NGOALS=1] [HEAD=eq] [HYP] v3 [TYPE] bool [HYP] v1 [TYPE] nat [GOAL] v1 = v3"`)
 
-> **Given** a multi-block state `"A : nat\nA + 1 = 2\n\nB : bool\ntrue = B"`
+> **Given** a multi-goal structured state `"[PREV=split] [DEPTH=3] [NGOALS=2] [HEAD=eq] [HYP] A [TYPE] nat [GOAL] A + 1 = 2 [GOALSEP] [HYP] B [TYPE] bool [GOAL] true = B"`
 > **When** `perturb_proof_state(state, rng)` runs
-> **Then** each block's hypotheses are shuffled independently and identifiers are renamed consistently within each block
+> **Then** each goal block's hypotheses are shuffled independently and identifiers are renamed consistently across all blocks
 
-> **Given** a state with no hypotheses `"forall n, n = n"`
+> **Given** a structured state with no hypotheses `"[PREV=none] [DEPTH=0] [NGOALS=1] [HEAD=forall] [GOAL] forall n, n = n"`
 > **When** `perturb_proof_state(state, rng)` runs
 > **Then** the state is returned unchanged (no hypotheses to shuffle, no identifiers to rename)
 
@@ -552,9 +587,9 @@ All steps from the same file go into the same split.
 
 #### Leave-one-library-out cross-validation
 
-`LibraryLOOCV.run(library_paths, vocabulary_path, output_dir, undersample_cap, hyperparams, backend)`
+`LibraryLOOCV.run(library_paths, vocabulary_dir, output_dir, undersample_cap, hyperparams, backend)`
 
-- REQUIRES: `library_paths` is a `dict[str, list[Path]]` with at least 2 libraries. CoqInterval is excluded. `always_train_libraries` is a list of library names that are always included in training but never held out (default: `["mathcomp"]`). `vocabulary_path` points to a valid vocabulary JSON. `output_dir` is a writable directory path. `undersample_cap` is a positive integer (default 1000). `hyperparams` is an optional dict of training hyperparameters (defaults to the best undersampled HPO configuration). `backend` is `"mlx"` or `"pytorch"` (default `"mlx"`).
+- REQUIRES: `library_paths` is a `dict[str, list[Path]]` with at least 2 libraries. CoqInterval is excluded. `always_train_libraries` is a list of library names that are always included in training but never held out (default: `["mathcomp"]`). `vocabulary_dir` points to a valid vocabulary directory (containing SentencePiece model). `output_dir` is a writable directory path. `undersample_cap` is a positive integer (default 1000). `hyperparams` is an optional dict of training hyperparameters (defaults to the best undersampled HPO configuration). `backend` is `"mlx"` or `"pytorch"` (default `"mlx"`).
 - ENSURES: Runs one fold per holdable library (all libraries except those in `always_train_libraries`). For each fold: loads data with `load_by_library()` (always-train libraries are included in training), applies `undersample_train()` with `undersample_cap`, trains a model with the specified hyperparameters, evaluates on the held-out library, collects a `FoldResult`, and deletes the checkpoint. After all folds, aggregates into an `LOOCVReport`. Writes the report as JSON to `output_dir/loocv-report.json`.
 
 **FoldResult fields:**
@@ -649,13 +684,12 @@ All steps from the same file go into the same split.
 
 ### 4.3 TacticClassifierTrainer
 
-#### train(dataset, output_path, vocabulary_path, hyperparams, epoch_callback)
+#### train(dataset, output_path, vocabulary_dir, hyperparams, epoch_callback)
 
-- REQUIRES: `dataset` is a `TacticDataset` with at least 1,000 training steps (after sampling, if applied). `output_path` is a writable path. `vocabulary_path` points to a valid vocabulary JSON file (as produced by `VocabularyBuilder.build`). `hyperparams` has defaults as specified below. `sample` is `None` or a float in (0.0, 1.0]. `epoch_callback` is `None` or a callable `(epoch: int, val_accuracy: float) -> None`.
-- ENSURES: When `undersample_cap` is not `None` in hyperparams, calls `undersample_train(dataset, cap=undersample_cap, seed=undersample_seed)` before any other processing. When `oversample_floor` is not `None` in hyperparams, calls `oversample_train(dataset, floor=oversample_floor, seed=oversample_seed)` after undersampling (if any) and before training begins. When `sample` is not `None`, randomly sub-samples the training split to `ceil(len(dataset.train) * sample)` steps before training begins (validation and test splits are not affected). Constructs a `CoqTokenizer` from `vocabulary_path`. Creates a `TacticClassifier` model with `num_hidden_layers` transformer layers (default 6, layer-dropped from CodeBERT's 12 layers), an embedding layer sized to the vocabulary, and a classification head sized to `dataset.num_classes`. Copies overlapping pretrained embeddings from CodeBERT for tokens that appear in both vocabularies (digits, punctuation, common words). Initializes remaining embeddings randomly (σ=0.02). Trains using class-weighted cross-entropy loss. Saves the best checkpoint (by validation accuracy@5) to `output_path`. The checkpoint includes `num_hidden_layers`, the vocabulary path, and label map for reproducibility. Prints training metrics (loss, validation accuracy@1, validation accuracy@5) after each epoch. When `epoch_callback` is not `None`, invokes it after each epoch's validation with the epoch number and validation accuracy@5; if the callback raises an exception, the training loop terminates and the exception propagates to the caller.
+- REQUIRES: `dataset` is a `TacticDataset` with at least 1,000 training steps (after sampling, if applied). `output_path` is a writable path. `vocabulary_dir` points to a valid vocabulary directory (containing SentencePiece model, as produced by `BpeVocabularyBuilder.build`). `hyperparams` has defaults as specified below. `sample` is `None` or a float in (0.0, 1.0]. `epoch_callback` is `None` or a callable `(epoch: int, val_accuracy: float) -> None`.
+- ENSURES: When `undersample_cap` is not `None` in hyperparams, calls `undersample_train(dataset, cap=undersample_cap, seed=undersample_seed)` before any other processing. When `oversample_floor` is not `None` in hyperparams, calls `oversample_train(dataset, floor=oversample_floor, seed=oversample_seed)` after undersampling (if any) and before training begins. When `sample` is not `None`, randomly sub-samples the training split to `ceil(len(dataset.train) * sample)` steps before training begins (validation and test splits are not affected). Constructs a `CoqTokenizer` from `vocabulary_dir`. Creates a `HierarchicalTacticClassifier` model with `num_hidden_layers` transformer layers (default 6, layer-dropped from CodeBERT's 12 layers), a full-rank embedding layer (768-d) sized to the BPE vocabulary, and classification heads. Initializes new token embeddings (structural markers, BPE subwords) randomly (σ=0.02). Trains using class-weighted cross-entropy loss. Saves the best checkpoint (by validation accuracy@5) to `output_path`. The checkpoint includes `num_hidden_layers`, the vocabulary directory path, and label map for reproducibility. Prints training metrics (loss, validation accuracy@1, validation accuracy@5) after each epoch. When `epoch_callback` is not `None`, invokes it after each epoch's validation with the epoch number and validation accuracy@5; if the callback raises an exception, the training loop terminates and the exception propagates to the caller.
 - On training completion: saves final checkpoint alongside best checkpoint.
 - On GPU OOM: raises `TrainingResourceError` with message suggesting batch size reduction.
-- When `vocabulary_path` is `None`: falls back to CodeBERT's default tokenizer and embedding layer (backward compatibility).
 
 **Default hyperparameters:**
 
@@ -671,7 +705,7 @@ All steps from the same file go into the same split.
 | `max_seq_length` | 512 | Must be positive |
 | `max_epochs` | 20 | Must be positive |
 | `early_stopping_patience` | 3 | Must be positive |
-| `embedding_dim` | 128 | Must be positive. When equal to `hidden_size` (768), no projection is applied. |
+| `embedding_dim` | 768 | Must be positive. Fixed at 768 (full-rank) with BPE tokenization — embedding factorization is no longer needed. |
 | `undersample_cap` | None | When not None, must be a positive integer. Passed to `undersample_train()` before training begins. Default 2000 when called directly. |
 | `undersample_seed` | 42 | Integer seed for reproducible undersampling. |
 | `undersample_min_count` | None | When not None, must be a positive integer. Families with fewer than this many training examples are dropped. When None, defaults to 5% of `undersample_cap`. |
@@ -684,8 +718,7 @@ All steps from the same file go into the same split.
 ```
 Input: input_ids [B, 512], attention_mask [B, 512]
   |
-  |-- nn.Embedding(vocab_size, embedding_dim)         [B, 512, D]
-  |-- nn.Linear(embedding_dim, 768, bias=False)       [B, 512, 768]  (only when D < 768)
+  |-- nn.Embedding(vocab_size, 768)                    [B, 512, 768]
   |-- CodeBERT encoder (num_hidden_layers layers, 768 hidden, 12 heads)
   |-- Mean pooling (attention-masked)                  [B, 768]
   |
@@ -698,14 +731,14 @@ Input: input_ids [B, 512], attention_mask [B, 512]
   |     Output: within_logits dict[str, [B, cat_size]]
 ```
 
-Default `num_hidden_layers` is 6, `embedding_dim` is 128. The category head is a single linear layer (the 2-layer MLP did not improve category accuracy — it dropped from 34.9% with 8 categories to 31.5% with 6 categories, indicating the bottleneck is encoder representation quality, not head capacity). All within-heads are single linear layers. All heads share the same pooled encoder representation. Single forward pass per batch.
+Default `num_hidden_layers` is 6. Embedding dimension is fixed at 768 (full-rank, no factorization — the BPE vocabulary is small enough that all embeddings are well-trained). The category head is a single linear layer (the 2-layer MLP did not improve category accuracy — it dropped from 34.9% with 8 categories to 31.5% with 6 categories, indicating the bottleneck is encoder representation quality, not head capacity). All within-heads are single linear layers. All heads share the same pooled encoder representation. Single forward pass per batch.
 
 #### Construction
 
-`HierarchicalTacticClassifier(model_name, per_category_sizes, num_categories, vocab_size, num_hidden_layers=6, embedding_dim=128)`
+`HierarchicalTacticClassifier(model_name, per_category_sizes, num_categories, vocab_size, num_hidden_layers=6)`
 
-- REQUIRES: `model_name` is a valid HuggingFace model name (default: `"microsoft/codebert-base"`). `per_category_sizes` is a `dict[str, int]` mapping category names to their within-category tactic count. `num_categories` is a positive integer. `vocab_size` is `None` or a positive integer. `num_hidden_layers` is in {4, 6, 12}. `embedding_dim` is a positive integer.
-- ENSURES: Loads the pretrained model, then applies layer dropping if `num_hidden_layers` < 12. Layer dropping selects `num_hidden_layers` layers at evenly spaced indices from the 12-layer source: `indices = [i * 12 // num_hidden_layers for i in range(num_hidden_layers)]`. Builds a new encoder with only the selected layers. Updates the model config's `num_hidden_layers`. When `vocab_size` is not `None`, replaces the embedding layer with `nn.Embedding(vocab_size, embedding_dim)`. When `embedding_dim` < 768 (the hidden size), creates a bias-free projection layer `nn.Linear(embedding_dim, 768, bias=False)`. Creates the category head as `nn.Linear(768, num_categories)`. Creates per-category within-heads as `nn.ModuleDict` mapping each category name to `nn.Linear(768, per_category_sizes[cat])`.
+- REQUIRES: `model_name` is a valid HuggingFace model name (default: `"microsoft/codebert-base"`). `per_category_sizes` is a `dict[str, int]` mapping category names to their within-category tactic count. `num_categories` is a positive integer. `vocab_size` is `None` or a positive integer. `num_hidden_layers` is in {4, 6, 12}.
+- ENSURES: Loads the pretrained model, then applies layer dropping if `num_hidden_layers` < 12. Layer dropping selects `num_hidden_layers` layers at evenly spaced indices from the 12-layer source: `indices = [i * 12 // num_hidden_layers for i in range(num_hidden_layers)]`. Builds a new encoder with only the selected layers. Updates the model config's `num_hidden_layers`. When `vocab_size` is not `None`, replaces the embedding layer with `nn.Embedding(vocab_size, 768)` — full-rank, no projection. Creates the category head as `nn.Linear(768, num_categories)`. Creates per-category within-heads as `nn.ModuleDict` mapping each category name to `nn.Linear(768, per_category_sizes[cat])`.
 
 > **Given** `num_hidden_layers=6`
 > **When** `HierarchicalTacticClassifier` is constructed
@@ -717,23 +750,22 @@ Default `num_hidden_layers` is 6, `embedding_dim` is 128. The category head is a
 
 #### from_checkpoint(checkpoint)
 
-- REQUIRES: `checkpoint` is a dict containing `model_state_dict`, `per_category_sizes`, `num_categories`, and optionally `num_hidden_layers` and `embedding_dim`.
-- ENSURES: Reads `num_hidden_layers` from the checkpoint. Reads `embedding_dim` from the checkpoint. Reads `per_category_sizes` and `num_categories` from the checkpoint. Builds a `RobertaModel` with the specified layer count and embedding dimension. When `embedding_dim` < 768, creates the projection layer. Reconstructs the category head as `nn.Linear(768, num_categories)`. Reconstructs per-category within-heads from `per_category_sizes`. Loads weights with `strict=False`.
+- REQUIRES: `checkpoint` is a dict containing `model_state_dict`, `per_category_sizes`, `num_categories`, and optionally `num_hidden_layers`.
+- ENSURES: Reads `num_hidden_layers` from the checkpoint. Reads `per_category_sizes` and `num_categories` from the checkpoint. Builds a `RobertaModel` with the specified layer count. Replaces the embedding layer with `nn.Embedding(vocab_size, 768)`. Reconstructs the category head as `nn.Linear(768, num_categories)`. Reconstructs per-category within-heads from `per_category_sizes`. Loads weights with `strict=False`.
 
-> **Given** a checkpoint saved with `num_hidden_layers=6`, `embedding_dim=128`, and `per_category_sizes={"rewriting": 12, "elimination": 7}`
+> **Given** a checkpoint saved with `num_hidden_layers=6` and `per_category_sizes={"rewriting": 12, "elimination": 7}`
 > **When** `from_checkpoint` reconstructs the model
-> **Then** the encoder has 6 transformer layers, a 128→768 projection layer, a single-linear category head, and 2 within-heads
+> **Then** the encoder has 6 transformer layers, full-rank 768-d embeddings, a single-linear category head, and 2 within-heads
 
 #### forward(input_ids, attention_mask)
 
 - REQUIRES: `input_ids` is a tensor of shape `[B, seq_len]`. `attention_mask` is a tensor of shape `[B, seq_len]` with values 0 or 1.
 - ENSURES: Returns `(category_logits, within_logits)` where `category_logits` has shape `[B, num_categories]` and `within_logits` is a `dict[str, Tensor]` mapping each category name to `[B, cat_size]`.
-  1. Token embeddings: `embedding(input_ids)` → `[B, seq_len, embedding_dim]`
-  2. Embedding projection (when `embedding_dim` < 768): `embedding_projection(embeddings)` → `[B, seq_len, 768]`
-  3. Transformer encoding (`num_hidden_layers` layers)
-  4. Mean pooling: `sum(output * mask.unsqueeze(-1)) / sum(mask).unsqueeze(-1)` per sequence → `[B, 768]`
-  5. Category head: `Linear(768, num_categories)` → `[B, num_categories]`
-  6. Per-category within-heads: for each category, `Linear(768, cat_size)` → `[B, cat_size]`
+  1. Token embeddings: `embedding(input_ids)` → `[B, seq_len, 768]`
+  2. Transformer encoding (`num_hidden_layers` layers)
+  3. Mean pooling: `sum(output * mask.unsqueeze(-1)) / sum(mask).unsqueeze(-1)` per sequence → `[B, 768]`
+  4. Category head: `Linear(768, num_categories)` → `[B, num_categories]`
+  5. Per-category within-heads: for each category, `Linear(768, cat_size)` → `[B, cat_size]`
 
 #### Cross-entropy with class-conditional label smoothing
 
@@ -778,12 +810,12 @@ When `label_smoothing=0.0`, standard hard targets are used (backward compatible)
 
 #### Embedding layer integration
 
-The closed vocabulary replaces CodeBERT's 50,265-token vocabulary with ~150K tokens. The TacticClassifier model reinitializes its embedding layer:
+The BPE vocabulary replaces CodeBERT's 50,265-token vocabulary with ~16K BPE tokens (including structural markers). The model reinitializes its embedding layer:
 
 1. Load CodeBERT and apply layer dropping (selecting `num_hidden_layers` layers from the 12-layer source).
-2. Create `nn.Embedding(vocab_size, 768)`.
-3. Copy pretrained embeddings for overlapping tokens (digits, punctuation, common words).
-4. Initialize Coq-specific tokens randomly (sigma=0.02).
+2. Create `nn.Embedding(vocab_size, 768)` — full-rank, no factorization needed.
+3. Copy pretrained embeddings for tokens shared with CodeBERT's vocabulary (special tokens like `[CLS]`, `[SEP]`, `[PAD]`).
+4. Initialize BPE subword tokens and structural markers randomly (sigma=0.02).
 
 #### Early stopping
 
@@ -796,15 +828,14 @@ After each epoch, compute accuracy@5 on the validation split. If validation accu
 #### Checkpoint format
 
 The checkpoint shall include:
-- Model state dict (encoder weights, classification head, including the custom embedding layer and projection layer when using embedding factorization)
+- Model state dict (encoder weights, classification head, including the custom embedding layer)
 - `num_classes` (int) — number of tactic family classes
 - `num_hidden_layers` (int) — number of transformer layers in the encoder (4, 6, or 12)
-- `embedding_dim` (int) — embedding bottleneck dimension (128 default; 768 means no factorization)
 - Optimizer state dict
 - Epoch number
 - Best validation accuracy@5
 - Hyperparameters used
-- `vocabulary_path` (string or None) — the path to the vocabulary JSON used during training
+- `vocabulary_dir` (string or None) — the path to the vocabulary directory (containing SentencePiece model) used during training
 - `label_map` (dict) — mapping of tactic family names to class indices
 
 ### 4.4 Fine-Tuning
@@ -831,7 +862,7 @@ All other hyperparameters default to the same values as `train`.
 
 #### evaluate(checkpoint_path, test_data)
 
-- REQUIRES: `checkpoint_path` points to a valid model checkpoint (containing `label_map` and `vocabulary_path`). `test_data` is a list of `(proof_state_text, tactic_family_index)` pairs.
+- REQUIRES: `checkpoint_path` points to a valid model checkpoint (containing `label_map` and `vocabulary_dir`). `test_data` is a list of `(structured_state_text, tactic_family_index)` pairs.
 - ENSURES: Loads the model. For each test state, encodes it, computes logits, and evaluates classification metrics. Returns an `EvaluationReport`.
 
 **EvaluationReport fields:**
@@ -866,8 +897,8 @@ When `accuracy_at_5 < 0.80`, the report shall include a warning: `"Model does no
 
 #### quantize(checkpoint_path, output_path)
 
-- REQUIRES: `checkpoint_path` points to a valid PyTorch training checkpoint (containing `label_map`, `vocabulary_path`, and optionally `num_hidden_layers`). `output_path` is a writable path.
-- ENSURES: Reads `vocabulary_path`, `label_map`, and `num_hidden_layers` (default 12 for backward compatibility) from the checkpoint. Reconstructs the model with the custom vocab size, `num_classes` from the label map, and the correct layer count. Exports the model to ONNX (opset 17+). Output shape: `[B, num_classes]`. Applies dynamic INT8 quantization. Validates quantization quality. Writes the INT8 ONNX model to `output_path`. Also writes `tactic-labels.json` alongside the ONNX model.
+- REQUIRES: `checkpoint_path` points to a valid PyTorch training checkpoint (containing `label_map`, `vocabulary_dir`, and optionally `num_hidden_layers`). `output_path` is a writable path.
+- ENSURES: Reads `vocabulary_dir`, `label_map`, and `num_hidden_layers` (default 6) from the checkpoint. Reconstructs the model with the BPE vocab size, `num_classes` from the label map, and the correct layer count. Exports the model to ONNX (opset 17+). Output shape: `[B, num_classes]`. Applies dynamic INT8 quantization. Validates quantization quality. Writes the INT8 ONNX model to `output_path`. Also writes `tactic-labels.json` alongside the ONNX model.
 
 **ONNX export:**
 - Input names: `input_ids` (shape `[B, seq_len]`), `attention_mask` (shape `[B, seq_len]`)
@@ -945,11 +976,11 @@ Automated hyperparameter optimization using Optuna to maximize validation accura
 | `sam_rho` | Log-uniform | [0.15, 0.3] | 0.15 |
 | `lambda_within` | Log-uniform | [0.3, 3.0] | 1.0 |
 
-All other hyperparameters (`max_seq_length`, `embedding_dim`, `max_epochs`, `early_stopping_patience`) are fixed at their default values and not tunable.
+All other hyperparameters (`max_seq_length`, `max_epochs`, `early_stopping_patience`) are fixed at their default values and not tunable.
 
-#### tune(dataset, output_dir, vocabulary_path, n_trials, study_name, resume)
+#### tune(dataset, output_dir, vocabulary_dir, n_trials, study_name, resume)
 
-- REQUIRES: `dataset` is a `TacticDataset` with at least 1,000 training steps. `output_dir` is a writable directory path. `vocabulary_path` points to a valid vocabulary JSON file. `n_trials` is a positive integer (default: 20). `study_name` is a non-empty string (default: `"poule-hpo"`). `resume` is a boolean (default: `False`).
+- REQUIRES: `dataset` is a `TacticDataset` with at least 1,000 training steps. `output_dir` is a writable directory path. `vocabulary_dir` points to a valid vocabulary directory (containing SentencePiece model). `n_trials` is a positive integer (default: 20). `study_name` is a non-empty string (default: `"poule-hpo"`). `resume` is a boolean (default: `False`).
 - ENSURES: Creates an Optuna study with `TPESampler(seed=42)` and `MedianPruner(n_startup_trials=3, n_warmup_steps=3)`. Uses SQLite storage at `<output_dir>/hpo-study.db`. Runs `n_trials` trials sequentially. Each trial samples hyperparameters from the search space, creates a `TacticClassifierTrainer`, and trains using the sampled configuration. Each trial's checkpoint is saved to `<output_dir>/trial-<N>.pt`. On study completion, copies the best trial's checkpoint to `<output_dir>/best-model.pt`. Returns a `TuningResult`.
 - When `resume` is `True`: loads the existing study from `<output_dir>/hpo-study.db` and continues from the last completed trial.
 - When a trial raises `TrainingResourceError` (OOM): logs the error and continues to the next trial.
@@ -1019,12 +1050,11 @@ MLX port of the tactic classifier model, architecturally identical to the PyTorc
 
 #### Construction
 
-`MLXTacticClassifier(vocab_size, num_classes, num_layers=6, hidden_size=768, num_heads=12, embedding_dim=128, per_category_sizes=None, num_categories=8)`
+`MLXTacticClassifier(vocab_size, num_classes, num_layers=6, hidden_size=768, num_heads=12, per_category_sizes=None, num_categories=8)`
 
-- REQUIRES: `vocab_size` is a positive integer matching the closed vocabulary size. `num_classes` is a positive integer matching the total number of tactic families. `num_layers` is in {4, 6, 12}. `embedding_dim` is a positive integer. `per_category_sizes` is a `dict[str, int]` mapping category names to within-category tactic counts.
+- REQUIRES: `vocab_size` is a positive integer matching the BPE vocabulary size. `num_classes` is a positive integer matching the total number of tactic families. `num_layers` is in {4, 6, 12}. `per_category_sizes` is a `dict[str, int]` mapping category names to within-category tactic counts.
 - ENSURES: Creates an `mlx.nn.Module` with:
-  - `mlx.nn.Embedding(vocab_size, embedding_dim)` — token embedding layer
-  - When `embedding_dim` < `hidden_size`: `mlx.nn.Linear(embedding_dim, hidden_size, bias=False)` — embedding projection layer (`self.embedding_projection`)
+  - `mlx.nn.Embedding(vocab_size, hidden_size)` — token embedding layer (full-rank, 768-d)
   - Transformer encoder with `num_layers` `mlx.nn.TransformerEncoderLayer` blocks, each with `hidden_size` hidden dimension and `num_heads` attention heads
   - No positional encoding module — position IDs are added as a learned embedding (position embedding remains at `hidden_size` dimensions)
   - Category head: `mlx.nn.Linear(hidden_size, num_categories)` (`category_head`)
@@ -1034,18 +1064,17 @@ MLX port of the tactic classifier model, architecturally identical to the PyTorc
 
 - REQUIRES: `input_ids` is an `mx.array` of shape `[B, seq_len]`. `attention_mask` is an `mx.array` of shape `[B, seq_len]` with values 0 or 1.
 - ENSURES: Returns `(category_logits, within_logits)` where `category_logits` has shape `[B, num_categories]` and `within_logits` is a `dict[str, mx.array]` mapping each category name to `[B, cat_size]`.
-  1. Token embeddings: `embedding(input_ids)` → `[B, seq_len, embedding_dim]`
-  2. Embedding projection (when `embedding_dim` < `hidden_size`): `embedding_projection(embeddings)` → `[B, seq_len, 768]`
-  3. Add positional embeddings
-  4. Transformer encoding (`num_layers` layers)
-  5. Mean pooling: `sum(output * mask) / sum(mask)` per sequence → `[B, 768]`
-  6. Category head: `category_head(pooled)` → `[B, num_categories]`
-  7. Per-category within-heads: for each category, `linear(pooled)` → `[B, cat_size]`
+  1. Token embeddings: `embedding(input_ids)` → `[B, seq_len, 768]`
+  2. Add positional embeddings
+  3. Transformer encoding (`num_layers` layers)
+  4. Mean pooling: `sum(output * mask) / sum(mask)` per sequence → `[B, 768]`
+  5. Category head: `category_head(pooled)` → `[B, num_categories]`
+  6. Per-category within-heads: for each category, `linear(pooled)` → `[B, cat_size]`
 
 #### load_codebert_weights(pytorch_model_name="microsoft/codebert-base")
 
 - REQUIRES: `transformers` and `torch` are installed. `pytorch_model_name` is a valid HuggingFace model name.
-- ENSURES: Loads CodeBERT weights from HuggingFace, applies layer dropping (selecting `num_layers` layers at evenly spaced indices from the 12-layer source, same index computation as PyTorch `TacticClassifier`), converts each parameter `torch.Tensor` → `numpy` → `mx.array`, maps parameter names from HuggingFace convention to MLX convention, and loads into the model. The embedding layer is sized to `(vocab_size, embedding_dim)`: overlapping tokens get copied pretrained vectors (truncated to `embedding_dim` dimensions), new tokens are initialized from `N(0, 0.02)`. When `embedding_dim` < `hidden_size`, the embedding projection layer is initialized from the top-`embedding_dim` right singular vectors of CodeBERT's original embedding matrix (truncated SVD). The classification head `Linear(768, num_classes)` is initialized randomly (not from CodeBERT).
+- ENSURES: Loads CodeBERT weights from HuggingFace, applies layer dropping (selecting `num_layers` layers at evenly spaced indices from the 12-layer source, same index computation as PyTorch `TacticClassifier`), converts each parameter `torch.Tensor` → `numpy` → `mx.array`, maps parameter names from HuggingFace convention to MLX convention, and loads into the model. The embedding layer is sized to `(vocab_size, 768)`: overlapping tokens (special tokens shared with CodeBERT's vocabulary) get copied pretrained vectors, new tokens (including structural markers and BPE-trained subwords) are initialized from `N(0, 0.02)`. The classification head `Linear(768, num_classes)` is initialized randomly (not from CodeBERT).
 - When `num_layers` is 12: all layers are loaded (no dropping).
 - When `transformers` is not installed: raises `ImportError` with message `"transformers is required for CodeBERT weight initialization"`.
 
@@ -1076,9 +1105,9 @@ MLX port of the tactic classifier model, architecturally identical to the PyTorc
 
 Training loop using MLX's functional gradient computation.
 
-#### train(dataset, output_dir, vocabulary_path, hyperparams, epoch_callback)
+#### train(dataset, output_dir, vocabulary_dir, hyperparams, epoch_callback)
 
-- REQUIRES: `dataset` is a `TacticDataset` with at least 1,000 training steps. `output_dir` is a writable directory path. `vocabulary_path` points to a valid vocabulary JSON file. `hyperparams` has defaults matching `TacticClassifierTrainer`. `epoch_callback` is `None` or a callable `(epoch: int, val_accuracy: float) -> None`. Platform is macOS with Apple Silicon. `mlx` package is installed.
+- REQUIRES: `dataset` is a `TacticDataset` with at least 1,000 training steps. `output_dir` is a writable directory path. `vocabulary_dir` points to a valid vocabulary directory (containing SentencePiece model). `hyperparams` has defaults matching `TacticClassifierTrainer`. `epoch_callback` is `None` or a callable `(epoch: int, val_accuracy: float) -> None`. Platform is macOS with Apple Silicon. `mlx` package is installed.
 - ENSURES: Creates an `MLXTacticClassifier` with vocabulary-sized embeddings and `num_classes` from the dataset. Loads CodeBERT pretrained weights via `load_codebert_weights()`. Trains using functional gradient computation (`nn.value_and_grad`). Saves the best checkpoint (by validation accuracy@5) as MLX safetensors to `output_dir`. Prints training metrics after each epoch. When `epoch_callback` is not `None`, invokes it after each epoch's validation.
 - When `mlx` is not installed: raises `BackendNotAvailableError("MLX is not installed. Install with: pip install mlx")`.
 - When platform is not macOS: raises `BackendNotAvailableError("MLX training requires macOS with Apple Silicon")`.
@@ -1125,10 +1154,10 @@ Checkpoints are saved as a directory:
 ```
 <output_dir>/
 ├── model.safetensors       # MLX model weights (mx.save_safetensors)
-├── config.json             # {"vocab_size": int, "num_classes": int, "num_layers": 6, "hidden_size": 768, "num_heads": 12, "embedding_dim": 128, "per_category_sizes": dict, "num_categories": int}
+├── config.json             # {"vocab_size": int, "num_classes": int, "num_layers": 6, "hidden_size": 768, "num_heads": 12, "per_category_sizes": dict, "num_categories": int}
 ├── hyperparams.json        # Training hyperparameters used
 ├── label_map.json          # Tactic family name → class index mapping
-├── vocabulary_path.txt     # Path to vocabulary JSON (single line)
+├── vocabulary_dir.txt      # Path to vocabulary directory (single line)
 ├── best_accuracy_5.txt     # Best validation accuracy@5 (single line, float)
 └── training_log.jsonl      # Per-epoch metrics: {"epoch": int, "loss": float, "val_acc_1": float, "val_acc_5": float}
 ```
@@ -1151,8 +1180,8 @@ Converts MLX-trained checkpoints to PyTorch format for the quantization and infe
 
 #### convert(mlx_checkpoint_dir, output_path)
 
-- REQUIRES: `mlx_checkpoint_dir` is a directory containing `model.safetensors`, `config.json`, `hyperparams.json`, `label_map.json`, and `vocabulary_path.txt` (as produced by `MLXTrainer`). `output_path` is a writable path. Both `mlx` and `torch` are installed.
-- ENSURES: Loads MLX weights from safetensors. Maps parameter names from MLX convention to PyTorch/HuggingFace convention (reverse of the table in 4.10, plus category head mapping below). Converts each parameter: `mx.array` → `numpy` → `torch.Tensor`. Reads `embedding_dim` and `per_category_sizes` from `config.json`. Creates a PyTorch `HierarchicalTacticClassifier` with the same architecture. When `embedding_dim` < 768, the `embedding_projection.weight` parameter is included in the conversion. Loads the converted state dict. Validates conversion quality. Saves as a PyTorch checkpoint (`.pt`) with `model_state_dict`, `hyperparams`, `vocabulary_path`, `label_map`, `embedding_dim`, `per_category_sizes`, `num_categories`, `epoch`, and `best_accuracy_5`.
+- REQUIRES: `mlx_checkpoint_dir` is a directory containing `model.safetensors`, `config.json`, `hyperparams.json`, `label_map.json`, and `vocabulary_dir.txt` (as produced by `MLXTrainer`). `output_path` is a writable path. Both `mlx` and `torch` are installed.
+- ENSURES: Loads MLX weights from safetensors. Maps parameter names from MLX convention to PyTorch/HuggingFace convention (reverse of the table in 4.10, plus category head mapping below). Converts each parameter: `mx.array` → `numpy` → `torch.Tensor`. Reads `per_category_sizes` from `config.json`. Creates a PyTorch `HierarchicalTacticClassifier` with the same architecture. Loads the converted state dict. Validates conversion quality. Saves as a PyTorch checkpoint (`.pt`) with `model_state_dict`, `hyperparams`, `vocabulary_dir`, `label_map`, `per_category_sizes`, `num_categories`, `epoch`, and `best_accuracy_5`.
 
 **Category head parameter mapping (MLX → PyTorch):**
 
@@ -1235,9 +1264,9 @@ Error hierarchy:
 ### Full training workflow
 
 ```
-# 0. Build vocabulary
-vocab_report = build("index.db", ["stdlib.jsonl", "mathcomp.jsonl"], "coq-vocabulary.json")
-# vocab_report.total_tokens = 15,425
+# 0. Build BPE vocabulary
+vocab_report = build(["stdlib.jsonl", "mathcomp.jsonl"], "vocabulary/")
+# vocab_report.bpe_tokens = 15,425
 
 # 1. Validate data
 report = validate(["stdlib.jsonl", "mathcomp.jsonl"])
@@ -1248,8 +1277,8 @@ dataset = load(["stdlib.jsonl", "mathcomp.jsonl"])
 # dataset.train: 84,000 steps, dataset.val: 10,500 steps, dataset.test: 10,500 steps
 # dataset.num_classes = 28
 
-# 3. Train (with closed vocabulary)
-train(dataset, "model.pt", vocabulary_path="coq-vocabulary.json",
+# 3. Train (with BPE vocabulary)
+train(dataset, "model.pt", vocabulary_dir="vocabulary/",
       hyperparams={batch_size: 64, lr: 2e-5, epochs: 20})
 # Epoch 1: loss=3.2, val_acc@1=0.15, val_acc@5=0.42
 # Epoch 2: loss=2.4, val_acc@1=0.28, val_acc@5=0.61
@@ -1276,7 +1305,7 @@ quantize("model.pt", "tactic-predictor.onnx")
 dataset = load(["stdlib.jsonl", "mathcomp.jsonl"])
 
 # 2. Run HPO
-result = tune(dataset, "hpo-output/", vocabulary_path="coq-vocabulary.json", n_trials=20)
+result = tune(dataset, "hpo-output/", vocabulary_dir="vocabulary/", n_trials=20)
 # Trial 0: lr=3.2e-5, batch=64, wd=5.1e-3, alpha=0.6 -> acc@5=0.78
 # Trial 1: lr=8.7e-6, batch=128, wd=2.3e-2, alpha=0.3 -> acc@5=0.72
 # Trial 2: lr=1.2e-4, batch=32, wd=8.9e-4, alpha=0.9 -> pruned at epoch 5
@@ -1287,7 +1316,7 @@ result = tune(dataset, "hpo-output/", vocabulary_path="coq-vocabulary.json", n_t
 # Best checkpoint: hpo-output/best-model.pt
 
 # 3. Resume an interrupted study
-result = tune(dataset, "hpo-output/", vocabulary_path="coq-vocabulary.json",
+result = tune(dataset, "hpo-output/", vocabulary_dir="vocabulary/",
               n_trials=30, resume=True)
 # Continues from trial 20 (10 more trials)
 ```
@@ -1298,7 +1327,7 @@ result = tune(dataset, "hpo-output/", vocabulary_path="coq-vocabulary.json",
 # 0-2. Build vocabulary, validate, load -- same as PyTorch workflow
 
 # 3. Train with MLX backend (on Mac)
-mlx_train(dataset, "mlx-model/", vocabulary_path="coq-vocabulary.json",
+mlx_train(dataset, "mlx-model/", vocabulary_dir="vocabulary/",
           hyperparams={batch_size: 64, lr: 2e-5, epochs: 20})
 # Epoch 1: loss=3.2, val_acc@1=0.15, val_acc@5=0.42
 # ...
@@ -1332,7 +1361,7 @@ fine_tune("model.pt", dataset, "fine-tuned.pt", hyperparams={lr: 5e-6, epochs: 1
 - Use `torch.cuda.amp` for mixed-precision training (FP16 forward pass, FP32 gradients).
 - Use `torch.utils.data.DataLoader` with a custom `Dataset` for batching and shuffling.
 - Use `onnx` and `onnxruntime.quantization` for ONNX export and dynamic INT8 quantization.
-- Checkpoint format: `torch.save({"model_state_dict": ..., "optimizer_state_dict": ..., "epoch": ..., "best_accuracy_5": ..., "hyperparams": ..., "label_map": ..., "vocabulary_path": ..., "embedding_dim": ...})`.
+- Checkpoint format: `torch.save({"model_state_dict": ..., "optimizer_state_dict": ..., "epoch": ..., "best_accuracy_5": ..., "hyperparams": ..., "label_map": ..., "vocabulary_dir": ...})`.
 - Use `optuna` for hyperparameter optimization. Import lazily — only required when `tune()` is called.
 - Use `mlx` for the MLX training backend. Import lazily — only required when `--backend mlx` is specified.
 - Use `mlx.nn` for model definition, `mlx.optimizers` for optimizer, `mlx.nn.value_and_grad` for functional gradients.
@@ -1348,24 +1377,24 @@ fine_tune("model.pt", dataset, "fine-tuned.pt", hyperparams={lr: 5e-6, epochs: 1
 
 ### 8.1 TacticPredictor
 
-`TacticPredictor(model_path, labels_path, vocabulary_path)`
+`TacticPredictor(model_path, labels_path, vocabulary_dir)`
 
-- REQUIRES: `model_path` is a valid ONNX file. `labels_path` is a JSON list of tactic family names. `vocabulary_path` is a vocabulary JSON file.
-- ENSURES: Loads the ONNX model via `onnxruntime.InferenceSession`, the label names from `labels_path`, and constructs a `CoqTokenizer` from `vocabulary_path`. All three files must exist.
+- REQUIRES: `model_path` is a valid ONNX file. `labels_path` is a JSON list of tactic family names. `vocabulary_dir` is a vocabulary directory (containing SentencePiece model).
+- ENSURES: Loads the ONNX model via `onnxruntime.InferenceSession`, the label names from `labels_path`, and constructs a `CoqTokenizer` from `vocabulary_dir`. All three paths must exist.
 - On missing file: raises `FileNotFoundError`.
 
-#### predict(proof_state_text, top_k=5)
+#### predict(structured_state_text, top_k=5)
 
-- REQUIRES: `proof_state_text` is a non-empty string. `top_k >= 1`.
+- REQUIRES: `structured_state_text` is a non-empty string (output of `serialize_structured`). `top_k >= 1`.
 - ENSURES: Returns a list of `(family_name, confidence)` tuples, sorted by confidence descending, length = min(top_k, num_classes). Confidence values sum to approximately 1.0 across all classes (softmax output).
 
 Algorithm:
-1. Tokenize `proof_state_text` via `CoqTokenizer.encode(text, max_length=512)`.
+1. Tokenize `structured_state_text` via `CoqTokenizer.encode(text, max_length=512)`.
 2. Run ONNX session: input `[1, seq_len]` → output logits `[1, num_classes]`.
 3. Apply softmax to logits → probability distribution.
 4. Return top-K `(label_names[i], prob[i])` pairs sorted by probability descending.
 
-> **Given** a proof state "n : nat\nn + 0 = n" and a trained model
+> **Given** a structured state `"[PREV=intros] [DEPTH=2] [NGOALS=1] [HEAD=eq] [HYP] n [TYPE] nat [GOAL] n + 0 = n"` and a trained model
 > **When** `predict(state, top_k=3)` is called
 > **Then** returns 3 tuples like `[("rewrite", 0.35), ("simpl", 0.28), ("induction", 0.15)]`
 

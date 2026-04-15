@@ -5,7 +5,10 @@ tactic family extraction, file-level split), serialize_goals,
 TacticClassifierTrainer (cross-entropy loss, early stopping, checkpoint format),
 TacticEvaluator (accuracy@k, per-family precision/recall, confusion matrix),
 TrainingDataValidator (step quality), VocabularyBuilder (closed vocabulary),
-CoqTokenizer, SplitReport (tactic family distribution), error hierarchy.
+SplitReport (tactic family distribution), error hierarchy.
+
+BPE tokenizer, structured serialization, and embedding tests are in
+test_bpe_structured.py.
 """
 
 from __future__ import annotations
@@ -39,7 +42,7 @@ from Poule.neural.training.trainer import (
 )
 from Poule.neural.training.quantizer import ModelQuantizer
 from Poule.neural.training.validator import TrainingDataValidator, ValidationReport
-from Poule.neural.training.vocabulary import VocabularyBuilder, VocabularyReport, CoqTokenizer
+from Poule.neural.training.vocabulary import VocabularyBuilder, VocabularyReport
 from Poule.neural.training.errors import (
     NeuralTrainingError,
     DataFormatError,
@@ -1176,8 +1179,8 @@ class TestLayerDropping:
             model = TacticClassifier.from_checkpoint(checkpoint)
             assert model.encoder.config.num_hidden_layers == 6
 
-    def test_from_checkpoint_defaults_to_12_for_old_checkpoints(self, tmp_path):
-        """spec §4.3: Old checkpoints without num_hidden_layers default to 12."""
+    def test_from_checkpoint_defaults_to_6_for_old_checkpoints(self, tmp_path):
+        """spec §4.3: Old checkpoints without num_hidden_layers default to 6."""
         from Poule.neural.training.model import TacticClassifier
 
         checkpoint = {
@@ -1187,139 +1190,7 @@ class TestLayerDropping:
         }
         with patch.object(TacticClassifier, "load_state_dict"):
             model = TacticClassifier.from_checkpoint(checkpoint)
-            assert model.encoder.config.num_hidden_layers == 12
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 6b. Embedding Factorization
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestEmbeddingFactorization:
-    """spec §4.3: ALBERT-style embedding factorization (V×D + D×H)."""
-
-    def test_default_embedding_dim_is_128(self):
-        """spec §4.3: Default embedding_dim is 128."""
-        assert DEFAULT_HYPERPARAMS["embedding_dim"] == 128
-
-    def test_factored_model_has_projection_layer(self):
-        """spec §4.3: When embedding_dim < 768, a projection layer is created."""
-        from Poule.neural.training.model import TacticClassifier
-
-        with patch("Poule.neural.training.model.AutoModel") as mock_auto:
-            mock_auto.from_pretrained.return_value = _mock_encoder()
-            model = TacticClassifier(
-                num_classes=5, vocab_size=100,
-                num_hidden_layers=6, embedding_dim=128,
-            )
-        assert hasattr(model, "embedding_projection")
-        assert model.embedding_projection.weight.shape == (768, 128)
-
-    def test_no_projection_when_embedding_dim_equals_hidden(self):
-        """spec §4.3: When embedding_dim == 768, no projection layer."""
-        from Poule.neural.training.model import TacticClassifier
-
-        with patch("Poule.neural.training.model.AutoModel") as mock_auto:
-            mock_auto.from_pretrained.return_value = _mock_encoder()
-            model = TacticClassifier(
-                num_classes=5, vocab_size=100,
-                num_hidden_layers=6, embedding_dim=768,
-            )
-        assert not hasattr(model, "embedding_projection") or model.embedding_projection is None
-
-    def test_factored_embedding_shape(self):
-        """spec §4.3: Embedding layer has shape (vocab_size, embedding_dim)."""
-        from Poule.neural.training.model import TacticClassifier
-
-        with patch("Poule.neural.training.model.AutoModel") as mock_auto:
-            mock_auto.from_pretrained.return_value = _mock_encoder()
-            model = TacticClassifier(
-                num_classes=5, vocab_size=200,
-                num_hidden_layers=6, embedding_dim=128,
-            )
-        emb = model.encoder.embeddings.word_embeddings
-        assert emb.weight.shape == (200, 128)
-
-    def test_factored_forward_produces_correct_logits_shape(self):
-        """spec §4.3: Forward pass produces [B, num_classes] logits."""
-        import torch
-        from Poule.neural.training.model import TacticClassifier
-
-        with patch("Poule.neural.training.model.AutoModel") as mock_auto:
-            mock_auto.from_pretrained.return_value = _mock_encoder()
-            model = TacticClassifier(
-                num_classes=5, vocab_size=100,
-                num_hidden_layers=6, embedding_dim=128,
-            )
-        model.eval()
-        with torch.no_grad():
-            logits = model(
-                torch.randint(0, 100, (2, 16)),
-                torch.ones(2, 16, dtype=torch.long),
-            )
-        assert logits.shape == (2, 5)
-
-    def test_from_checkpoint_reads_embedding_dim(self):
-        """spec §4.3: from_checkpoint reads embedding_dim from checkpoint."""
-        from Poule.neural.training.model import TacticClassifier
-
-        checkpoint = {
-            "model_state_dict": {},
-            "num_classes": 5,
-            "num_hidden_layers": 6,
-            "embedding_dim": 128,
-        }
-        with patch.object(TacticClassifier, "load_state_dict"):
-            model = TacticClassifier.from_checkpoint(checkpoint)
-        assert hasattr(model, "embedding_projection")
-        assert model.embedding_projection.weight.shape == (768, 128)
-
-    def test_from_checkpoint_defaults_to_768_for_old_checkpoints(self):
-        """spec §4.3: Old checkpoints without embedding_dim default to 768."""
-        from Poule.neural.training.model import TacticClassifier
-
-        checkpoint = {
-            "model_state_dict": {},
-            "num_classes": 5,
-            "num_hidden_layers": 6,
-            # No embedding_dim key
-        }
-        with patch.object(TacticClassifier, "load_state_dict"):
-            model = TacticClassifier.from_checkpoint(checkpoint)
-        assert not hasattr(model, "embedding_projection") or model.embedding_projection is None
-
-    def test_save_checkpoint_includes_embedding_dim(self, tmp_path):
-        """spec §4.3: Checkpoint includes embedding_dim."""
-        from Poule.neural.training.trainer import save_checkpoint, load_checkpoint
-
-        checkpoint_data = {
-            "model_state_dict": {"layer.weight": np.zeros(10)},
-            "num_classes": 3,
-            "num_hidden_layers": 6,
-            "embedding_dim": 128,
-            "epoch": 1,
-            "best_accuracy_5": 0.5,
-            "label_map": {"intros": 0, "apply": 1, "other": 2},
-            "hyperparams": {"batch_size": 16},
-        }
-        path = tmp_path / "checkpoint.pt"
-        save_checkpoint(checkpoint_data, path)
-        loaded = load_checkpoint(path)
-        assert loaded["embedding_dim"] == 128
-
-    def test_param_count_reduction(self):
-        """spec §4.3: Factored embedding has fewer parameters than standard.
-
-        V=10000, D=128, H=768:
-          factored = V*D + D*H = 10000*128 + 128*768 = 1,378,304
-          standard = V*H = 10000*768 = 7,680,000
-        """
-        vocab_size = 10000
-        embedding_dim = 128
-        hidden_size = 768
-        factored_params = vocab_size * embedding_dim + embedding_dim * hidden_size
-        standard_params = vocab_size * hidden_size
-        assert factored_params < standard_params
+            assert model.encoder.config.num_hidden_layers == 6
 
 
 class TestCategoryHeadLinear:
@@ -1338,7 +1209,7 @@ class TestCategoryHeadLinear:
                 num_categories=2,
                 vocab_size=100,
                 num_hidden_layers=6,
-                embedding_dim=128,
+
             )
         assert isinstance(model.category_head, nn.Linear)
 
@@ -1354,7 +1225,7 @@ class TestCategoryHeadLinear:
                 num_categories=2,
                 vocab_size=100,
                 num_hidden_layers=6,
-                embedding_dim=128,
+
             )
         assert model.category_head.in_features == 768
         assert model.category_head.out_features == 2
@@ -1372,7 +1243,7 @@ class TestCategoryHeadLinear:
                 num_categories=2,
                 vocab_size=100,
                 num_hidden_layers=6,
-                embedding_dim=128,
+
             )
         model.eval()
         with torch.no_grad():
@@ -1393,7 +1264,6 @@ class TestCategoryHeadLinear:
         checkpoint = {
             "model_state_dict": {},
             "num_hidden_layers": 6,
-            "embedding_dim": 128,
             "per_category_sizes": per_cat,
             "num_categories": 2,
         }
@@ -2729,193 +2599,6 @@ class TestVocabularyBuilderCompactFormat:
 
         vocab = json.loads(vocab_path.read_text())
         assert "supplementary_token_abc" in vocab
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 16. CoqTokenizer — Closed Vocabulary Tokenization
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def _write_vocab(path, tokens):
-    """Write a minimal vocabulary JSON file from a list of token strings.
-
-    Special tokens [PAD], [UNK], [CLS], [SEP], [MASK] are always included
-    at IDs 0-4. Additional tokens get sequential IDs starting from 5.
-    """
-    vocab = {
-        "[PAD]": 0, "[UNK]": 1, "[CLS]": 2, "[SEP]": 3, "[MASK]": 4,
-    }
-    next_id = 5
-    for t in tokens:
-        if t not in vocab:
-            vocab[t] = next_id
-            next_id += 1
-    path.write_text(json.dumps(vocab), encoding="utf-8")
-    return vocab
-
-
-class TestCoqTokenizerInit:
-    """spec §4.0.1: CoqTokenizer loads vocabulary and sets special token IDs."""
-
-    def test_loads_vocabulary(self, tmp_path):
-        """spec §4.0.1: Loads the vocabulary mapping into memory."""
-        vocab_path = tmp_path / "vocab.json"
-        _write_vocab(vocab_path, ["nat", "bool"])
-        tok = CoqTokenizer(vocab_path)
-        assert tok.vocab_size == 7  # 5 special + 2 custom
-
-    def test_special_token_ids(self, tmp_path):
-        """spec §4.0.1: pad=0, unk=1, cls=2, sep=3, mask=4."""
-        vocab_path = tmp_path / "vocab.json"
-        _write_vocab(vocab_path, [])
-        tok = CoqTokenizer(vocab_path)
-        assert tok.pad_token_id == 0
-        assert tok.unk_token_id == 1
-        assert tok.cls_token_id == 2
-        assert tok.sep_token_id == 3
-        assert tok.mask_token_id == 4
-
-    def test_raises_on_missing_file(self):
-        """spec §4.0.1: FileNotFoundError if path does not exist."""
-        with pytest.raises(FileNotFoundError):
-            CoqTokenizer(Path("/nonexistent/vocab.json"))
-
-    def test_raises_on_malformed_json(self, tmp_path):
-        """spec §4.0.1: DataFormatError if JSON is malformed."""
-        vocab_path = tmp_path / "vocab.json"
-        vocab_path.write_text("not json", encoding="utf-8")
-        with pytest.raises(DataFormatError):
-            CoqTokenizer(vocab_path)
-
-
-class TestCoqTokenizerEncode:
-    """spec §4.0.1: encode() tokenizes text with whitespace split + lookup."""
-
-    def test_basic_encoding(self, tmp_path):
-        """spec §4.0.1: Whitespace split, lookup, prepend CLS, append SEP."""
-        vocab_path = tmp_path / "vocab.json"
-        _write_vocab(vocab_path, ["n", ":", "nat"])
-        tok = CoqTokenizer(vocab_path)
-
-        ids, mask = tok.encode("n : nat", max_length=8)
-
-        assert ids[0] == 2  # [CLS]
-        assert ids[1] == tok._vocab["n"]
-        assert ids[2] == tok._vocab[":"]
-        assert ids[3] == tok._vocab["nat"]
-        assert ids[4] == 3  # [SEP]
-        # Padding
-        assert ids[5] == 0
-        assert len(ids) == 8
-        assert mask == [1, 1, 1, 1, 1, 0, 0, 0]
-
-    def test_unknown_token_maps_to_unk(self, tmp_path):
-        """spec §4.0.1: Unknown tokens map to unk_token_id."""
-        vocab_path = tmp_path / "vocab.json"
-        _write_vocab(vocab_path, ["nat"])
-        tok = CoqTokenizer(vocab_path)
-
-        ids, mask = tok.encode("unknown_token", max_length=6)
-        assert ids[1] == 1  # [UNK]
-
-    def test_truncation(self, tmp_path):
-        """spec §4.0.1: Truncate to max_length, keeping CLS and SEP."""
-        vocab_path = tmp_path / "vocab.json"
-        _write_vocab(vocab_path, ["a", "b", "c", "d", "e"])
-        tok = CoqTokenizer(vocab_path)
-
-        ids, mask = tok.encode("a b c d e", max_length=4)
-        assert len(ids) == 4
-        assert ids[0] == 2  # [CLS]
-        assert ids[-1] == 3  # [SEP]
-        assert all(m == 1 for m in mask)
-
-    def test_empty_text(self, tmp_path):
-        """Encoding empty string produces CLS + SEP + padding."""
-        vocab_path = tmp_path / "vocab.json"
-        _write_vocab(vocab_path, [])
-        tok = CoqTokenizer(vocab_path)
-
-        ids, mask = tok.encode("", max_length=4)
-        assert ids[0] == 2  # [CLS]
-        assert ids[1] == 3  # [SEP]
-        assert mask == [1, 1, 0, 0]
-
-    def test_nfc_normalization(self, tmp_path):
-        """spec §4.0.1: NFC normalization applied before lookup."""
-        import unicodedata
-        vocab_path = tmp_path / "vocab.json"
-        # Store the NFC form in the vocab
-        _write_vocab(vocab_path, ["\u00e9"])  # precomposed
-        tok = CoqTokenizer(vocab_path)
-
-        # Use decomposed form (e + combining accent)
-        decomposed = unicodedata.normalize("NFD", "\u00e9")
-        ids, _ = tok.encode(decomposed, max_length=4)
-        # Should find it (NFC normalizes decomposed -> precomposed)
-        assert ids[1] != 1  # not UNK
-
-
-class TestCoqTokenizerEncodeBatch:
-    """spec §4.0.1: encode_batch() encodes multiple texts with dynamic padding."""
-
-    def test_batch_encoding_shapes(self, tmp_path):
-        """spec §4.0.1: Returns dict with input_ids and attention_mask arrays."""
-        vocab_path = tmp_path / "vocab.json"
-        _write_vocab(vocab_path, ["a", "b", "c"])
-        tok = CoqTokenizer(vocab_path)
-
-        result = tok.encode_batch(["a b", "c"], max_length=512)
-        assert "input_ids" in result
-        assert "attention_mask" in result
-        # Shape: (2, padded_length)
-        assert result["input_ids"].shape[0] == 2
-        assert result["attention_mask"].shape[0] == 2
-
-    def test_dynamic_padding(self, tmp_path):
-        """spec §4.0.1: Padding is to the longest sequence in batch, not max_length."""
-        vocab_path = tmp_path / "vocab.json"
-        _write_vocab(vocab_path, ["a", "b", "c"])
-        tok = CoqTokenizer(vocab_path)
-
-        result = tok.encode_batch(["a b", "c"], max_length=512)
-        # Longest is "a b" = CLS + a + b + SEP = 4 tokens
-        assert result["input_ids"].shape[1] == 4
-
-    def test_batch_attention_mask_correct(self, tmp_path):
-        """Shorter sequences have 0s in attention_mask for padding positions."""
-        vocab_path = tmp_path / "vocab.json"
-        _write_vocab(vocab_path, ["a", "b"])
-        tok = CoqTokenizer(vocab_path)
-
-        result = tok.encode_batch(["a b", "a"], max_length=512)
-        # First: CLS a b SEP -> all 1s
-        assert list(result["attention_mask"][0]) == [1, 1, 1, 1]
-        # Second: CLS a SEP PAD -> 1,1,1,0
-        assert list(result["attention_mask"][1]) == [1, 1, 1, 0]
-
-
-class TestCoqTokenizerIntegration:
-    """Integration: CoqTokenizer works with VocabularyBuilder output."""
-
-    def test_roundtrip_with_vocabulary_builder(self, tmp_path):
-        """Vocabulary built by VocabularyBuilder can be loaded by CoqTokenizer."""
-        db_path = tmp_path / "index.db"
-        _make_minimal_index_db(db_path, [
-            (1, "Nat.add", "stmt1", "Stdlib.Init.Nat"),
-            (2, "nat", "stmt2", "Stdlib.Init.Datatypes"),
-        ])
-        jsonl_path = tmp_path / "data.jsonl"
-        _write_jsonl(jsonl_path, [])
-        vocab_path = tmp_path / "vocab.json"
-
-        VocabularyBuilder.build(db_path, [jsonl_path], vocab_path)
-        tok = CoqTokenizer(vocab_path)
-
-        # Both declaration names should tokenize to known IDs
-        ids, _ = tok.encode("Nat.add nat", max_length=10)
-        assert ids[1] != tok.unk_token_id  # Nat.add known
-        assert ids[2] != tok.unk_token_id  # nat known
 
 
 # ═══════════════════════════════════════════════════════════════════════════

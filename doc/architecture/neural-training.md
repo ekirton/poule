@@ -9,11 +9,11 @@ Technical design for the training, evaluation, and quantization pipeline for the
 ## Component Diagram
 
 ```
-Search index (index.db) + Extracted training data (JSON Lines)
+Extracted training data (JSON Lines)
   │
   │ poule build-vocabulary
   ▼
-Closed vocabulary (coq-vocabulary.json)
+BPE vocabulary (vocabulary-dir/)
   │
   │ poule train
   ▼
@@ -50,87 +50,135 @@ Evaluation Report
 ## Vocabulary Building
 
 ```
-poule build-vocabulary --db <index.db> --data <traces.jsonl> --output <coq-vocabulary.json>
+poule build-vocabulary --data <traces.jsonl> --output <vocabulary-dir/>
 ```
 
-Constructs a closed-vocabulary tokenizer that maps every Coq identifier to a unique integer token ID. This replaces CodeBERT's generic BPE tokenizer, which fragments Coq identifiers into 3-9 subword tokens. With a closed vocabulary, every identifier is exactly 1 token. See `coq-vocabulary.md` for the full design rationale.
+Trains a BPE (Byte Pair Encoding) tokenizer on the training corpus. This replaces the previous closed-vocabulary approach (158K tokens, one per Coq identifier) which produced a pathologically sparse embedding — 81% of model parameters were undertrained embeddings for identifiers seen fewer than 5 times.
 
-### Sources
+### Why BPE Replaces the Closed Vocabulary
 
-The vocabulary is built from two sources:
+The closed vocabulary assigned one token to every Coq identifier (e.g., `Coq.Init.Logic.eq_ind_r` = 1 token). With 158K tokens and 140K training examples, most embeddings were effectively random noise. BPE decomposes rare identifiers into frequently-occurring subwords (`eq`, `_ind`, `_r`), so every embedding is trained on hundreds or thousands of examples. The model can generalize across identifiers sharing subwords — if `Nat.add_comm` is associated with `rewrite`, the model transfers to `Nat.mul_comm` via the shared `comm` subword.
 
-1. **Search index** (`index.db`) -- all fully-qualified declaration names from the `declarations` table.
-2. **Serialized proof states** from the training data -- scanning the JSONL extraction output captures hypothesis variable names and syntax tokens that appear in the model's input distribution. Both `"s"` (step) and `"g"` (goal) records are processed.
+### Training Procedure
 
-### Fixed Token Sets
+1. Collect all serialized proof states from the JSONL training data (`"s"` and `"g"` records).
+2. Train a SentencePiece BPE model on this corpus with a target vocabulary size (default 16,000).
+3. Pre-define structural special tokens as user-defined symbols so they are never split by BPE.
+4. Write the trained tokenizer model and vocabulary to the output directory.
 
-| Category | Examples | Count |
-|----------|----------|-------|
-| Special tokens | `[PAD]`, `[UNK]`, `[CLS]`, `[SEP]`, `[MASK]` | 5 |
-| Punctuation / delimiters | `(`, `)`, `{`, `}`, `[`, `]`, `:`, `;`, `,`, `.`, `|`, `@`, `!`, `?`, `_`, `'`, `#`, `=`, `+`, `-`, `*`, `/`, `<`, `>`, `~` | ~25 |
-| SSReflect tacticals | `/=`, `//`, `//=`, `=>`, `->`, `<-` | 6 |
-| Scope delimiters | `%N`, `%Z`, `%R`, `%Q`, `%positive`, `%type` | 6 |
-| Unicode math symbols | `forall`, `exists`, `->`, `<-`, `<->`, `|-`, `<=`, `>=`, `<>`, etc. | 31 |
-| Greek letters | alpha-omega, Gamma-Omega | 33 |
-| Digits | `0`-`9` | 10 |
+### Special Tokens
 
-### Construction Procedure
+Structural tokens are pre-defined so BPE treats them as atomic:
 
-1. Initialize the vocabulary with the 5 special tokens at IDs 0-4.
-2. Add all fixed token sets.
-3. Read all declaration names from `index.db`.
-4. Scan the JSONL training data: for each `"s"` and `"g"` record, split proof state text on whitespace and collect unique tokens.
-5. Apply NFC Unicode normalization.
-6. Assign sequential integer IDs.
-7. Write as JSON mapping token strings to integer IDs.
+| Token | Purpose |
+|-------|---------|
+| `[PAD]` | Padding |
+| `[UNK]` | Unknown token |
+| `[CLS]` | Sequence start |
+| `[SEP]` | Sequence end |
+| `[MASK]` | Masked token |
+| `[HYP]` | Hypothesis name follows |
+| `[TYPE]` | Hypothesis type follows |
+| `[BODY]` | Let-bound hypothesis body follows |
+| `[GOAL]` | Goal type follows |
+| `[GOALSEP]` | Goal boundary separator |
+| `[HEAD=X]` | Goal head constructor (one per constructor, e.g., `[HEAD=forall]`, `[HEAD=eq]`) |
+| `[PREV=X]` | Previous tactic family (one per family, e.g., `[PREV=intros]`, `[PREV=apply]`) |
+| `[PREV=none]` | First step in proof (no previous tactic) |
+| `[DEPTH=N]` | Proof depth bucket (N ∈ {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10+}) |
+| `[NGOALS=N]` | Number of remaining goals (N ∈ {1, 2, 3, 4, 5+}) |
+
+The `[HEAD=X]` tokens cover the ~20 most common goal head constructors (forall, eq, and, or, ex, not, True, False, le, lt, plus, mult, etc.) plus `[HEAD=other]` for rare constructors. The `[PREV=X]` tokens cover all tactic families in the taxonomy plus `[PREV=none]`.
 
 ### Expected Size
 
-~150K tokens: ~118K library identifiers, ~33K variable names and syntax fragments, ~110 fixed tokens, 64 Unicode/Greek symbols, 5 special tokens.
+~16,000 tokens: ~15,800 BPE subwords + ~100 structural special tokens + ~100 context tokens. Embedding layer: `nn.Embedding(16000, 768)` = 12.3M parameters (full-rank, no factorization needed).
 
-### Tokenization at Inference
+### Tokenization
 
-Whitespace split + O(1) dictionary lookup per token:
-1. NFC Unicode normalization
-2. Split on whitespace
-3. Look up each token -> ID (or `[UNK]`)
-4. Prepend `[CLS]`, append `[SEP]`
-5. Pad or truncate to `max_length=512`
+SentencePiece encoding:
+1. Encode text via the trained SentencePiece model → subword IDs
+2. Prepend `[CLS]`, append `[SEP]`
+3. Pad or truncate to `max_length`
 
-### Embedding Layer Integration
+### Embedding Layer
 
-The closed vocabulary replaces CodeBERT's 50,265-token vocabulary with ~150K tokens. The TacticClassifier model reinitializes its embedding layer:
+With ~16K tokens, the embedding is full-rank `nn.Embedding(vocab_size, 768)` — no factorization needed. The ALBERT-style embedding factorization (158K × 128 + 128 × 768 = 20.4M) is removed because the reduced vocabulary makes every embedding well-trained.
 
-1. Load CodeBERT's transformer layers (1-12) with pretrained weights.
-2. Create `nn.Embedding(vocab_size, 768)`.
-3. Copy pretrained embeddings for overlapping tokens (digits, punctuation, common words).
-4. Initialize Coq-specific tokens randomly (sigma=0.02).
+**Initialization:** Load CodeBERT's pretrained BPE vocabulary. For subwords that overlap between the Coq-trained BPE and CodeBERT's vocabulary, copy CodeBERT's pretrained embedding weights. Initialize non-overlapping tokens randomly (σ=0.02). Structural special tokens are always randomly initialized.
 
-### Embedding Factorization
-
-The 158K-token embedding matrix dominates model size (121.5M of 150.4M parameters, 81%). Most tokens are rare Coq identifiers that appear in a handful of training examples and cannot learn meaningful 768-dimensional representations.
-
-Following ALBERT (Lan et al., 2020), the embedding matrix is decomposed into two smaller matrices:
-
-```
-Standard:   nn.Embedding(V, H)                  158,242 × 768 = 121.5M params
-Factored:   nn.Embedding(V, D) + nn.Linear(D, H)  158,242 × 128 + 128 × 768 = 20.4M params
-```
-
-where D is a configurable bottleneck dimension (default 128). Each token gets a compact D-dimensional embedding, which a bias-free linear projection expands to the hidden dimension H=768 that the transformer expects. When `embedding_dim` equals `hidden_size` (768), no projection is applied and the model behaves identically to the standard architecture.
-
-The position embedding remains at H dimensions — it is small (514 × 768 = 0.4M) and benefits from full-rank representation.
-
-**Initialization:** Embedding weights are initialized randomly (σ=0.02) with CodeBERT overlap copied as before — but only the first D dimensions are stored. The projection matrix is initialized from a truncated SVD of CodeBERT's original 768-dim embedding matrix, preserving the most important directions. Since the custom vocabulary already discards CodeBERT's tokens, there are no pretrained embedding weights to preserve.
-
-**Checkpoint format:** The `embedding_dim` value is stored in checkpoints alongside `num_hidden_layers`. On load, the model reconstructs the correct architecture (with or without projection) from the checkpoint metadata.
+**Checkpoint format:** The `vocab_size` value is stored in checkpoints alongside `num_hidden_layers`. The `embedding_dim` field is removed (always 768).
 
 ### CoqTokenizer
 
-A lightweight tokenizer class wrapping the vocabulary JSON:
-- `encode(text, max_length=512)` -> `(input_ids, attention_mask)` tensors
-- `encode_batch(texts, max_length=512)` -> batched tensors with padding
+A tokenizer class wrapping the trained SentencePiece model:
+- `encode(text, max_length=512)` -> `(input_ids, attention_mask)` lists
+- `encode_batch(texts, max_length=512)` -> batched numpy arrays with dynamic padding
 - `vocab_size` property for embedding layer construction
+
+## Proof State Representation
+
+The training pipeline transforms raw proof states into a structured token sequence that makes hypothesis–goal boundaries, type annotations, and proof context explicit.
+
+### Structured Serialization
+
+Proof states are serialized with structural markers that make the role of each token explicit to the transformer encoder. The previous closed-vocabulary approach used flat text (`n : nat\nIHn : n + 0 = n\nn + 0 = n`) where whitespace splitting destroyed all structural information — the model could not distinguish hypothesis names from type tokens, or hypotheses from goals.
+
+#### Single-goal example
+
+Raw proof state:
+```
+Goal(type="n + 0 = n", hypotheses=[
+    Hypothesis(name="n", type="nat", body=None),
+    Hypothesis(name="IHn", type="n + 0 = n", body=None),
+])
+```
+
+Structured serialization:
+```
+[PREV=intros] [DEPTH=2] [NGOALS=1] [HEAD=eq] [HYP] n [TYPE] nat [HYP] IHn [TYPE] n + 0 = n [GOAL] n + 0 = n
+```
+
+The tokenizer then wraps this with `[CLS]` / `[SEP]` and encodes via BPE.
+
+#### Multi-goal example
+
+```
+[PREV=split] [DEPTH=3] [NGOALS=2] [HEAD=eq] [HYP] n [TYPE] nat [GOAL] S n = S n [GOALSEP] [HYP] m [TYPE] nat [GOAL] m + 0 = m
+```
+
+#### Let-bound hypothesis example
+
+```
+[HYP] x [TYPE] nat [BODY] S (S O) [HYP] H [TYPE] x = 2 [GOAL] x + x = 4
+```
+
+Let-bound hypothesis bodies are truncated to 32 subword tokens to preserve sequence budget for goals and other hypotheses.
+
+### Context Prefix
+
+Each serialized proof state begins with a context prefix providing signals that the previous flat format did not capture:
+
+1. **Previous tactic** (`[PREV=X]`): The tactic family applied at the previous proof step. `[PREV=none]` for the first step. Tactic sequences are strongly autocorrelated — `intros` is typically followed by `simpl` or `unfold`; `induction` by case analysis tactics.
+
+2. **Proof depth** (`[DEPTH=N]`): How many tactic steps have been applied in this proof. Bucketed: 0 through 9 are individual tokens; 10+ is a single `[DEPTH=10+]` token. Early proof steps favor `intros`; deep steps favor `auto` or `apply`.
+
+3. **Goal count** (`[NGOALS=N]`): Number of remaining goals in the proof state. 1 through 4 are individual tokens; 5+ is `[NGOALS=5+]`. A single goal suggests completion tactics; multiple goals suggest structural tactics like `split`.
+
+4. **Goal head constructor** (`[HEAD=X]`): The outermost constructor of the current goal type. This is the single most predictive feature for tactic selection — `forall` → `intros`, `eq` → `rewrite`/`reflexivity`, `and` → `split`, `or` → `left`/`right`. Extracted by parsing the goal type string for the first non-parenthesized identifier.
+
+### Transformation Pipeline
+
+The proof state transformation happens in the data loader, not the extraction pipeline. Existing JSONL files use the flat text format; the data loader parses the flat text back into hypotheses and goal, then re-serializes with structural markers:
+
+1. Split the `"s"` field on `\n\n` to separate goals.
+2. Within each goal, identify hypothesis lines (matching `^[a-zA-Z_][a-zA-Z_0-9']* : `) and the goal line (the remaining non-hypothesis line).
+3. Parse hypothesis name and type from each hypothesis line.
+4. Extract the goal head constructor from the goal type.
+5. Prepend the context prefix (`[PREV=...]`, `[DEPTH=...]`, `[NGOALS=...]`, `[HEAD=...]`).
+6. Emit the structured serialization.
+
+This approach avoids re-running extraction on all Coq projects. New extractions continue to produce the flat format; the transformation is part of the training pipeline.
 
 ## Training Data Collapse
 
@@ -193,13 +241,25 @@ The training pipeline consumes `"s"` (step) records from JSON Lines files produc
 {"t":"s", "f":"Arith/Plus.v", "s":"n : nat\nm : nat\nn + S m = S (n + m)", "c":"simpl"}
 ```
 
-Fields: `t` = record type, `f` = source file, `s` = serialized proof state, `c` = tactic command text.
+Fields: `t` = record type, `f` = source file, `s` = serialized proof state (flat text), `c` = tactic command text.
 
 The data loader:
-1. Reads `"s"` records from JSONL files
+1. Reads `"s"` records from JSONL files, grouped by source file
 2. Extracts tactic family from the tactic command text (first token, normalized)
-3. Builds a label map: `dict[str, int]` mapping tactic family names to class indices
-4. Constructs `(proof_state, tactic_family_index)` pairs
+3. Within each file's step sequence, pairs each step with its predecessor's tactic family (for `[PREV=X]`), assigns proof depth indices, and counts remaining goals
+4. Transforms the flat proof state text into the structured format (see Proof State Representation)
+5. Constructs `(structured_state, tactic_family_index)` pairs
+
+### Context Feature Extraction
+
+Steps from the same source file are ordered by their position in the JSONL. The data loader pairs each step with proof-level context:
+
+1. **Previous tactic**: The `extract_tactic_family()` result from the preceding step in the same file. The first step in each file gets `[PREV=none]`.
+2. **Proof depth**: The 0-based index of this step within its file's step sequence. Bucketed at 10+.
+3. **Goal count**: The number of `\n\n`-separated blocks in the `"s"` field (each block is one goal). Bucketed at 5+.
+4. **Goal head constructor**: Extracted from the first goal's type line (the last non-hypothesis line in the first block). The head constructor is the first whitespace-delimited token after stripping leading `(` characters.
+
+Context features are prepended as special tokens before the structured proof state.
 
 ### Tactic Family Extraction
 
@@ -336,7 +396,7 @@ CoqInterval is excluded — its specialized interval-arithmetic proof style does
 
 ```
 poule loocv stdlib.jsonl stdpp.jsonl flocq.jsonl coquelicot.jsonl mathcomp.jsonl \
-  --output-dir loocv-results/ --vocabulary coq-vocabulary.json --undersample-cap 1000
+  --output-dir loocv-results/ --vocabulary vocabulary-dir/ --undersample-cap 1000
 ```
 
 #### Data Loading: `load_by_library()`
@@ -407,15 +467,19 @@ SAM is applied only to the PyTorch backend. The MLX backend continues to use pla
 ### Model Architecture
 
 ```
-Input: input_ids [B, 512], attention_mask [B, 512]
+Input: input_ids [B, max_seq_length], attention_mask [B, max_seq_length]
   |
+  |-- nn.Embedding(vocab_size, 768)         [full-rank, ~16K BPE tokens]
+  |-- Positional embedding (514 × 768)
+  |-- LayerNorm
   |-- CodeBERT encoder (num_hidden_layers layers, 768 hidden, 12 heads)
   |-- Mean pooling (attention-masked)
-  |-- nn.Linear(768, num_classes)
-  |-- Output: logits [B, num_classes]
+  |-- Category head: nn.Linear(768, num_categories)
+  |-- Per-category heads: nn.Linear(768, N_cat) each
+  |-- Output: (category_logits [B, 8], within_logits dict)
 ```
 
-Default `num_hidden_layers` is 6 (layer-dropped from CodeBERT's 12). Single forward pass per batch. No premise encoding, no contrastive pairs, no hard negatives.
+Default `num_hidden_layers` is 6 (layer-dropped from CodeBERT's 12). Single forward pass per batch. No premise encoding, no contrastive pairs, no hard negatives. The embedding layer is full-rank (no ALBERT-style factorization) because the BPE vocabulary (~16K tokens) is small enough for every embedding to be well-trained.
 
 #### Layer Dropping Initialization
 
@@ -478,7 +542,7 @@ CUDA GPU -> CPU. MPS is not used (memory leak issues). MLX is selected explicitl
 ## MLX Training Backend
 
 ```
-poule train --backend mlx --db <index.db> --vocab <coq-vocabulary.json> --output <model/> <traces.jsonl>
+poule train --backend mlx --vocab <vocabulary-dir/> --output <model/> <traces.jsonl>
 ```
 
 An alternative training backend using Apple's MLX framework for Apple Silicon's unified memory architecture.
@@ -517,7 +581,7 @@ MLX checkpoints: safetensors format. Converted to PyTorch via `poule convert-wei
 ## Hyperparameter Optimization
 
 ```
-poule tune --db <index.db> --output-dir <hpo-output/> --n-trials 20 <traces.jsonl>
+poule tune --vocab <vocabulary-dir/> --output-dir <hpo-output/> --n-trials 20 <traces.jsonl>
 ```
 
 Optuna with TPE sampler, maximizing validation accuracy@5.
@@ -541,7 +605,7 @@ Optuna with TPE sampler, maximizing validation accuracy@5.
 ## Evaluation
 
 ```
-poule evaluate --checkpoint <model.pt> --test-data <test.jsonl> --db <index.db>
+poule evaluate --checkpoint <model.pt> --test-data <test.jsonl> --vocab <vocabulary-dir/>
 ```
 
 Computes:

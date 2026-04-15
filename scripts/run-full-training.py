@@ -22,7 +22,7 @@ logger = logging.getLogger("full-training")
 
 DATA_DIR = Path(os.environ.get("POULE_DATA_DIR", Path.home() / "poule-home" / "data"))
 TRAINING_DATA = DATA_DIR / "training.jsonl"
-VOCABULARY = DATA_DIR / "coq-vocabulary.json"
+VOCABULARY_DIR = DATA_DIR / "vocabulary"
 HPO_DIR = DATA_DIR / "hpo-results"
 FINAL_MODEL_DIR = DATA_DIR / "final-model"
 RESULTS_FILE = DATA_DIR / "final-model-validation.txt"
@@ -92,7 +92,7 @@ def main():
     result = HyperparameterTuner.tune(
         dataset,
         HPO_DIR,
-        vocabulary_path=VOCABULARY,
+        vocabulary_path=VOCABULARY_DIR,
         n_trials=15,
         study_name="poule-hpo-undersampled",
         resume=False,
@@ -138,7 +138,7 @@ def main():
     label_map = ckpt.get("label_map", {})
     label_names = sorted(label_map.keys(), key=lambda k: label_map[k])
 
-    tokenizer = CoqTokenizer(VOCABULARY)
+    tokenizer = CoqTokenizer(VOCABULARY_DIR)
     device = torch.device("cpu")
 
     model = HierarchicalTacticClassifier.from_checkpoint(ckpt)
@@ -160,10 +160,10 @@ def main():
     ModelQuantizer.quantize(pt_path, onnx_path)
     logger.info("ONNX export complete: %s", onnx_path)
 
-    # Also copy vocabulary alongside model artifacts
-    vocab_dest = FINAL_MODEL_DIR / "coq-vocabulary.json"
-    if not vocab_dest.exists() and VOCABULARY.exists():
-        shutil.copy2(VOCABULARY, vocab_dest)
+    # Also copy vocabulary directory alongside model artifacts
+    vocab_dest = FINAL_MODEL_DIR / "vocabulary"
+    if not vocab_dest.exists() and VOCABULARY_DIR.exists():
+        shutil.copytree(VOCABULARY_DIR, vocab_dest)
         logger.info("Copied vocabulary to %s", vocab_dest)
 
     # ---- Step 5b: LOOCV (optional, set RUN_LOOCV=1) ----
@@ -188,7 +188,7 @@ def main():
             t0 = time.time()
             loocv_report = LibraryLOOCV.run(
                 library_paths=library_paths,
-                vocabulary_path=VOCABULARY,
+                vocabulary_path=VOCABULARY_DIR,
                 output_dir=LOOCV_DIR,
                 undersample_cap=1000,
                 hyperparams=best_hp,
@@ -217,7 +217,7 @@ def main():
     lines.append("")
     lines.append(f"Date: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"Training data: {TRAINING_DATA}")
-    lines.append(f"Vocabulary: {VOCABULARY} ({tokenizer.vocab_size} tokens)")
+    lines.append(f"Vocabulary: {VOCABULARY_DIR} (BPE, {tokenizer.vocab_size} tokens)")
     lines.append(f"Model checkpoint: {pt_path}")
     lines.append("")
     lines.append("--- Dataset ---")

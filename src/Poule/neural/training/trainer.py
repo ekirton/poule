@@ -31,7 +31,6 @@ DEFAULT_HYPERPARAMS = {
     "class_weight_alpha": 0.4,
     "label_smoothing": 0.1,
     "sam_rho": 0.15,
-    "embedding_dim": 128,
     "lambda_within": 1.0,
 }
 
@@ -389,7 +388,6 @@ class TacticClassifierTrainer:
         from Poule.neural.training.vocabulary import CoqTokenizer
 
         num_hidden_layers = hp.get("num_hidden_layers", 6)
-        embedding_dim = hp.get("embedding_dim", 128)
 
         if is_hierarchical:
             per_category_sizes = dataset.per_category_sizes
@@ -405,14 +403,12 @@ class TacticClassifierTrainer:
                     num_categories=num_categories,
                     vocab_size=tokenizer.vocab_size,
                     num_hidden_layers=num_hidden_layers,
-                    embedding_dim=embedding_dim,
                 )
             else:
                 model = HierarchicalTacticClassifier(
                     num_classes=len(label_names),
                     vocab_size=tokenizer.vocab_size,
                     num_hidden_layers=num_hidden_layers,
-                    embedding_dim=embedding_dim,
                 )
         else:
             if is_hierarchical:
@@ -420,13 +416,11 @@ class TacticClassifierTrainer:
                     per_category_sizes=per_category_sizes,
                     num_categories=num_categories,
                     num_hidden_layers=num_hidden_layers,
-                    embedding_dim=embedding_dim,
                 )
             else:
                 model = HierarchicalTacticClassifier(
                     num_classes=len(label_names),
                     num_hidden_layers=num_hidden_layers,
-                    embedding_dim=embedding_dim,
                 )
 
         gc.collect()
@@ -630,7 +624,6 @@ class TacticClassifierTrainer:
                     k: v.cpu() for k, v in model.state_dict().items()
                 },
                 "num_hidden_layers": num_hidden_layers,
-                "embedding_dim": embedding_dim,
                 "hyperparams": hp,
                 "label_map": label_map,
                 "vocabulary_path": str(vocabulary_path) if vocabulary_path else None,

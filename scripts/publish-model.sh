@@ -2,7 +2,7 @@
 #
 # Publish quantized tactic prediction model as a GitHub Release:
 #   tactic-model — tactic-predictor.onnx + tactic-labels.json
-#                  + coq-vocabulary.json + manifest.json
+#                  + tokenizer.model + manifest.json
 #
 # There is always exactly one release; the existing one is replaced.
 #
@@ -54,7 +54,7 @@ fi
 
 ONNX_PATH="${MODEL_DIR}/tactic-predictor.onnx"
 LABELS_PATH="${MODEL_DIR}/tactic-labels.json"
-VOCAB_PATH="${DATA_DIR}/coq-vocabulary.json"
+VOCAB_PATH="${MODEL_DIR}/vocabulary/tokenizer.model"
 
 for f in "$ONNX_PATH" "$LABELS_PATH" "$VOCAB_PATH"; do
     if [[ ! -f "$f" ]]; then
@@ -77,7 +77,7 @@ vocab_size=$(stat -c%s "$VOCAB_PATH" 2>/dev/null || stat -f%z "$VOCAB_PATH")
 echo "Model artifacts:"
 printf "  %-28s %s bytes  (SHA-256: %s)\n" "tactic-predictor.onnx" "$onnx_size" "$onnx_sha"
 printf "  %-28s %s bytes  (SHA-256: %s)\n" "tactic-labels.json" "$labels_size" "$labels_sha"
-printf "  %-28s %s bytes  (SHA-256: %s)\n" "coq-vocabulary.json" "$vocab_size" "$vocab_sha"
+printf "  %-28s %s bytes  (SHA-256: %s)\n" "tokenizer.model" "$vocab_size" "$vocab_sha"
 
 # --- Read label count for release notes ---
 
@@ -103,10 +103,10 @@ cat > "$manifest_tmp" <<EOF
       "size": $labels_size,
       "description": "Ordered tactic family names (index to name)"
     },
-    "coq-vocabulary.json": {
+    "tokenizer.model": {
       "sha256": "$vocab_sha",
       "size": $vocab_size,
-      "description": "Closed-vocabulary tokenizer (token to ID)"
+      "description": "SentencePiece BPE tokenizer model"
     }
   },
   "label_count": $label_count
@@ -130,13 +130,13 @@ git push origin ":refs/tags/${TAG}" 2>/dev/null || true
 upload_dir=$(mktemp -d /tmp/poule-publish-model.XXXXXX)
 cp "$ONNX_PATH" "$upload_dir/tactic-predictor.onnx"
 cp "$LABELS_PATH" "$upload_dir/tactic-labels.json"
-cp "$VOCAB_PATH" "$upload_dir/coq-vocabulary.json"
+cp "$VOCAB_PATH" "$upload_dir/tokenizer.model"
 cp "$manifest_tmp" "$upload_dir/manifest.json"
 
 assets=(
     "$upload_dir/tactic-predictor.onnx"
     "$upload_dir/tactic-labels.json"
-    "$upload_dir/coq-vocabulary.json"
+    "$upload_dir/tokenizer.model"
     "$upload_dir/manifest.json"
 )
 
