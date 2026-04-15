@@ -259,19 +259,19 @@ Identical to the previous design: file-level split, deterministic by position mo
 | Validation | 10% of files | Early stopping during HPO |
 | Test | 10% of files | Final evaluation |
 
-### Final Model Data Strategy
+### Final Model Selection
 
-During HPO, the standard 80/10/10 split provides validation signal for early stopping and pruning. After HPO selects the best hyperparameters, the final model folds validation data back into the training set, because the validation split has served its purpose and the final model benefits from the additional training signal.
+The final model is the best trial's checkpoint from HPO — no separate retraining step is performed. The tuner already saves each trial's best checkpoint (by validation accuracy@5) and copies the winning trial's checkpoint to `best-model.pt`. The `run-full-training.py` script copies this checkpoint to the final model directory for evaluation and ONNX export.
 
-**Two-phase data utilization:**
+**Rationale:** Retraining on a merged train+val split with a fixed epoch count introduced a risk of overfitting (no validation signal to monitor) and added training time without reliably improving test accuracy. The HPO trial's checkpoint was already trained with early stopping against validation accuracy@5, making it the most reliable artifact.
 
-1. **HPO phase:** Standard train/val/test split. Each trial trains on the 80% train split with early stopping against the 10% validation split. The tuner uses validation accuracy@5 to select the winning hyperparameters.
+**Pipeline flow:**
 
-2. **Final model phase:** The validation split is merged into the training split, producing a 90/10 train/test split. The model trains for a fixed epoch count (derived from HPO convergence behavior) with no early stopping, since there is no held-out validation set to monitor. The test split remains untouched for final evaluation.
+1. **HPO phase:** Standard train/val/test split. Each trial trains on the 80% train split with early stopping against the 10% validation split. The tuner uses validation accuracy@5 to select the winning trial.
 
-**Epoch count determination:** The fixed epoch count for the final model is set to the best trial's convergence epoch (the epoch that achieved peak validation accuracy during HPO). This avoids both underfitting (too few epochs) and overfitting (too many epochs without early stopping). The `run-full-training.py` script reads this from the HPO results.
+2. **Model promotion:** The best trial's checkpoint (`hpo-results/best-model.pt`) is copied to the final model directory. No additional training occurs.
 
-**Undersampling:** Applied to the merged train+val split before training, using the same cap and min_count parameters as HPO. Class weights are recomputed from the merged, undersampled distribution.
+3. **Evaluation and export:** The promoted checkpoint is evaluated on the held-out test split and exported to ONNX.
 
 ### Head-Class Undersampling
 

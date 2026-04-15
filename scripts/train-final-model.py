@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Train the final model using best hyperparameters from a completed HPO study.
+"""Evaluate and export the best model from a completed HPO study.
 
-Skips HPO entirely. Loads best hyperparams from an existing Optuna SQLite DB,
-folds the validation set into training, trains with a fixed epoch count (from
-the HPO best epoch), evaluates on the test set, and exports to ONNX.
+Skips HPO entirely. Promotes the best trial's checkpoint from a prior HPO run,
+evaluates on the test set, and exports to ONNX.
 """
 
 import json
@@ -76,7 +75,7 @@ def load_best_hyperparams(db_path: Path) -> tuple[dict, int]:
 
 
 def main():
-    from Poule.neural.training.data import TrainingDataLoader, fold_val_into_train, oversample_train, undersample_train
+    from Poule.neural.training.data import TrainingDataLoader, oversample_train, undersample_train
 
     # ---- Step 1: Load data ----
     logger.info("Loading training data...")
@@ -94,7 +93,7 @@ def main():
     original_train = len(dataset.train_pairs)
     dataset = undersample_train(dataset, cap=UNDERSAMPLE_CAP, min_count=UNDERSAMPLE_MIN)
     logger.info(
-        "Undersampled HPO train set: %d -> %d (cap=%d, min=%d per family)",
+        "Undersampled train set: %d -> %d (cap=%d, min=%d per family)",
         original_train,
         len(dataset.train_pairs),
         UNDERSAMPLE_CAP,
@@ -105,7 +104,7 @@ def main():
     pre_oversample = len(dataset.train_pairs)
     dataset = oversample_train(dataset, floor=OVERSAMPLE_FLOOR)
     logger.info(
-        "Oversampled HPO train set: %d -> %d (floor=%d per family)",
+        "Oversampled train set: %d -> %d (floor=%d per family)",
         pre_oversample,
         len(dataset.train_pairs),
         OVERSAMPLE_FLOOR,
@@ -116,40 +115,16 @@ def main():
     best_hp, best_epoch = load_best_hyperparams(HPO_DB)
     logger.info("Best hyperparameters: %s", best_hp)
 
-    # ---- Step 3: Fold val into train and train final model ----
-    from Poule.neural.training.mlx_backend.trainer import MLXTrainer
+    # ---- Step 3: Promote best HPO trial model ----
+    best_model_src = HPO_DB.parent / "best-model.pt"
+    if not best_model_src.exists():
+        logger.error("best-model.pt not found in %s", HPO_DB.parent)
+        sys.exit(1)
 
-    final_dataset = fold_val_into_train(dataset)
-    final_dataset = undersample_train(final_dataset, cap=UNDERSAMPLE_CAP, min_count=UNDERSAMPLE_MIN)
-    final_dataset = oversample_train(final_dataset, floor=OVERSAMPLE_FLOOR)
-    logger.info(
-        "Folded val into train: %d train samples (no validation set)",
-        len(final_dataset.train_pairs),
-    )
-
-    # Fixed epoch count from HPO convergence — no early stopping
-    final_epochs = best_epoch if best_epoch > 0 else 10
-    best_hp["max_epochs"] = final_epochs
-    best_hp["early_stopping_patience"] = final_epochs  # effectively disabled
-
-    logger.info(
-        "Training final model: %d epochs, batch_size=%d, lr=%.2e",
-        final_epochs,
-        best_hp.get("batch_size", 32),
-        best_hp.get("learning_rate", 3.9e-5),
-    )
     FINAL_MODEL_DIR.mkdir(parents=True, exist_ok=True)
-
-    t0 = time.time()
-    trainer = MLXTrainer()
-    trainer.train(
-        final_dataset,
-        FINAL_MODEL_DIR,
-        vocabulary_path=VOCABULARY,
-        hyperparams=best_hp,
-    )
-    train_time = time.time() - t0
-    logger.info("Final model training complete in %.0f min", train_time / 60)
+    best_model_dst = FINAL_MODEL_DIR / "model.pt"
+    shutil.copy2(best_model_src, best_model_dst)
+    logger.info("Promoted best HPO model: %s -> %s", best_model_src, best_model_dst)
 
     # ---- Step 4: Evaluate ----
     logger.info("Evaluating final model on test set...")
@@ -200,8 +175,8 @@ def main():
     _MIN_TRAINABLE = UNDERSAMPLE_MIN
     _COMFORTABLE = UNDERSAMPLE_MIN * 2
 
-    ge_min = [f for f in report.per_family_recall if final_dataset.family_counts.get(f, 0) >= _MIN_TRAINABLE]
-    ge_comf = [f for f in report.per_family_recall if final_dataset.family_counts.get(f, 0) >= _COMFORTABLE]
+    ge_min = [f for f in report.per_family_recall if dataset.family_counts.get(f, 0) >= _MIN_TRAINABLE]
+    ge_comf = [f for f in report.per_family_recall if dataset.family_counts.get(f, 0) >= _COMFORTABLE]
     nonzero_ge_min = sum(1 for f in ge_min if report.per_family_recall[f] > 0.0)
     nonzero_ge_comf = sum(1 for f in ge_comf if report.per_family_recall[f] > 0.0)
     cov_ge_min = nonzero_ge_min / len(ge_min) if ge_min else 0.0
@@ -211,7 +186,7 @@ def main():
 
     lines = []
     lines.append("=" * 60)
-    lines.append("FINAL MODEL VALIDATION RESULTS (HIERARCHICAL, VAL FOLDED IN)")
+    lines.append("FINAL MODEL VALIDATION RESULTS (HIERARCHICAL)")
     lines.append("=" * 60)
     lines.append("")
     lines.append(f"Date: {time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -221,9 +196,8 @@ def main():
     lines.append(f"Model checkpoint: {pt_path}")
     lines.append("")
     lines.append("--- Dataset ---")
-    lines.append(f"HPO train samples:   {len(dataset.train_pairs)}")
-    lines.append(f"HPO val samples:     {len(dataset.val_pairs)}")
-    lines.append(f"Final train samples: {len(final_dataset.train_pairs)} (val folded in)")
+    lines.append(f"Train samples:       {len(dataset.train_pairs)}")
+    lines.append(f"Val samples:         {len(dataset.val_pairs)}")
     lines.append(f"Test samples:        {len(dataset.test_pairs)}")
     lines.append(f"Categories:          {dataset.num_categories}")
     lines.append(f"Total tactics:       {dataset.num_classes}")
@@ -239,10 +213,9 @@ def main():
         else:
             lines.append(f"  {k:30s} {v}")
     lines.append("")
-    lines.append("--- Final Model ---")
+    lines.append("--- Final Model (best HPO trial) ---")
     lines.append(f"Hidden layers: {best_hp.get('num_hidden_layers', 4)}")
-    lines.append(f"Fixed epochs: {final_epochs} (from HPO best epoch)")
-    lines.append(f"Training time: {train_time / 60:.1f} min")
+    lines.append(f"Best epoch: {best_epoch}")
     lines.append(f"Category Accuracy@1: {report.category_accuracy_at_1:.4f} ({report.category_accuracy_at_1*100:.1f}%)")
     lines.append(f"Accuracy@1: {report.accuracy_at_1:.4f} ({report.accuracy_at_1*100:.1f}%)")
     lines.append(f"Accuracy@5: {report.accuracy_at_5:.4f} ({report.accuracy_at_5*100:.1f}%)")

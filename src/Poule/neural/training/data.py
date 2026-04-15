@@ -214,52 +214,6 @@ def undersample_train(
     )
 
 
-def fold_val_into_train(dataset: TacticDataset) -> TacticDataset:
-    """Merge validation data into training after HPO selects hyperparameters.
-
-    spec §4.1: Returns a new TacticDataset where train_pairs is the
-    concatenation of the original train_pairs + val_pairs, val_pairs
-    is empty, and test_pairs is unchanged. family_counts and
-    per_category_counts are recomputed from the merged training split.
-    """
-    new_train_pairs = dataset.train_pairs + dataset.val_pairs
-    new_train_files = dataset.train_files + dataset.val_files
-
-    # Recompute family_counts from merged train + unchanged test
-    new_family_counts: Counter[str] = Counter()
-    for pairs in (new_train_pairs, dataset.test_pairs):
-        for _, cat_idx, within_idx in pairs:
-            cat_name = dataset.category_names[cat_idx]
-            family = dataset.per_category_label_names[cat_name][within_idx]
-            new_family_counts[family] += 1
-
-    # Recompute per_category_counts
-    new_per_category_counts: dict[str, dict[str, int]] = {}
-    for cat in dataset.category_names:
-        cat_counts: dict[str, int] = {}
-        for tac in dataset.per_category_label_names[cat]:
-            count = new_family_counts.get(tac, 0)
-            if count > 0:
-                cat_counts[tac] = count
-        new_per_category_counts[cat] = cat_counts
-
-    return TacticDataset(
-        train_pairs=new_train_pairs,
-        val_pairs=[],
-        test_pairs=dataset.test_pairs,
-        label_map=dataset.label_map,
-        label_names=dataset.label_names,
-        family_counts=dict(new_family_counts),
-        train_files=new_train_files,
-        val_files=[],
-        test_files=dataset.test_files,
-        category_names=dataset.category_names,
-        per_category_label_maps=dataset.per_category_label_maps,
-        per_category_label_names=dataset.per_category_label_names,
-        per_category_counts=new_per_category_counts,
-    )
-
-
 # Regex for identifying hypothesis lines: "identifier : rest"
 _HYP_RE = re.compile(r"^[a-zA-Z_][a-zA-Z_0-9']* : ")
 

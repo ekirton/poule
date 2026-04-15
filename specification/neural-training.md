@@ -435,42 +435,6 @@ All steps from the same file go into the same split.
 > **When** the resulting `train_pairs` are compared
 > **Then** they are identical (same examples in the same positions per family group)
 
-#### Fold validation into training: fold_val_into_train()
-
-`fold_val_into_train(dataset) -> TacticDataset`
-
-After HPO selects optimal hyperparameters, the validation split has served its purpose. The final model folds validation data back into training to maximize the data available for the production model.
-
-- REQUIRES: `dataset` is a populated `TacticDataset` with non-empty `val_pairs`.
-- ENSURES: Returns a new `TacticDataset` where:
-  - `train_pairs` is the concatenation of `dataset.train_pairs + dataset.val_pairs`.
-  - `train_files` is the concatenation of `dataset.train_files + dataset.val_files`.
-  - `val_pairs` is an empty list.
-  - `val_files` is an empty list.
-  - `test_pairs` and `test_files` are identical to the input dataset.
-  - All label maps, category names, and taxonomy fields are copied unchanged.
-  - `family_counts` and `per_category_counts` are recomputed from the merged training split.
-
-**Procedure:**
-
-1. Concatenate `train_pairs + val_pairs` into the new `train_pairs`.
-2. Concatenate `train_files + val_files` into the new `train_files`.
-3. Set `val_pairs` and `val_files` to empty lists.
-4. Copy `test_pairs`, `test_files`, and all label/category fields unchanged.
-5. Recompute `family_counts` and `per_category_counts` from the merged training split.
-
-- MAINTAINS: `test_pairs` and `test_files` are identical to the input dataset.
-- MAINTAINS: Every pair from the original `train_pairs` and `val_pairs` appears exactly once in the result's `train_pairs`.
-- MAINTAINS: No data is lost or duplicated.
-
-> **Given** a dataset with 39,542 train_pairs and 10,521 val_pairs
-> **When** `fold_val_into_train(dataset)` runs
-> **Then** the result has 50,063 train_pairs, 0 val_pairs, and unchanged test_pairs
-
-> **Given** the result of `fold_val_into_train(dataset)`
-> **When** `undersample_train` is applied to the result
-> **Then** undersampling operates on the merged train+val pool, potentially retaining more tail-class examples
-
 #### Minority oversampling
 
 `oversample_train(dataset, floor, seed) -> TacticDataset`
@@ -1024,7 +988,7 @@ All other hyperparameters (`max_seq_length`, `embedding_dim`, `max_epochs`, `ear
 |-------|------|-----------|
 | `best_hyperparams` | dict | Hyperparameter values from the best trial |
 | `best_value` | float | Best validation accuracy@5 across all completed trials |
-| `best_epoch` | integer | The epoch at which the best trial achieved its peak validation accuracy. Used as the fixed epoch count for final model training (which has no early stopping after validation data is folded into training). |
+| `best_epoch` | integer | The epoch at which the best trial achieved its peak validation accuracy. |
 | `n_trials` | integer | Total number of trials (completed + pruned + failed) |
 | `n_pruned` | integer | Number of trials pruned by the MedianPruner |
 | `study_path` | string | Path to the SQLite study database |
