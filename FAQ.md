@@ -8,7 +8,7 @@ Poule also provides skills — compound workflows like `/formalize`, `/proof-rep
 
 ### Who is Poule for?
 
-Anyone working with Coq/Rocq. Students benefit from natural-language search, proof explanations (`/explain-proof`), and error diagnosis (`/explain-error`) — you can ask Claude what a tactic does or why a proof fails instead of deciphering error messages alone. Experienced users benefit from cross-library lemma discovery, proof compression, automated repair after version upgrades, and the ability to explore unfamiliar libraries (MathComp, std++, etc.) conversationally rather than by reading source files.
+Anyone learning Coq/Rocq. Students benefit from natural-language search, proof explanations (`/explain-proof`), and error diagnosis (`/explain-error`) — you can ask Claude what a tactic does or why a proof fails instead of deciphering error messages alone. Additional features include cross-library lemma discovery, proof compression, automated repair after version upgrades, and the ability to explore unfamiliar libraries (MathComp, std++, etc.) conversationally rather than by reading source files.  Claude can be your first stop for questions before posting on the forums.
 
 ### Do I need to know Coq already?
 
@@ -21,6 +21,8 @@ MCP stands for [Model Context Protocol](https://modelcontextprotocol.io/). It's 
 ### What is RAG?
 
 RAG stands for Retrieval-Augmented Generation. It means that when Claude answers your question, it first searches a database of relevant information (in Poule's case, the Software Foundations textbook and the Coq library index) and includes what it finds in its answer. This is why Claude can cite specific textbook passages and find lemmas you didn't know existed — it's not just relying on its training data, it's actively looking things up.
+
+There is also a RAG database of the indexed libraries which provide natural language search capabilities over the six included libraries.
 
 ### How much does it cost?
 

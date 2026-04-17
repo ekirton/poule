@@ -1,6 +1,6 @@
 # Examples
 
-Concrete examples of questions you can ask Poule, organized by the recurring pain points in the Coq/Rocq community (see [doc/background/common-questions.md](doc/background/common-questions.md) for the full survey). Each example shows what you'd type into Claude Code — Poule handles the tool calls behind the scenes.
+Concrete examples of questions you can ask Poule, organized by the recurring pain points in the Coq/Rocq community (see [doc/background/common-questions.md](doc/background/common-questions.md) for the full survey). Each example shows the kind of query you give Claude Code and Poule handles the tool calls behind the scenes.
 
 ---
 
