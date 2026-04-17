@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Default paths work both inside the container (/data/) and locally.
+# Default paths work locally (~/poule-home/data).
 # Override with POULE_DATA_DIR or --checkpoint/--output flags.
-DATA_DIR="${POULE_DATA_DIR:-/data}"
+DATA_DIR="${POULE_DATA_DIR:-${HOME}/poule-home/data}"
 CHECKPOINT="${DATA_DIR}/final-model/model.pt"
 OUTPUT="${DATA_DIR}/final-model/tactic-predictor.onnx"
 

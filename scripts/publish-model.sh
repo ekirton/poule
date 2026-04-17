@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-DATA_DIR="${POULE_DATA_DIR:-/data}"
+DATA_DIR="${POULE_DATA_DIR:-${HOME}/poule-home/data}"
 MODEL_DIR="${DATA_DIR}/final-model"
 TAG="tactic-model"
 

@@ -205,21 +205,78 @@ The training pipeline includes an Optuna-based hyperparameter tuner (Tree-struct
 
 The primary metric is **accuracy@5**: whether the correct tactic family appears in the model's top-5 predictions. This aligns with the use case — the student sees a ranked list of suggestions, and the prediction is useful if the right answer is anywhere in the list.
 
+## Experimental Results
+
+### Test set performance
+
+| Metric | Value |
+|--------|-------|
+| Accuracy@5 | 67.8% |
+| Accuracy@1 | 25.8% |
+| Category Accuracy@1 | 40.0% |
+| Zero-recall families | 34 of 65 |
+| Trainable coverage (≥100 examples) | 31/43 (72.1%) |
+
+### Best hyperparameters (HPO trial 3 of 10)
+
+| Hyperparameter | Value |
+|---|---|
+| `num_hidden_layers` | 6 |
+| `batch_size` | 16 |
+| `learning_rate` | 1.58e-05 |
+| `weight_decay` | 0.0397 |
+| `class_weight_alpha` | 0.601 |
+| `label_smoothing` | 0.142 |
+| `sam_rho` | 0.152 |
+| `lambda_within` | 2.80 |
+
+Best validation acc@5 during HPO: 75.2%. The 8-point gap between validation (75.2%) and test (67.8%) indicates some overfitting to the validation distribution, though both sets are drawn from the same libraries.
+
+### Per-category accuracy
+
+| Category | Accuracy@1 |
+|----------|--------:|
+| Introduction | 46.7% |
+| SSReflect | 38.2% |
+| Elimination | 28.4% |
+| Hypothesis Management | 22.2% |
+| Rewriting | 21.3% |
+| Arithmetic | 12.4% |
+| Automation | 8.7% |
+| Contradiction | 0.0% |
+
+Introduction tactics are the most predictable — `intros` and `constructor` have distinctive proof state signatures (universal quantification, inductive goals). Contradiction has too few examples (146 total) and all three families (`exfalso`, `absurd`, `contradiction`) have zero recall.
+
+### Top tactic families by recall
+
+| Family | Precision | Recall |
+|--------|--------:|------:|
+| `have` | 0.232 | 0.653 |
+| `intros` | 0.547 | 0.576 |
+| `exists` | 0.279 | 0.509 |
+| `split` | 0.240 | 0.492 |
+| `induction` | 0.379 | 0.450 |
+| `move` | 0.622 | 0.397 |
+| `constructor` | 0.524 | 0.393 |
+| `destruct` | 0.107 | 0.389 |
+| `revert` | 0.122 | 0.359 |
+| `replace` | 0.096 | 0.322 |
+
 ## Lessons Learned
 
 Several experiments over the course of development shaped the current architecture. Key findings:
 
 - **Hierarchical decomposition transforms the problem.** Replacing a flat 96-class classifier with an 8-category hierarchy improved validation accuracy by 10.5 percentage points. With fewer, better-defined classes per head, the model learns more effectively.
 
-- **Undersampling is more effective than loss engineering.** Capping dominant families at 2,000 examples collapsed the validation-test gap from 35pp to 6pp and doubled the number of tactic families with non-zero recall (10 -> 21). In contrast, focal loss (Lin et al., 2017) and LDAM + DRW (Cao et al., 2019) both regressed test accuracy — the bottleneck is data sparsity for rare families, not the loss function's treatment of imbalance.
+- **Undersampling is more effective than loss engineering.** Capping dominant families at 2,000 examples collapsed the validation-test gap from 35pp to 8pp and tripled the number of tactic families with non-zero recall (10 -> 31). In contrast, focal loss (Lin et al., 2017) and LDAM + DRW (Cao et al., 2019) both regressed test accuracy — the bottleneck is data sparsity for rare families, not the loss function's treatment of imbalance.
 
 - **SAM is critical for generalization.** High SAM rho (perturbation radius ~0.18) was the single most important factor in closing the validation-test gap. When SAM rho dropped below 0.1, the gap tripled regardless of other hyperparameters.
 
-- **Low class weight alpha works best.** Near-uniform class weights (α < 0.2) consistently outperformed aggressive rebalancing (α > 0.5). Over-weighting rare classes amplifies noise from families with too few examples.
+- **Moderate class weight alpha works best.** The HPO-selected α = 0.6 outperformed both near-uniform (α < 0.2) and aggressive (α > 0.8) rebalancing. Combined with undersampling, moderate rebalancing improves rare-family recall without amplifying noise from the sparsest families.
 
 - **Smaller models avoid overfitting under imbalance.** Consistent with Shwartz-Ziv et al. (2023), who found only 0.14 correlation between balanced and imbalanced performance across architectures. Layer dropping from 12 to 4–8 layers improved test accuracy.
 
-- **Many tactic families remain unlearnable.** Even the best model has zero recall on ~44 of 65 families. These families have too few training examples (<100) for the model to learn — the limiting factor is data, not architecture. Cross-library evaluation (LOOCV) confirmed that the model memorizes library-specific patterns rather than learning general tactic selection.
+- **Many tactic families remain unlearnable.** Even the best model has zero recall on 34 of 65 families. Of the 43 families with ≥100 training examples, 31 achieve non-zero recall (72% trainable coverage). The remaining zero-recall families have too few training examples for the model to learn — the limiting factor is data, not architecture. Cross-library evaluation (LOOCV) confirmed that the model memorizes library-specific patterns rather than learning general tactic selection.
 
 ## Deployment
 
