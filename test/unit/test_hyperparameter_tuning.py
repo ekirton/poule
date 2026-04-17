@@ -501,7 +501,12 @@ class TestHyperparameterTuner:
             HyperparameterTuner.tune(dataset, output_dir, n_trials=3)
 
     def test_tune_resume_continues_study(self, tmp_path):
-        """spec §4.8: resume=True continues from existing study."""
+        """spec §4.8: resume=True continues from existing study.
+
+        Per spec: n_trials is a target total across sessions — resuming a
+        study with 2 existing trials and n_trials=5 runs 3 additional
+        trials, not 5.
+        """
         import optuna
         optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -509,7 +514,7 @@ class TestHyperparameterTuner:
         result1, output_dir, _ = self._run_tune(tmp_path, n_trials=2)
         assert result1.n_trials == 2
 
-        # Resume with 3 more
+        # Resume, raising the target total to 5 → 3 additional trials run
         from Poule.neural.training.tuner import HyperparameterTuner
 
         dataset = self._make_dataset()
@@ -522,9 +527,9 @@ class TestHyperparameterTuner:
                     return_value={"best_accuracy_5": 0.5}), \
              patch("transformers.AutoTokenizer.from_pretrained", return_value=MagicMock()):
             result2 = HyperparameterTuner.tune(
-                dataset, output_dir, n_trials=3, resume=True,
+                dataset, output_dir, n_trials=5, resume=True,
             )
-        assert result2.n_trials == 5  # 2 + 3
+        assert result2.n_trials == 5
 
     def test_tune_direction_is_maximize(self, tmp_path):
         """spec §4.8: study maximizes val R@32 (higher is better)."""
