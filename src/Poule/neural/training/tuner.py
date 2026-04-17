@@ -260,10 +260,24 @@ class HyperparameterTuner:
             except ImportError:
                 pass
 
-        # Run optimization with per-trial cleanup
-        for i in range(n_trials):
+        # Run optimization until n_trials completed-or-pruned trials exist in the
+        # study (across all sessions, including resumed ones).  Failures do not
+        # count toward the budget — they wasted compute but produced no useful
+        # data for TPE.  A safety cap of 3× prevents infinite loops when every
+        # attempt consistently fails.
+        max_attempts = n_trials * 3
+        attempts = 0
+        while attempts < max_attempts:
+            valid = sum(
+                1
+                for t in study.trials
+                if t.state.name in ("COMPLETE", "PRUNED")
+            )
+            if valid >= n_trials:
+                break
             study.optimize(objective, n_trials=1, catch=(Exception,))
             _cleanup_memory()
+            attempts += 1
 
         # Check if any trials completed
         completed = [t for t in study.trials if t.state.name == "COMPLETE"]

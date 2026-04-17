@@ -111,7 +111,7 @@ def main():
         dataset,
         HPO_DIR,
         vocabulary_path=VOCABULARY_DIR,
-        n_trials=13,
+        n_trials=15,
         study_name="poule-hpo-undersampled",
         resume=True,
         hpo_patience=2,
