@@ -47,7 +47,12 @@ Audit Nat.add_comm — is it constructive? Can it be extracted to OCaml?
 Audit nonexistent_theorem_xyz in examples/algebra.v
 ```
 
-**Large module — summary not exhaustive list (known limitation: Print Module does not track sub-module nesting, so declarations inside `Module Nat` get wrong FQNs):**
+**Large module — summary not exhaustive list (known limitation: `Print Module Stdlib.Arith.PeanoNat` lists four deprecated aliases inside `Module Nat` — `lt_n_Sm_le`, `le_lt_n_Sm`, `lt_S_n`, `pred_of_minus` — that do not resolve in Coq 9.1.1, so every per-theorem audit returns `NOT_FOUND`):**
 ```
 Audit the Coq.Arith.PeanoNat module — give me a summary, not a listing of every theorem
+```
+
+**Submodule-qualified FQNs on a resolvable stdlib module (exercises the `Module`/`End` submodule-stack fix from commit 92b2541):**
+```
+Audit the Stdlib.ZArith.BinInt module — summary only
 ```

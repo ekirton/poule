@@ -668,6 +668,11 @@ Audit Nat.add_comm — is it constructive? Can it be extracted to OCaml?
 Audit nonexistent_theorem_xyz in examples/algebra.v
 ```
 
+**Stdlib module with nested submodules (axiom-free summary):**
+```
+Audit the Stdlib.ZArith.BinInt module — summary only
+```
+
 ---
 
 ## 13. Visualization
