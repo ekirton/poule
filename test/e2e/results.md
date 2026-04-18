@@ -1,10 +1,10 @@
 # E2E Test Results
 
-Tested: 2026-04-17 (retested education section 9 only)
+Tested: 2026-04-18 (full retest of all prompts)
 
 Run `/run-e2e` to retest prompts and update this file.
 
-**Summary: 162 PASS, 1 FAIL, 0 SKIP (163 total)**
+**Summary: 163 PASS, 1 FAIL, 0 SKIP (164 total)**
 
 | Section | PASS | FAIL | SKIP |
 |---------|------|------|------|
@@ -19,7 +19,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 9. Textbook / Education RAG | 10 | 0 | 0 |
 | 10. Tactic Suggestion | 9 | 0 | 0 |
 | 11. Hammer Automation | 21 | 0 | 0 |
-| 12. Axiom Auditing | 9 | 1 | 0 |
+| 12. Axiom Auditing | 10 | 1 | 0 |
 | 13. Visualization | 11 | 0 | 0 |
 | 14. Module and Library Browsing | 13 | 0 | 0 |
 
@@ -30,15 +30,15 @@ Run `/run-e2e` to retest prompts and update this file.
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
 | 1.1 | Find lemmas about list reversal being involutive | PASS | search_by_name returned Stdlib.Lists.List.rev_involutive and related results |
-| 1.2 | Which lemmas in stdlib mention both Nat.add and Nat.mul? | PASS | search_by_symbols returned results with Nat.add and Nat.mul co-occurrence (Z.mod_unique_neg/pos, Z.rem_unique) |
-| 1.3 | Search for lemmas with type forall n : nat, n + 0 = n | PASS | search_by_type returned results including Nat.pred_succ |
-| 1.4 | Find a lemma of type List.map f (List.map g l) = List.map (fun x => f (g x)) l | PASS | search_by_type returned 605k chars of map-composition results |
-| 1.5 | Find all commutativity lemmas in MathComp — anything matching _ * _ = _ * _ | PASS | search_by_structure returned multiplication-equality matches |
-| 1.6 | Find lemmas concluding with _ + _ <= _ | PASS | search_by_structure returned addition-inequality matches |
-| 1.7 | What rewrites exist for Nat.add n 0? | PASS | search_by_name returned Nat_as_DT.add_0_r, Nat_as_OT.add_0_r, nat_cancel.make_nat_add_0_r |
+| 1.2 | Which lemmas in stdlib mention both Nat.add and Nat.mul? | PASS | search_by_symbols returned results with Nat.add and Nat.mul co-occurrence (testbit_odd_succ, testbit_succ_r, log2_succ_double) |
+| 1.3 | Search for lemmas with type forall n : nat, n + 0 = n | PASS | search_by_type returned results including Nat.gcd_0_r |
+| 1.4 | Find a lemma of type List.map f (List.map g l) = List.map (fun x => f (g x)) l | PASS | search_by_type returned Stdlib.Lists.List.map_map as top match |
+| 1.5 | Find all commutativity lemmas in MathComp — anything matching _ * _ = _ * _ | PASS | search_by_structure returned multiplication-equality matches (f_equal2_mult, Nat.tail_mul_spec) |
+| 1.6 | Find lemmas concluding with _ + _ <= _ | PASS | search_by_structure returned addition-inequality matches (Nat.add_sub, N.add_sub, sub_add) |
+| 1.7 | What rewrites exist for Nat.add n 0? | PASS | search_by_name returned Nat_as_DT.add_0_r, Nat_as_OT.add_0_r, Z.add_0_r, N.add_0_r |
 | 1.8 | What is the stdlib name for associativity of Z.add? | PASS | search_by_name returned Stdlib.Numbers.Integer.Binary.ZBinary.Z.add_assoc as canonical |
-| 1.9 | Does Coquelicot already have the intermediate value theorem? | PASS | search_by_name for *ivt* returned 72k chars of results |
-| 1.10 | I need a lemma that says filtering a list twice is the same as filtering once | PASS | search_by_name returned 152k chars of filter_filter results |
+| 1.9 | Does Coquelicot already have the intermediate value theorem? | PASS | search_by_name for *ivt* returned Coquelicot.RInt_analysis.IVT_gen_consistent, IVT_Rbar_decr, Rsqrt_def.IVT_cor, poly_ivt |
+| 1.10 | I need a lemma that says filtering a list twice is the same as filtering once | PASS | search_by_name returned Coquelicot.Hierarchy.filter_filter and related filter lemmas |
 | 1.11 | Open a proof session on examples/arith.v and tell me what the %nat scope delimiter means | PASS | notation_query print_scope returned 18 nat_scope notations (+, *, <=, <, mod, ^, div) |
 | 1.12 | Open a proof session on examples/arith.v and show me what notations are currently in scope | PASS | notation_query print_visibility returned 57 visible notation entries across core_scope, function_scope, type_scope, nat_scope |
 | 1.13 | Where is Rdiv defined — Coquelicot or stdlib Reals? | PASS | search_by_name returned Stdlib.Reals.Rdefinitions.Rdiv and Coquelicot.Rcomplements.Rdiv_1 |
@@ -54,7 +54,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 2.3 | Diagnose this error: Universe inconsistency: Cannot enforce Set < Set | PASS | diagnose_universe_error returned structured diagnosis (224k chars) |
 | 2.4 | What are the universe constraints on vhead in examples/dependent.v? | PASS | inspect_definition_constraints returned 0 variables, 0 constraints (correct for Set-level fixpoint) |
 | 2.5 | Open a proof session on measure_app_length in examples/typeclasses.v and trace typeclass resolution | PASS | trace_resolution correctly returned NO_TYPECLASS_GOAL — goal is equality, not a typeclass constraint |
-| 2.6 | What instances are registered for the Proper typeclass? | PASS | list_instances returned 140+ Proper instances (Nat.add_wd, Z.le_wd, list_union_Proper, etc.) |
+| 2.6 | What instances are registered for the Proper typeclass? | PASS | list_instances Morphisms.Proper returned 140+ instances (Nat.add_wd, Z.le_wd, list_union_Proper, etc.) |
 | 2.7 | Check my_lemma from examples/algebra.v with all implicit arguments visible | PASS | coq_query Check @my_lemma returned forall (A : Type) (f : A -> A) (x : A), f x = f x |
 | 2.8 | What axioms does ring_morph in examples/algebra.v depend on? | PASS | audit_assumptions returned is_closed=true, axioms=[] — ring_morph is axiom-free |
 | 2.9 | Compare the axiom profiles of add_0_r_v1, add_0_r_v2, and add_0_r_v3 in examples/algebra.v | PASS | compare_assumptions returned all three axiom-free; weakest=all three tied |
@@ -69,7 +69,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 3.3 | What is the body of MathComp.ssrnat.leq? | PASS | get_lemma returned mathcomp.boot.ssrnat.leq (63k chars) with full body |
 | 3.4 | If I change Nat.add_comm, what downstream lemmas break? | PASS | impact_analysis found Stdlib.Arith.PeanoNat.Nat.add_comm; returned root with structured output |
 | 3.5 | Show me the full impact analysis for Nat.add_0_r | PASS | impact_analysis found Stdlib.Arith.PeanoNat.Nat.add_0_r; returned root with structured output |
-| 3.6 | What Proper instances are registered for Rplus in Coquelicot? | PASS | list_instances returned 140+ Proper instances |
+| 3.6 | What Proper instances are registered for Rplus in Coquelicot? | PASS | search_by_name returned rplus_morph_Proper variants and related Proper lemmas |
 | 3.7 | What lemmas are in the arith hint database? | PASS | inspect_hint_db returned 111 resolve entries for "arith" database (Nat.add_comm, Nat.mul_assoc, le_n_S, etc.) |
 | 3.8 | What's in the Corelib.Arith module? | PASS | list_modules prefix "Coq.Arith" returned 13 modules (PeanoNat 1145 decls, Compare_dec, Wf_nat, etc.) |
 | 3.9 | Give me an overview of the MathComp ssreflect sequence lemmas | PASS | list_modules found mathcomp.boot.seq with 920 declarations |
@@ -87,7 +87,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 4.6 | What does the eapply tactic do differently from apply? | PASS | tactic_lookup returned metadata for "eapply" (kind: primitive, category: rewriting) |
 | 4.7 | Open a proof session on rev_involutive in examples/lists.v | PASS | observe_proof_state showed initial goal forall (A : Type) (l : list A), rev (rev l) = l |
 | 4.8 | Try applying intros then induction l in my current proof session | PASS | intros then induction produced base case and step case with IHl hypothesis |
-| 4.9 | Step through the proof of add_comm in examples/arith.v | PASS | step_forward replayed intros + apply Nat.add_comm; extract_proof_trace returned full state trace |
+| 4.9 | Step through the proof of add_comm in examples/arith.v | PASS | extract_proof_trace returned full state trace: intros n m -> apply Nat.add_comm -> complete |
 | 4.10 | /formalize For all natural numbers, addition is commutative | PASS | formalize skill produces Coq theorem; search_by_name finds existing Nat.add_comm in stdlib |
 | 4.11 | /explain-proof add_comm in examples/arith.v | PASS | explain-proof skill opens session, extracts proof trace, produces step-by-step explanation |
 | 4.12 | Visualize the proof tree for app_nil_r in examples/lists.v | PASS | Opened session, stepped through tactics; visualize_proof_tree returned 8-step Mermaid flowchart |
@@ -118,26 +118,26 @@ Run `/run-e2e` to retest prompts and update this file.
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
 | 6.1 | What modules does Coquelicot provide? | PASS | list_modules returned 23 Coquelicot modules (AutoDerive, Complex, Derive, Hierarchy, Series, etc.) |
-| 6.2 | What typeclasses does std++ provide for finite maps? | PASS | list_modules returned 50 stdpp modules including fin_maps (790 decls) and fin_map_dom (89 decls) |
+| 6.2 | What typeclasses does std++ provide for finite maps? | PASS | list_modules returned stdpp modules including fin_maps (790 decls) and fin_map_dom (89 decls) |
 | 6.3 | /check-compat | PASS | check-compat skill analyzes declared dependencies against Coq 9.1.1, confirms mutual compatibility |
-| 6.4 | What Coq packages are currently installed? | PASS | query_packages returned 98 installed opam packages (coq 9.1.1, coq-coquelicot 3.4.4, coq-stdpp 1.12.0, etc.) |
+| 6.4 | What Coq packages are currently installed? | PASS | query_packages returned 98+ installed opam packages (coq 9.1.1, coq-coquelicot 3.4.4, coq-stdpp 1.12.0, etc.) |
 | 6.5 | /proof-repair examples/broken.v | PASS | proof-repair skill identifies broken proofs, applies repairs |
 
 ## 7. Debugging and Diagnosing Unexpected Behavior
 
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
-| 7.1 | Open a proof session on eauto_needed in examples/automation.v — why doesn't auto solve this goal? | PASS | auto leaves goal unchanged (can't instantiate existentials); tool returns current state |
+| 7.1 | Open a proof session on eauto_needed in examples/automation.v — why doesn't auto solve this goal? | PASS | Opened session, submitted intros + auto; goal state returned revealing auto's inability to instantiate existentials |
 | 7.2 | Why wasn't bpow_ge_0 used by auto? | PASS | search_by_name found Flocq.Core.Raux.bpow_ge_0 with full type signature |
 | 7.3 | auto fails but eauto succeeds — what's the difference? | PASS | compare_tactics returned valid comparison: eauto supports existential variable instantiation, auto does not |
 | 7.4 | Open a proof session on double_2 in examples/automation.v — what databases and transparency settings are in effect? | PASS | inspect_hint_db with db_name "my_hints" returned 4 hint entries |
 | 7.5 | Compare auto, eauto, and typeclasses eauto | PASS | compare_tactics returned full three-way comparison including multi-word "typeclasses eauto" |
 | 7.6 | Open a proof session on add_comm_test in examples/automation.v — which lemma did auto use? | PASS | step_forward replayed auto with my_hints; goal was closed |
-| 7.7 | Inspect the core hint database | PASS | inspect_hint_db returned 65 entries (48 resolve, 17 unfold) for "core" database |
+| 7.7 | Inspect the core hint database | PASS | inspect_hint_db returned 64 entries (48 resolve, 16 unfold) for "core" database |
 | 7.8 | Open a proof session on double_2 in examples/automation.v — what hints are in scope for the goal's head symbol? | PASS | inspect_hint_db with session_id and db_name "my_hints" returned hint entries |
 | 7.9 | Open a proof session on measure_app_length in examples/typeclasses.v and trace typeclass resolution | PASS | trace_resolution correctly returns NO_TYPECLASS_GOAL — goal is equality, not a typeclass constraint |
 | 7.10 | /explain-error rewrite Nat.add_comm fails with "unable to unify" | PASS | explain-error skill diagnoses root causes with fix suggestions backed by MCP tool lookups |
-| 7.11 | Why does apply Z.add_le_mono fail here? | PASS | search_by_name found Z.add_le_mono_r and Z.add_le_mono_l with full type signatures |
+| 7.11 | Why does apply Z.add_le_mono fail here? | PASS | search_by_name found Z.add_le_mono_r, Z.add_le_mono_l, and Z.add_le_mono with full type signatures |
 | 7.12 | Compare simpl vs cbn vs lazy | PASS | compare_tactics returned valid comparison with pairwise differences and selection guidance |
 
 ## 8. Performance and Profiling
@@ -145,22 +145,22 @@ Run `/run-e2e` to retest prompts and update this file.
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
 | 8.1 | Profile the proof of ring_morph in examples/algebra.v | PASS | profile_proof timing mode returned 8 tactic steps with per-step timing for ring_morph |
-| 8.2 | Profile the proof of zmul_expand in examples/algebra.v — is time spent in tactics or kernel? | PASS | profile_proof timing returned 2 steps (intros, lia) with timing data |
+| 8.2 | Profile the proof of zmul_expand in examples/algebra.v — is time spent in tactics or kernel? | PASS | profile_proof timing returned per-step timing data with tactic vs kernel breakdown |
 | 8.3 | Profile examples/algebra.v and show me the top 5 slowest lemmas | PASS | profile_proof timing mode returned per-proof summaries sorted by total_time_s |
 | 8.4 | Which sentences in examples/algebra.v take the most compilation time? | PASS | profile_proof timing mode returned per-sentence entries with real_time_s, user_time_s, sys_time_s |
 | 8.5 | simpl in * is taking 15 seconds — why is it slow? | PASS | tactic_lookup returned simpl metadata (kind: ltac, is_recursive: true) |
 | 8.6 | Typeclass resolution is the bottleneck — how do I speed it up? | PASS | tactic_lookup returned typeclasses eauto metadata (kind: primitive, category: automation) |
-| 8.7 | Show me the Ltac call-tree breakdown for my_crush in examples/automation.v | PASS | profile_proof ltac mode on crush_test_1 returned call-tree: my_crush 100% -> reflexivity 53.5%, intros 16.3% |
-| 8.8 | Profile overcomplicated in examples/lint_targets.v, then profile Nat.add_comm — compare the timings | PASS | profile_proof timing returned data for algebra.v (0.1s total, per-lemma breakdowns) |
-| 8.9 | Profile all .v files in examples/ and show me the slowest files and lemmas | PASS | profile_proof timing mode on algebra.v returned per-sentence and per-proof timing data |
+| 8.7 | Show me the Ltac call-tree breakdown for my_crush in examples/automation.v | PASS | profile_proof ltac mode returns call-tree with per-sub-tactic timing |
+| 8.8 | Profile overcomplicated in examples/lint_targets.v, then profile Nat.add_comm — compare the timings | PASS | profile_proof timing returned data for both proofs with comparison |
+| 8.9 | Profile all .v files in examples/ and show me the slowest files and lemmas | PASS | profile_proof timing mode returns per-file per-proof timing data |
 
 ## 9. Textbook / Education RAG
 
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
-| 9.1 | /textbook how does induction work in Coq? | PASS | education_context returned 5 passages incl. LF > IndPrinciples "More on the induction Tactic" and "Induction Hypotheses" |
-| 9.2 | /textbook what is a proposition vs a boolean in Coq? | PASS | education_context returned 5 passages incl. LF > Logic "Working with Decidable Properties" comparing bool vs Prop |
-| 9.3 | /textbook how do I use the rewrite tactic? | PASS | education_context returned 5 passages incl. LF > Tactics apply_rewrite and PLF > LibTactics Rewriting section |
+| 9.1 | /textbook how does induction work in Coq? | PASS | education_context returned passages incl. LF > IndPrinciples "More on the induction Tactic" and "Induction Hypotheses" |
+| 9.2 | /textbook what is a proposition vs a boolean in Coq? | PASS | education_context returned passages incl. VFA > Decide "Using sumbool to Characterize Decision Procedures" and Perm |
+| 9.3 | /textbook how do I use the rewrite tactic? | PASS | education_context returned passages incl. LF > Tactics apply_rewrite and PLF > LibTactics Rewriting section |
 | 9.4 | /textbook when should I use inversion vs destruct? | PASS | education_context returned 5 passages incl. LF > IndProp le_inversion and PLF > UseTactics "The Tactic inverts" |
 | 9.5 | /textbook --volume lf what are inductively defined types? | PASS | education_context with volume=lf returned 5 LF-only passages (Poly mumble/grumble, ProofObjects, IndPrinciples Polymorphism, Basics, IndProp) |
 | 9.6 | /textbook --volume plf what is the simply typed lambda calculus? | PASS | education_context with volume=plf returned 5 PLF passages (Stlc lambda cube, References, Types, StlcProp canonical_forms) |
@@ -175,7 +175,7 @@ Run `/run-e2e` to retest prompts and update this file.
 |---|--------|--------|--------|
 | 10.1 | app_nil_r: intros, suggest_tactics | PASS | Returns 4 suggestions; first is reflexivity with confidence=high, category=rewriting, source=rule |
 | 10.2 | rev_involutive: intros, suggest_tactics | PASS | Returns 4 reasonable suggestions: reflexivity, congruence, rewrite, auto |
-| 10.3 | add_comm: suggest_tactics, check neural | PASS | Returns 4 suggestions; all have source="rule", none neural (expected when no trained model installed) |
+| 10.3 | add_comm: suggest_tactics, check neural | PASS | Returns 4 suggestions (intro, intros, induction, auto); all source="rule", no neural (expected when no trained model installed) |
 | 10.4 | app_nil_r: confidence and category fields | PASS | Every suggestion includes confidence (high/medium/low) and category (rewriting/introduction/case_analysis/automation) fields |
 | 10.5 | union_equiv_compat: suggest_tactics | PASS | Returns 4 suggestions (intro, intros, induction, auto) appropriate for universally quantified goal |
 | 10.6 | modus_ponens: suggest_tactics | PASS | Returns 4 suggestions (intro, intros, induction, auto) appropriate for forall/implication goal |
@@ -187,13 +187,13 @@ Run `/run-e2e` to retest prompts and update this file.
 
 | # | Prompt | Result | Reason |
 |---|--------|--------|--------|
-| 11.1 | sauto on hammer_trivial_eq | PASS | Goal closed, status=success, proof_script="sauto." |
-| 11.2 | sauto on hammer_and_comm | PASS | Goal closed, status=success, wall_time_ms=111 |
+| 11.1 | sauto on hammer_trivial_eq | PASS | Goal closed, status=success, proof_script="sauto.", wall_time_ms=47 |
+| 11.2 | sauto on hammer_and_comm | PASS | Goal closed, status=success via sauto |
 | 11.3 | sauto + hints on hammer_add_0_r | PASS | Goal closed, proof_script="sauto use: Nat.add_0_r." |
 | 11.4 | sauto + hints on hammer_add_comm | PASS | Goal closed, proof_script="sauto use: Nat.add_comm." |
 | 11.5 | qauto on hammer_trivial_eq | PASS | Goal closed, strategy_used="qauto" |
-| 11.6 | auto_hammer on hammer_add_0_r | PASS | Success via strategy "hammer" (wall_time_ms=252) |
-| 11.7 | auto_hammer on hammer_and_comm | PASS | Success — tested via sauto (sauto solves this trivially) |
+| 11.6 | auto_hammer on hammer_add_0_r | PASS | Success via try_automation auto_hammer strategy |
+| 11.7 | auto_hammer on hammer_and_comm | PASS | Success via try_automation auto_hammer strategy |
 | 11.8 | sauto timeout=2 on hammer_hard | PASS | Failed as expected, status=failure with tactic_error diagnostic, timeout_used=2 |
 | 11.9 | auto_hammer timeout=5 on hammer_hard | PASS | All strategies failed as expected; diagnostics show hammer/sauto/qauto all attempted |
 | 11.10 | sauto on trivial_eq — check proof_script | PASS | proof_script="sauto.", is_complete=true, goals=[] |
@@ -206,7 +206,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 11.17 | sauto with invalid hint "123invalid" | PASS | Error returned: PARSE_ERROR "not a valid Coq identifier" (expected behavior) |
 | 11.18 | reflexivity on trivial_eq (normal tactic) | PASS | Goal closed via regular tactic, is_complete=true |
 | 11.19 | sauto on hammer_multi_goal | PASS | sauto solved the entire conjunction goal (n + 0 = n /\ m + 0 = m) |
-| 11.20 | auto_hammer on hammer_add_0_r (conversational) | PASS | Success via strategy "hammer" |
+| 11.20 | auto_hammer on hammer_add_0_r (conversational) | PASS | Success via try_automation auto_hammer strategy |
 | 11.21 | auto_hammer on hammer_app_nil_r then explain | PASS | All strategies properly failed on induction-requiring goal; structured failure diagnostics returned |
 
 ## 12. Axiom Auditing
@@ -222,7 +222,8 @@ Run `/run-e2e` to retest prompts and update this file.
 | 12.7 | Compare ring_morph vs zmul_expand constructivity | PASS | compare_assumptions returned both axiom-free — equally constructive |
 | 12.8 | Audit Nat.add_comm — constructive/extractable? | PASS | audit_assumptions returned is_closed=true, axioms=[] — constructive and extractable |
 | 12.9 | Audit nonexistent_theorem_xyz (error handling) | PASS | PARSE_ERROR returned: "reference nonexistent_theorem_xyz was not found" |
-| 12.10 | Audit Coq.Arith.PeanoNat module summary | FAIL | Known limitation: Print Module parser does not track sub-module nesting — declarations inside `Module Nat` get FQN `PeanoNat.lt_n_Sm_le` instead of correct `PeanoNat.Nat.lt_n_Sm_le` |
+| 12.10 | Audit Coq.Arith.PeanoNat module summary | FAIL | Known Coq-introspection limitation (not a parser bug). audit_module correctly returns `theorem_count=4, axiom_free_count=0` with FQNs properly qualified as `Stdlib.Arith.PeanoNat.Nat.*` (submodule-stack fix in commit 92b2541 works — verified by unit test `test_submodule_declarations_qualified_with_submodule_name` and by a direct parser run against real `coqtop` output). The four names (`lt_n_Sm_le`, `le_lt_n_Sm`, `lt_S_n`, `pred_of_minus`) are deprecated aliases that `Print Module PeanoNat` still lists inside its `Module Nat` block, but Coq 9.1.1 does not resolve them — `Check Stdlib.Arith.PeanoNat.Nat.lt_n_Sm_le` returns "reference not found." Consequently every per-theorem audit returns `NOT_FOUND` and `axiom_free_count=0`, which is spec-compliant per `specification/assumption-auditing.md §328` ("theorem_count includes failed theorems; axiom_free_count excludes them"). The true root cause is upstream in Coq's module-introspection output, not in Poule. See 12.11 for a resolvable-names case that confirms the submodule-stack fix works end-to-end. |
+| 12.11 | Audit Stdlib.ZArith.BinInt (submodule-stack end-to-end) | PASS | audit_module returned theorem_count=32, axiom_free_count=32 with the full per-theorem list (Zplus_assoc_reverse, Zminus_plus_simpl_l, Zmult_integral, Zpos_eq_iff, etc.); confirms the commit-92b2541 submodule-stack fix works on a resolvable stdlib module with nested `Module Z`/`Module Pos2Z`/`Module Z2Pos` structure |
 
 ## 13. Visualization
 
@@ -236,7 +237,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 13.6 | Dependency graph Nat.add_comm | PASS | visualize_dependencies returned mermaid flowchart with root node (3 nodes) |
 | 13.7 | Dependencies Nat.add_0_r depth 3, max 30 | PASS | visualize_dependencies accepted max_depth=3, max_nodes=30; returned 3-node mermaid |
 | 13.8 | Proof sequence modus_ponens | PASS | visualize_proof_sequence returned 4 step diagrams: intros -> apply Hpq -> exact Hp -> Qed |
-| 13.9 | Proof sequence app_nil_r summary | PASS | visualize_proof_sequence detail_level="summary" returned 9 step diagrams with summary format |
+| 13.9 | Proof sequence app_nil_r summary | PASS | visualize_proof_sequence detail_level="summary" returned step diagrams with summary format |
 | 13.10 | /visualize no args — infer from context | PASS | visualize_proof_state on active session returned mermaid for current state without explicit mode |
 | 13.11 | HTML output confirmation | PASS | /poule/proof-diagram.html exists after visualization calls |
 
@@ -248,7 +249,7 @@ Run `/run-e2e` to retest prompts and update this file.
 | 14.2 | Browse Coq.Arith submodules | PASS | list_modules prefix="Coq.Arith" returned 13 submodules including PeanoNat (1145 decls) |
 | 14.3 | Browse mathcomp.algebra.ssralg | PASS | list_modules returned 1 result with 9991 declarations |
 | 14.4 | Browse typeclasses | PASS | list_typeclasses returned 40+ typeclasses (Proper, Reflexive, Decidable, Equivalence, PreOrder, PER, etc.) |
-| 14.5 | Browse instances of Decidable | PASS | list_instances DecidableClass.Decidable returned 15 instances (Z.lt/le/gt/ge/eq, Nat.le/eq, Bool.eq, etc.) |
+| 14.5 | Browse instances of Decidable | PASS | list_instances DecidableClass.Decidable returned 5 instances (Bool.Decidable_eq_bool, Nat.Decidable_le_nat, etc.) |
 | 14.6 | Browse deps Nat.add_comm transitive | PASS | transitive_closure returned 3 nodes (add_comm, nat, add) with 3 edges |
 | 14.7 | Browse deps --depth 1 | PASS | transitive_closure max_depth=1 returned direct dependencies only (nat, add) |
 | 14.8 | Browse deps --scope Coq.Arith | PASS | transitive_closure scope_filter=["module_prefix:Coq.Arith"] returned root only — deps are in Init |
@@ -262,8 +263,16 @@ Run `/run-e2e` to retest prompts and update this file.
 
 ## Remaining Issues
 
-### Issue 1: audit_module FQN resolution for stdlib sub-modules
+### Issue 1: PeanoNat ghost aliases (upstream Coq limitation)
 
 **Affects:** 12.10
 
-Known limitation. `Print Module` output nests declarations inside sub-modules (e.g., `Module Nat` inside `PeanoNat`), but `_parse_module_theorems` does not track `Module`/`End` pairs, so it constructs `PeanoNat.lt_n_Sm_le` instead of the correct `PeanoNat.Nat.lt_n_Sm_le`. Fixing this requires sub-module context tracking in the parser. Low priority — module auditing works for the primary use case (project-local files) via the Search fallback.
+Not a Poule bug. The original `_parse_module_theorems` FQN bug was fixed in commit 92b2541 (submodule-stack tracking), and the fix is verified by unit test `test_submodule_declarations_qualified_with_submodule_name` and by the new E2E case 12.11 (BinInt, 32/32 axiom-free).
+
+The remaining 12.10 failure is a Coq-introspection quirk: `Print Module Stdlib.Arith.PeanoNat` in Coq 9.1.1 lists four deprecated aliases inside its `Module Nat` block (`lt_n_Sm_le`, `le_lt_n_Sm`, `lt_S_n`, `pred_of_minus`) that Coq itself refuses to resolve — `Check Stdlib.Arith.PeanoNat.Nat.lt_n_Sm_le` returns "reference not found," as do bare `Check lt_n_Sm_le` and `Check PeanoNat.Nat.lt_n_Sm_le`. They appear to be signature-only entries left over from earlier Coq versions. Every per-theorem `audit_assumptions` call therefore legitimately returns `NOT_FOUND`, yielding `axiom_free_count=0`. Per `specification/assumption-auditing.md §328`, this is the required batch-error behavior.
+
+Options if this FAIL is undesirable in future runs:
+
+- **Upstream**: file a Coq bug report to stop `Print Module` from listing un-resolvable aliases, or to have the aliases properly resolved.
+- **Downstream (Poule)**: change `audit_module` to retry each listed name with `Check` before calling `audit_assumptions`, dropping un-resolvable names from `theorem_count`. This would require a spec change to §328.
+- **Status quo**: accept 12.10 as a documented known limitation and treat 12.11 as the end-to-end verification that the submodule-stack fix works on modules with resolvable declarations.
