@@ -15,7 +15,7 @@ class ExtractionError(Exception):
 
 
 class CoqNotInstalledError(ExtractionError):
-    """Raised when neither coq-lsp nor sertop is found on the system.
+    """Raised when coq-lsp is not found on the system.
 
     Includes installation instructions in the error message.
     """
@@ -23,10 +23,8 @@ class CoqNotInstalledError(ExtractionError):
     def __init__(self, message: str | None = None) -> None:
         if message is None:
             message = (
-                "Neither coq-lsp nor sertop found. "
-                "Install Coq and one of the supported backends:\n"
-                "  - coq-lsp: opam install coq-lsp\n"
-                "  - SerAPI:  opam install coq-serapi"
+                "coq-lsp not found. "
+                "Install it via opam: opam install coq-lsp"
             )
         super().__init__(message)
 

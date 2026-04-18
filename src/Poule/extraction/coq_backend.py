@@ -11,8 +11,8 @@ from typing import Any, Protocol, runtime_checkable
 class CoqBackend(Protocol):
     """Protocol defining the operations a Coq backend must support.
 
-    Backends communicate with an external tool (coq-lsp or SerAPI) to read
-    compiled ``.vo`` files and access kernel terms.
+    Backends communicate with coq-lsp to read compiled ``.vo`` files and
+    access kernel terms.
     """
 
     def list_declarations(

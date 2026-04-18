@@ -9,7 +9,7 @@ Per-session Coq process wrapper providing bidirectional, stateful proof interact
 
 ## 1. Purpose
 
-Define the `CoqBackend` protocol and the `create_coq_backend` factory function that the Proof Session Manager uses to spawn and communicate with per-session Coq processes. The backend abstracts the difference between coq-lsp and SerAPI, presenting a uniform async interface for file loading, proof positioning, tactic execution, state observation, undo, premise extraction, and process shutdown.
+Define the `CoqBackend` protocol and the `create_coq_backend` factory function that the Proof Session Manager uses to spawn and communicate with per-session coq-lsp processes. The backend presents a uniform async interface for file loading, proof positioning, tactic execution, state observation, undo, premise extraction, and process shutdown.
 
 ## 2. Scope
 
@@ -21,7 +21,7 @@ Define the `CoqBackend` protocol and the `create_coq_backend` factory function t
 
 | Term | Definition |
 |------|-----------|
-| CoqBackend | An async protocol abstracting a single coq-lsp or SerAPI process for interactive proof exploration |
+| CoqBackend | An async protocol abstracting a single coq-lsp process for interactive proof exploration |
 | Backend factory | An async callable `(file_path: str) -> CoqBackend` that spawns a new backend process |
 | Proof positioning | Navigating a loaded `.v` file to the start of a named proof, making its initial state observable |
 | Original script | The sequence of tactic strings comprising a completed proof's body, extracted during positioning |
@@ -138,7 +138,7 @@ The returned `ProofState` shall have:
 #### undo()
 
 - REQUIRES: A proof is active and at least one tactic has been executed.
-- ENSURES: The last applied tactic is undone. The backend's internal state reverts to the state before the last tactic. The mechanism is backend-dependent (coq-lsp may replay from the start; SerAPI may use `Undo 1.`).
+- ENSURES: The last applied tactic is undone. The backend's internal state reverts to the state before the last tactic. The mechanism is backend-dependent (e.g., coq-lsp may replay from the start).
 - On failure (undo unsupported or backend error): may raise an exception. The session manager treats undo failure as best-effort (per architecture: "Backend-dependent; best-effort").
 
 > **Given** a proof at step 3 after executing tactics T1, T2, T3
@@ -149,9 +149,7 @@ The returned `ProofState` shall have:
 
 - REQUIRES: A proof is active. `step` is a positive integer representing a tactic step index (1-based, corresponding to the tactic at `original_script[step - 1]`). The proof has been executed through at least step `step`.
 - ENSURES: Returns a list of raw premise reference dicts. Each dict contains at minimum `{"name": str, "kind": str}` where `name` is the fully qualified canonical name of the premise and `kind` is one of `"lemma"`, `"hypothesis"`, `"constructor"`, `"definition"`.
-- The extraction mechanism is backend-dependent:
-  - **coq-lsp**: Query proof state annotations or document model at the tactic position
-  - **SerAPI**: Inspect the `Environ` and tactic trace after the step
+- Extraction mechanism: query coq-lsp's proof state annotations or document model at the tactic position.
 
 > **Given** a proof where step 2 uses `rewrite Nat.add_comm.`
 > **When** `get_premises_at_step(2)` is called
@@ -213,7 +211,7 @@ The system shall provide an async factory function:
 #### create_coq_backend(file_path, watchdog_timeout=None, load_paths=None)
 
 - REQUIRES: `file_path` is a non-empty string. `watchdog_timeout` is a positive float (seconds) or `None`. `load_paths` is an optional list of `(directory, logical_prefix)` tuples specifying recursive load path bindings (equivalent to coq-lsp `-R` flags).
-- ENSURES: Spawns a new Coq process (coq-lsp or SerAPI, determined by configuration or availability). When `load_paths` is provided, the process is started with the corresponding `-R` flags so that bare `Require Import` directives in source files resolve correctly. Returns a `CoqBackend` instance connected to that process with the given `watchdog_timeout` configured. The process is ready for `load_file` to be called.
+- ENSURES: Spawns a new coq-lsp process. When `load_paths` is provided, the process is started with the corresponding `-R` flags so that bare `Require Import` directives in source files resolve correctly. Returns a `CoqBackend` instance connected to that process with the given `watchdog_timeout` configured. The process is ready for `load_file` to be called.
 - On process spawn failure (coq-lsp not installed, binary not found): raises an exception with a descriptive message.
 
 The factory is the only way to create `CoqBackend` instances. The session manager receives it as a constructor parameter, enabling test injection of mock backends.
@@ -236,9 +234,9 @@ The `load_paths` parameter provides these bindings. For a library installed at `
 > **When** `create_coq_backend("/opt/coq/user-contrib/Flocq/Core/Raux.v", load_paths=[...])` is called
 > **Then** a CoqBackend instance is returned and `load_file` succeeds (bare `Require Import Zaux` resolves via the `-R` flag)
 
-> **Given** neither coq-lsp nor SerAPI is installed
+> **Given** coq-lsp is not installed
 > **When** `create_coq_backend("/path/to/file.v")` is called
-> **Then** an exception is raised indicating no Coq backend is available
+> **Then** an exception is raised indicating coq-lsp is not available
 
 ### 4.3 ProofState Translation
 
@@ -335,7 +333,7 @@ Concurrency: each `CoqBackend` instance is used by exactly one session. The sess
 | Property | Value |
 |----------|-------|
 | Transport | stdin/stdout pipes via `asyncio.subprocess` |
-| Protocol | coq-lsp: LSP JSON-RPC (Content-Length framed); SerAPI: S-expression protocol |
+| Protocol | LSP JSON-RPC (Content-Length framed) |
 | Direction | Bidirectional, stateful |
 | Cardinality | One Coq process per CoqBackend instance |
 | Lifecycle | Process spawned by `create_coq_backend`, terminated by `shutdown` |
@@ -371,7 +369,7 @@ The Coq child process stderr shall be redirected to `subprocess.DEVNULL`. Piping
 
 ### 7.2 Process Lifecycle
 
-1. **Spawn**: `create_coq_backend` starts the Coq process and completes the protocol initialization handshake (LSP `initialize` for coq-lsp, or SerAPI version query).
+1. **Spawn**: `create_coq_backend` starts the coq-lsp process and completes the LSP `initialize` handshake.
 2. **Use**: The session manager calls `load_file`, `position_at_proof`, then any combination of `execute_tactic`, `undo`, `get_premises_at_step`, and `get_current_state`.
 3. **Shutdown**: `shutdown` sends a termination signal and waits for the process to exit. If the process does not exit within a timeout (implementation-defined, recommended 5 seconds), it is forcefully killed (`SIGKILL`).
 
@@ -508,8 +506,7 @@ await backend.shutdown()  # Succeeds (idempotent)
 - Define `CoqBackend` as a `typing.Protocol` class with async methods.
 - Use `asyncio.create_subprocess_exec` for process spawning, with `stderr=asyncio.subprocess.DEVNULL`.
 - Use `asyncio.StreamReader` / `asyncio.StreamWriter` for stdin/stdout pipe communication.
-- For coq-lsp: reuse the Content-Length framing and JSON-RPC message format from the extraction backend (`poule.extraction.backends.coqlsp_backend`), but implement the proof-specific LSP interactions (document open with tactic stepping, `proof/goals` queries).
-- For SerAPI: use S-expression parsing for responses.
-- The `create_coq_backend` factory should attempt coq-lsp first, falling back to SerAPI if coq-lsp is not available.
+- Reuse the Content-Length framing and JSON-RPC message format from the extraction backend (`poule.extraction.backends.coqlsp_backend`), but implement the proof-specific LSP interactions (document open with tactic stepping, `proof/goals` queries).
+- The `create_coq_backend` factory raises `CoqNotInstalledError` if coq-lsp is not available.
 - Package location: `src/poule/session/backend.py`.
 - The `_get_backend_factory` function in `poule.cli.commands` imports `create_coq_backend` from this module.

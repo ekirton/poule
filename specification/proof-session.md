@@ -25,7 +25,7 @@ Define the session manager that creates and destroys proof sessions, dispatches 
 | Step history | An ordered list of ProofState snapshots maintained per session, indexed by step number |
 | Current step | The session's current position in the step history; 0 = initial state |
 | Original script | The tactic list from a completed proof's source; null for interactively constructed proofs |
-| CoqBackend | An abstraction over a single coq-lsp or SerAPI process providing bidirectional, stateful proof interaction |
+| CoqBackend | An abstraction over a single coq-lsp process providing bidirectional, stateful proof interaction |
 
 ## 4. Behavioral Requirements
 
@@ -421,7 +421,7 @@ Each session owns one CoqBackend instance. The interface is defined by the `CoqB
 | `get_premises_at_step(step)` | Step index integer | List of raw premise references | Backend-dependent |
 | `shutdown()` | None | None | Always succeeds (kills process) |
 
-The CoqBackend abstracts the difference between coq-lsp and SerAPI. The session manager does not know which backend is in use.
+The CoqBackend wraps coq-lsp communication. The session manager uses it through the async protocol without knowing the underlying LSP transport.
 
 ## 7. State and Lifecycle
 

@@ -41,11 +41,11 @@ graph TD
     subgraph "Backend"
         ST["Storage (SQLite)<br/><br/>decls, deps<br/>wl_vecs, sym_freq<br/>idx_meta"]
         CB["Coq Backend Processes<br/>(one per session)<br/><br/>Load .v files<br/>Execute tactics<br/>Report state"]
-        CLE["Coq Library Extraction<br/><br/>Via coq-lsp or SerAPI"]
+        CLE["Coq Library Extraction<br/><br/>Via coq-lsp"]
     end
 
     RP -- "SQL queries" --> ST
-    PSM -- "coq-lsp / SerAPI" --> CB
+    PSM -- "coq-lsp" --> CB
     PSE -- "tactic verify" --> CB
     PSE -- "premise retrieval (optional)" --> ST
     ECO -- "session ops (reuse)" --> PSM
@@ -64,7 +64,7 @@ graph TD
 ## Data Flow
 
 **Offline (indexing)**:
-1. Coq Library Extraction reads compiled `.vo` files via coq-lsp or SerAPI
+1. Coq Library Extraction reads compiled `.vo` files via coq-lsp
 2. Each declaration is converted to an expression tree, normalized, and indexed
 3. The Search Backend stores all index data in a single SQLite database
 
