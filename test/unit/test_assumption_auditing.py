@@ -708,18 +708,68 @@ class TestParseModuleTheorems:
         result = _parse_module_theorems("Init.Nat", output)
         assert result == ["Init.Nat.add", "Init.Nat.mul", "Init.Nat.sub"]
 
-    def test_submodule_declarations_excluded(self):
-        """Sub-module entries (Module X) should not appear as declarations."""
+    def test_submodule_declarations_qualified_with_submodule_name(self):
+        """Declarations inside a submodule must be qualified with the submodule path."""
         from Poule.auditing.engine import _parse_module_theorems
         output = (
             "Module\nPeanoNat\n:= Struct\n"
             "     Module Nat\n"
             "     Definition lt_n_Sm_le : forall n m : nat, n < S m -> n <= m.\n"
+            "     End Nat\n"
             "   End"
         )
         result = _parse_module_theorems("PeanoNat", output)
         assert "PeanoNat.Nat" not in result
-        assert "PeanoNat.lt_n_Sm_le" in result
+        assert "PeanoNat.Nat.lt_n_Sm_le" in result
+        assert "PeanoNat.lt_n_Sm_le" not in result
+
+    def test_two_level_nested_submodules(self):
+        """Declarations two levels deep get the full nested qualifier."""
+        from Poule.auditing.engine import _parse_module_theorems
+        output = (
+            "Module\nOuter\n:= Struct\n"
+            "     Module Mid\n"
+            "     Module Inner\n"
+            "     Definition deep_thm : nat.\n"
+            "     End Inner\n"
+            "     End Mid\n"
+            "   End"
+        )
+        result = _parse_module_theorems("Outer", output)
+        assert result == ["Outer.Mid.Inner.deep_thm"]
+
+    def test_mixed_parent_and_submodule_declarations(self):
+        """Declarations in the parent and inside a submodule get different qualifiers."""
+        from Poule.auditing.engine import _parse_module_theorems
+        output = (
+            "Module\nMyLib\n:= Struct\n"
+            "     Definition parent_thm : nat.\n"
+            "     Module Sub\n"
+            "     Definition child_thm : nat.\n"
+            "     End Sub\n"
+            "     Definition sibling_thm : nat.\n"
+            "   End"
+        )
+        result = _parse_module_theorems("MyLib", output)
+        assert "MyLib.parent_thm" in result
+        assert "MyLib.Sub.child_thm" in result
+        assert "MyLib.sibling_thm" in result
+        assert "MyLib.child_thm" not in result
+
+    def test_end_without_name_pops_innermost(self):
+        """Bare `End` (no submodule name) still pops the innermost module."""
+        from Poule.auditing.engine import _parse_module_theorems
+        output = (
+            "Module\nMyLib\n:= Struct\n"
+            "     Module Sub\n"
+            "     Definition inside_thm : nat.\n"
+            "     End\n"
+            "     Definition after_sub : nat.\n"
+            "   End"
+        )
+        result = _parse_module_theorems("MyLib", output)
+        assert "MyLib.Sub.inside_thm" in result
+        assert "MyLib.after_sub" in result
 
     def test_parameter_keyword_extracted(self):
         """'Parameter' declarations (abstract module types) should be extracted."""

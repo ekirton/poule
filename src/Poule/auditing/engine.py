@@ -121,20 +121,42 @@ async def audit_assumptions(
 def _parse_module_theorems(module: str, output: str) -> list[str]:
     """Extract declaration names from Print Module output.
 
-    Coq's ``Print Module`` uses ``Definition`` for all proof-carrying
-    declarations (theorems, lemmas, fixpoints) and ``Parameter`` for
-    axioms in abstract module types.  Sub-module entries (``Module X``)
-    are excluded.
+    Coq's ``Print Module`` nests sub-modules as ``Module <Name> ... End``
+    blocks. Declarations inside a sub-module must be qualified with the
+    sub-module path, so we walk the output line-by-line with a stack of
+    active sub-module names. The outer module header is printed as
+    ``Module\\n<Name>\\n:= Struct`` across three lines, so matching
+    ``Module <Name>`` on a single line only fires for inner sub-modules.
     """
-    declarations: list[str] = []
-    pattern = re.compile(
+    decl_re = re.compile(
         r"^\s*(?:Definition|Parameter|Inductive|Record|Fixpoint|CoFixpoint"
-        r"|Theorem|Lemma)\s+(\w+)\s*:",
-        re.MULTILINE,
+        r"|Theorem|Lemma)\s+(\w+)\s*:"
     )
-    for match in pattern.finditer(output):
-        decl_name = match.group(1)
-        declarations.append(f"{module}.{decl_name}")
+    module_re = re.compile(r"^\s*Module\s+(?:Type\s+)?(\w+)\b")
+    end_re = re.compile(r"^\s*End(?:\s+\w+)?\s*\.?\s*$")
+
+    declarations: list[str] = []
+    submodule_stack: list[str] = []
+
+    for line in output.splitlines():
+        if end_re.match(line):
+            if submodule_stack:
+                submodule_stack.pop()
+            continue
+
+        m = module_re.match(line)
+        if m:
+            # Functor application `Module M := F(X).` opens no body.
+            if ":=" in line:
+                continue
+            submodule_stack.append(m.group(1))
+            continue
+
+        d = decl_re.match(line)
+        if d:
+            parts = [module, *submodule_stack, d.group(1)]
+            declarations.append(".".join(parts))
+
     return declarations
 
 
