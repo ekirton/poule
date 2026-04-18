@@ -1234,11 +1234,11 @@ class TestBackendNotFound:
             patch(
                 "Poule.extraction.pipeline.create_backend",
                 side_effect=ExtractionError(
-                    "Neither coq-lsp nor sertop found"
+                    "coq-lsp not found"
                 ),
             ),
         ):
-            with pytest.raises(ExtractionError, match="coq-lsp|sertop|found"):
+            with pytest.raises(ExtractionError, match="coq-lsp|found"):
                 run_extraction(
                     targets=["stdlib"], db_path=tmp_path / "test.db"
                 )

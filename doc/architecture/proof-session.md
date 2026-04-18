@@ -33,8 +33,8 @@ MCP Server
 │               ▼                                  │
 │    ┌──────────────────────────────┐              │
 │    │ CoqBackend (per-session)     │              │
-│    │   Wraps coq-lsp or SerAPI   │              │
-│    │   Bidirectional, stateful   │              │
+│    │   Wraps coq-lsp              │              │
+│    │   Bidirectional, stateful    │              │
 │    └──────────────────────────────┘              │
 └─────────────────────────────────────────────────┘
 ```
@@ -208,10 +208,7 @@ extract_proof_trace(session_id)
 
 ## Premise Extraction
 
-Premise annotations are extracted by analyzing the Coq backend's internal state at each tactic step. The extraction mechanism is backend-dependent:
-
-- **coq-lsp**: Query the document's proof state annotations after processing each tactic
-- **SerAPI**: Inspect the `Environ` and tactic trace after each step
+Premise annotations are extracted by querying the document's proof state annotations from coq-lsp after processing each tactic.
 
 ```
 get_proof_premises(session_id)
@@ -275,7 +272,7 @@ Components that consume `submit_command` output must not assume separate stdout/
 
 ## CoqBackend Interface
 
-The `CoqBackend` abstracts the communication with a Coq process (coq-lsp or SerAPI). Each session owns one backend instance.
+The `CoqBackend` abstracts the communication with a coq-lsp process. Each session owns one backend instance.
 
 ### Responsibilities
 

@@ -40,7 +40,7 @@ CLI (extract subcommand)
      Proof Session Manager            JSON Lines output
      (reused from Phase 2)            (see extraction-output.md)
            │
-           │ coq-lsp / SerAPI
+           │ coq-lsp
            ▼
      Coq Backend Processes
 ```

@@ -21,7 +21,7 @@ Define the pipeline layer that receives validated query parameters from the MCP 
 | Term | Definition |
 |------|-----------|
 | PipelineContext | A shared resource container holding the `IndexReader`, in-memory data structures (WL histograms, inverted index, symbol frequencies), and the CoqParser reference |
-| CoqParser | An interface to coq-lsp (or SerAPI) for parsing Coq expressions into `ConstrNode` at query time |
+| CoqParser | An interface to coq-lsp for parsing Coq expressions into `ConstrNode` at query time |
 | Structural scoring | The subroutine that computes fine-ranking metrics (TED, collapse match, const Jaccard) and combines them with WL cosine via the weighted sum |
 
 ## 4. Behavioral Requirements

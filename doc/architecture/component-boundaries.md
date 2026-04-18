@@ -77,14 +77,14 @@ Stor.  Coq   (no     │      Stor.      │        │
   ▲    Procs          │                 ▼        ▼
   │    (per-          │            Proof Session Manager
   │     ses.)         │                  │
-  │                   │                  │ coq-lsp / SerAPI
+  │                   │                  │ coq-lsp
   │                   │                  ▼
   │ Writes during     │            Coq Backend Processes
   │ indexing          │            (per-session)
   │                   │
 Coq Library Extr.     ├─ tactic verify → Proof Session Manager
   │                   ├─ premises (opt) → Retrieval Pipeline
-  │ coq-lsp/SerAPI    └─ few-shot (opt) → Training Data (Phase 3)
+  │ coq-lsp           └─ few-shot (opt) → Training Data (Phase 3)
   ▼
 Compiled .vo files           Fill Admits Orchestrator
 (external)                     ├─ search → Proof Search Engine
@@ -270,7 +270,7 @@ The Neural Training Pipeline is a batch-mode component invoked via CLI. It reads
 
 | Property | Value |
 |----------|-------|
-| Mechanism | Process-level communication (stdin/stdout) via coq-lsp or SerAPI protocol |
+| Mechanism | Process-level communication (stdin/stdout) via coq-lsp protocol |
 | Direction | Bidirectional, stateful |
 | Cardinality | One backend process per active session |
 | Lifecycle | Process spawned on session open, terminated on session close or timeout |

@@ -174,7 +174,7 @@ flowchart TD
     PSM --> CB
     MR -->|"Mermaid syntax"| MCHART
 
-    EXT -->|"coq-lsp / SerAPI"| VO
+    EXT -->|"coq-lsp"| VO
     EXT -->|"writes during indexing"| DB
 
     NTP -->|"trains on proof traces"| ONNX

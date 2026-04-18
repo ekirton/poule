@@ -337,7 +337,7 @@ def resolve_symbols(
 # ---------------------------------------------------------------------------
 
 def create_backend() -> Any:
-    """Create and return a Backend instance (coq-lsp or SerAPI)."""
+    """Create and return a coq-lsp Backend instance."""
     from .backend_factory import create_coq_backend
     return create_coq_backend()
 

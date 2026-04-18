@@ -58,7 +58,7 @@ MCP Server
   ▼
 Proof Session Manager
   │
-  │ coq-lsp / SerAPI
+  │ coq-lsp
   ▼
 Coq Backend Process
 ```

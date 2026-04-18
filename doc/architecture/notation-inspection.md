@@ -43,7 +43,7 @@ Claude Code / LLM
 │           ▼                                                            │
 │  Proof Session Manager (reused — same as vernacular introspection)    │
 │           │                                                            │
-│           │ coq-lsp / SerAPI                                           │
+│           │ coq-lsp                                                    │
 │           ▼                                                            │
 │  Coq Backend Process                                                   │
 └────────────────────────────────────────────────────────────────────────┘
