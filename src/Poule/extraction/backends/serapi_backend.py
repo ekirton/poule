@@ -504,33 +504,60 @@ class SerAPIBackend:
 
         Returns ``(fully_qualified_name, kind, None)`` triples. The
         ``constr_t`` is filled in later by ``_get_constr_t``.
+
+        Tracks nested ``Module <Name> ... End`` blocks so that
+        declarations inside a sub-module are qualified with the
+        sub-module path (e.g. ``PeanoNat.Nat.lt_n_Sm_le``, not
+        ``PeanoNat.lt_n_Sm_le``). The outer module header is printed
+        across multiple lines as ``Module\\n<Name>\\n:= Struct``, so
+        matching ``Module <Name>`` on a single line only fires for
+        inner sub-modules.
         """
-        declarations: list[tuple[str, str, Any]] = []
-
-        # Patterns for different declaration kinds in Print Module output
-        patterns = [
-            (r"(?:Theorem|Lemma)\s+([\w.']+)", "Lemma"),
-            (r"Definition\s+([\w.']+)", "Definition"),
-            (r"Inductive\s+([\w.']+)", "Inductive"),
-            (r"Record\s+([\w.']+)", "Record"),
-            (r"Class\s+([\w.']+)", "Class"),
-            (r"Instance\s+([\w.']+)", "Instance"),
-            (r"Axiom\s+([\w.']+)", "Axiom"),
-            (r"Parameter\s+([\w.']+)", "Parameter"),
-            (r"Canonical\s+Structure\s+([\w.']+)", "Canonical Structure"),
-            (r"Coercion\s+([\w.']+)", "Coercion"),
-            (r"Let\s+([\w.']+)", "Let"),
-            (r"Conjecture\s+([\w.']+)", "Conjecture"),
-            (r"Constructor\s+([\w.']+)", "Constructor"),
+        # Kind patterns, ordered so multi-word kinds ("Canonical Structure")
+        # win over their single-word prefixes on the same line.
+        kind_patterns: list[tuple[str, str]] = [
+            (r"Canonical\s+Structure\s+([\w']+)", "Canonical Structure"),
+            (r"(?:Theorem|Lemma)\s+([\w']+)", "Lemma"),
+            (r"Definition\s+([\w']+)", "Definition"),
+            (r"Inductive\s+([\w']+)", "Inductive"),
+            (r"Record\s+([\w']+)", "Record"),
+            (r"Class\s+([\w']+)", "Class"),
+            (r"Instance\s+([\w']+)", "Instance"),
+            (r"Axiom\s+([\w']+)", "Axiom"),
+            (r"Parameter\s+([\w']+)", "Parameter"),
+            (r"Coercion\s+([\w']+)", "Coercion"),
+            (r"Let\s+([\w']+)", "Let"),
+            (r"Conjecture\s+([\w']+)", "Conjecture"),
+            (r"Constructor\s+([\w']+)", "Constructor"),
         ]
+        kind_res = [(re.compile(r"^\s*" + p), k) for p, k in kind_patterns]
+        module_re = re.compile(r"^\s*Module\s+(?:Type\s+)?([\w']+)\b")
+        end_re = re.compile(r"^\s*End(?:\s+[\w']+)?\s*\.?\s*$")
 
-        for pattern, kind in patterns:
-            for match in re.finditer(pattern, text):
-                name = match.group(1)
-                # Qualify name with module if not already qualified
-                if "." not in name:
-                    name = f"{module_name}.{name}"
-                declarations.append((name, kind, None))
+        declarations: list[tuple[str, str, Any]] = []
+        submodule_stack: list[str] = []
+
+        for line in text.splitlines():
+            if end_re.match(line):
+                if submodule_stack:
+                    submodule_stack.pop()
+                continue
+
+            m = module_re.match(line)
+            if m:
+                # Functor application `Module M := F(X).` opens no body.
+                if ":=" in line:
+                    continue
+                submodule_stack.append(m.group(1))
+                continue
+
+            for pattern, kind in kind_res:
+                match = pattern.match(line)
+                if match:
+                    name = match.group(1)
+                    fqn = ".".join([module_name, *submodule_stack, name])
+                    declarations.append((fqn, kind, None))
+                    break
 
         return declarations
 
